@@ -26,7 +26,7 @@ Human approval remains the final decision gate.
 
 ## Development Roadmap
 
-- v0.1 Skills Foundation
+- v0.1 Deterministic Research Core + First Market Regime Skill
 - v0.2 Data Layer
 - v0.3 Workflow
 - v0.4 Evals
@@ -36,4 +36,5 @@ Human approval remains the final decision gate.
 
 ## Status
 
-🚧 Early design stage.
+v0.1 provides a deterministic, synthetic-data-only market-regime vertical slice.
+Live data, trading, and the broader Product A runtime remain intentionally deferred.
