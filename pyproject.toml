@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "finance-research-agent"
-version = "0.0.1"
-description = "Repository foundation for a local-first, research-only market research agent"
+version = "0.1.0"
+description = "Deterministic research-only market-regime core for synthetic market data"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
