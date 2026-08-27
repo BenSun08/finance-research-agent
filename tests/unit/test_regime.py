@@ -5,9 +5,11 @@ from decimal import Decimal
 import pytest
 
 from finance_research_agent.domain.market import InvalidMarketDataError
+from finance_research_agent.domain.metrics import MetricStatus, MetricUnavailableReason
 from finance_research_agent.domain.regime import (
     Regime,
     RegimeComponent,
+    RegimeComponentReason,
     RegimeComponentState,
     RegimePolicy,
     _leadership_state,
@@ -122,7 +124,16 @@ def test_missing_broad_trend_forces_unknown_with_no_score() -> None:
 
     assert result.regime is Regime.UNKNOWN
     assert result.score is None
-    assert any(reason.startswith("broad_trend:") for reason in result.unavailable_reasons)
+    broad = result.components[0]
+    assert broad.component is RegimeComponent.BROAD_TREND
+    assert broad.state is RegimeComponentState.UNAVAILABLE
+    assert broad.weighted_score is None
+    assert broad.reason_code is RegimeComponentReason.MISSING_REQUIRED_SNAPSHOT
+    assert result.unavailable_reasons == (
+        "broad_trend:missing_required_snapshot",
+        "leadership:insufficient_valid_series",
+        "volatility_stress:missing_required_snapshot",
+    )
 
 
 def test_two_other_unavailable_components_force_unknown() -> None:
@@ -136,6 +147,24 @@ def test_two_other_unavailable_components_force_unknown() -> None:
 
     assert result.regime is Regime.UNKNOWN
     assert result.score is None
+    states = {component.component: component for component in result.components}
+    assert states[RegimeComponent.BROAD_TREND].state is RegimeComponentState.POSITIVE
+    assert states[RegimeComponent.PARTICIPATION].state is RegimeComponentState.UNAVAILABLE
+    assert (
+        states[RegimeComponent.PARTICIPATION].reason_code
+        is RegimeComponentReason.INSUFFICIENT_VALID_SERIES
+    )
+    assert states[RegimeComponent.PARTICIPATION].weighted_score is None
+    assert states[RegimeComponent.LEADERSHIP].state is RegimeComponentState.UNAVAILABLE
+    assert (
+        states[RegimeComponent.LEADERSHIP].reason_code
+        is RegimeComponentReason.INSUFFICIENT_VALID_SERIES
+    )
+    assert states[RegimeComponent.LEADERSHIP].weighted_score is None
+    assert result.unavailable_reasons == (
+        "leadership:insufficient_valid_series",
+        "participation:insufficient_valid_series",
+    )
 
 
 def test_one_other_unavailable_component_does_not_force_unknown() -> None:
@@ -154,6 +183,19 @@ def test_one_other_unavailable_component_does_not_force_unknown() -> None:
         if component.component is RegimeComponent.PARTICIPATION
     )
     assert participation.state is RegimeComponentState.UNAVAILABLE
+    assert participation.weighted_score is None
+    assert participation.reason_code is RegimeComponentReason.INSUFFICIENT_VALID_SERIES
+    assert result.unavailable_reasons == (
+        "participation:insufficient_valid_series",
+    )
+    assert result.score == sum(
+        (
+            component.weighted_score
+            for component in result.components
+            if component.weighted_score is not None
+        ),
+        Decimal(0),
+    )
 
 
 def test_insufficient_history_produces_structured_unknown_metrics() -> None:
@@ -169,7 +211,27 @@ def test_insufficient_history_produces_structured_unknown_metrics() -> None:
 
     assert result.regime is Regime.UNKNOWN
     assert result.score is None
-    assert any(metric.status.value == "unavailable" for metric in result.metrics)
+    broad = result.components[0]
+    assert broad.component is RegimeComponent.BROAD_TREND
+    assert broad.state is RegimeComponentState.UNAVAILABLE
+    assert broad.weighted_score is None
+    assert broad.reason_code is RegimeComponentReason.INSUFFICIENT_HISTORY
+    broad_metrics = tuple(
+        metric for metric in result.metrics if metric.metric_id in broad.metric_ids
+    )
+    assert broad_metrics
+    short_snapshot_id = snapshots["SPY"].snapshot_id
+    affected_metrics = tuple(
+        metric for metric in broad_metrics if short_snapshot_id in metric.input_snapshot_ids
+    )
+    assert affected_metrics
+    assert all(metric.status is MetricStatus.UNAVAILABLE for metric in affected_metrics)
+    assert all(metric.value is None for metric in affected_metrics)
+    assert all(
+        metric.unavailable_reason is MetricUnavailableReason.INSUFFICIENT_HISTORY
+        for metric in affected_metrics
+    )
+    assert "broad_trend:insufficient_history" in result.unavailable_reasons
 
 
 def test_invalid_mapping_or_cutoff_is_rejected() -> None:
@@ -223,6 +285,70 @@ def test_result_id_changes_when_structured_quality_output_changes() -> None:
     assert original.result_id != flagged.result_id
 
 
+def test_regime_result_enforces_structural_output_invariants() -> None:
+    result = calculate_regime(make_regime_case("risk-on").snapshots, RegimePolicy(), CUTOFF)
+
+    with pytest.raises(ValueError, match="UNKNOWN regime"):
+        replace(result, regime=Regime.UNKNOWN)
+    with pytest.raises(ValueError, match="known regimes"):
+        replace(result, score=None)
+    with pytest.raises(ValueError, match="canonical order"):
+        replace(result, components=tuple(reversed(result.components)))
+    with pytest.raises(ValueError, match="sorted by metric ID"):
+        replace(result, metrics=tuple(reversed(result.metrics)))
+    with pytest.raises(ValueError, match="snapshot IDs must be sorted"):
+        replace(result, input_snapshot_ids=tuple(reversed(result.input_snapshot_ids)))
+    with pytest.raises(ValueError, match="timezone-aware UTC"):
+        replace(result, calculated_at=datetime(2026, 8, 25))
+    with pytest.raises(ValueError, match="critical stress and reasons"):
+        replace(result, critical_stress=True)
+    with pytest.raises(ValueError, match="score must equal"):
+        replace(result, score=Decimal("99"))
+    with pytest.raises(ValueError, match="immutable tuples"):
+        replace(result, components=list(result.components))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="immutable tuples"):
+        replace(result, quality_flags=[])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="immutable tuples"):
+        replace(result, critical_stress_reasons=[])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="immutable tuples"):
+        replace(result, unavailable_reasons=[])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="critical stress requires"):
+        replace(
+            result,
+            critical_stress=True,
+            critical_stress_reasons=("SYNTHETIC_CRITICAL_STRESS",),
+        )
+
+    missing_broad = dict(make_regime_case("risk-on").snapshots)
+    missing_broad.pop("SPY")
+    unknown = calculate_regime(missing_broad, RegimePolicy(), CUTOFF)
+    available_score = sum(
+        (
+            component.weighted_score
+            for component in unknown.components
+            if component.weighted_score is not None
+        ),
+        Decimal(0),
+    )
+    with pytest.raises(ValueError, match="availability requires"):
+        replace(unknown, regime=Regime.NEUTRAL, score=available_score)
+
+
+def test_regime_component_result_enforces_weighted_score_and_metric_order() -> None:
+    component = calculate_regime(
+        make_regime_case("risk-on").snapshots, RegimePolicy(), CUTOFF
+    ).components[0]
+
+    with pytest.raises(ValueError, match="weighted_score"):
+        replace(component, weighted_score=Decimal("0"))
+    with pytest.raises(ValueError, match="finite Decimal"):
+        replace(component, weighted_score=30)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="metric IDs must be sorted"):
+        replace(component, metric_ids=tuple(reversed(component.metric_ids)))
+    with pytest.raises(ValueError, match="immutable tuples"):
+        replace(component, quality_flags=[])  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -250,3 +376,23 @@ def test_regime_policy_rejects_nested_mutable_component_weights() -> None:
 
     with pytest.raises(ValueError, match="immutable tuples"):
         RegimePolicy(component_weights=mutable_pairs)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "window_field",
+    [
+        "short_sma_window",
+        "long_sma_window",
+        "slope_lookback",
+        "relative_return_window",
+        "atr_window",
+        "realized_volatility_window",
+        "percentile_history",
+    ],
+)
+@pytest.mark.parametrize("invalid_window", [True, False, 1.5])
+def test_regime_policy_rejects_non_integer_windows(
+    window_field: str, invalid_window: object
+) -> None:
+    with pytest.raises(ValueError, match="positive integers"):
+        RegimePolicy(**{window_field: invalid_window})  # type: ignore[arg-type]

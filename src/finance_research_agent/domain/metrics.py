@@ -74,9 +74,18 @@ class MetricResult:
     def __post_init__(self) -> None:
         if not self.metric_id:
             raise ValueError("metric_id must not be empty")
+        if (
+            not isinstance(self.parameters, tuple)
+            or any(not isinstance(parameter, tuple) for parameter in self.parameters)
+            or not isinstance(self.input_snapshot_ids, tuple)
+            or not isinstance(self.quality_flags, tuple)
+        ):
+            raise ValueError("metric result collections must be immutable tuples")
         if self.status is MetricStatus.AVAILABLE:
             if self.value is None or self.unavailable_reason is not None:
                 raise ValueError("available metrics require a value and no unavailable reason")
+            if not isinstance(self.value, Decimal) or not self.value.is_finite():
+                raise ValueError("available metric value must be a finite Decimal")
         elif self.value is not None or self.unavailable_reason is None:
             raise ValueError("unavailable metrics require no value and a typed reason")
         if self.parameters != tuple(sorted(self.parameters)):

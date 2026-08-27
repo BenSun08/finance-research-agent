@@ -177,8 +177,11 @@ class RegimePolicy:
             self.realized_volatility_window,
             self.percentile_history,
         )
-        if any(window <= 0 for window in windows):
-            raise ValueError("regime policy windows must be positive")
+        if any(
+            not isinstance(window, int) or isinstance(window, bool) or window <= 0
+            for window in windows
+        ):
+            raise ValueError("regime policy windows must be positive integers")
         participation_thresholds = (
             self.participation_positive_minimum,
             self.participation_negative_maximum,
@@ -263,8 +266,21 @@ class RegimeComponentResult:
     quality_flags: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.weight <= 0:
-            raise ValueError("component weight must be positive")
+        if not isinstance(self.metric_ids, tuple) or not isinstance(
+            self.quality_flags, tuple
+        ):
+            raise ValueError("regime component collections must be immutable tuples")
+        if (
+            not isinstance(self.weight, Decimal)
+            or not self.weight.is_finite()
+            or self.weight <= 0
+        ):
+            raise ValueError("component weight must be positive and finite")
+        if self.weighted_score is not None and (
+            not isinstance(self.weighted_score, Decimal)
+            or not self.weighted_score.is_finite()
+        ):
+            raise ValueError("component weighted_score must be a finite Decimal")
         expected = _weighted_score(self.state, self.weight)
         if self.weighted_score != expected:
             raise ValueError("component weighted_score does not match state and weight")
@@ -296,12 +312,52 @@ class RegimeResult:
             raise ValueError("unsupported regime result schema version")
         if not self.result_id:
             raise ValueError("result_id must not be empty")
+        result_collections = (
+            self.components,
+            self.metrics,
+            self.critical_stress_reasons,
+            self.input_snapshot_ids,
+            self.quality_flags,
+            self.unavailable_reasons,
+        )
+        if any(not isinstance(collection, tuple) for collection in result_collections):
+            raise ValueError("regime result collections must be immutable tuples")
         if self.regime is Regime.UNKNOWN and self.score is not None:
             raise ValueError("UNKNOWN regime must not expose a numeric score")
         if self.regime is not Regime.UNKNOWN and self.score is None:
             raise ValueError("known regimes require a numeric score")
+        if self.score is not None and (
+            not isinstance(self.score, Decimal) or not self.score.is_finite()
+        ):
+            raise ValueError("regime score must be a finite Decimal")
         if tuple(component.component for component in self.components) != tuple(RegimeComponent):
             raise ValueError("regime components must use canonical order")
+        broad_unavailable = (
+            self.components[0].state is RegimeComponentState.UNAVAILABLE
+        )
+        other_unavailable = sum(
+            component.state is RegimeComponentState.UNAVAILABLE
+            for component in self.components[1:]
+        )
+        availability_requires_unknown = broad_unavailable or other_unavailable >= 2
+        if availability_requires_unknown and self.regime is not Regime.UNKNOWN:
+            raise ValueError(
+                "component availability requires UNKNOWN when broad trend is unavailable "
+                "or at least two other components are unavailable"
+            )
+        if self.regime is not Regime.UNKNOWN:
+            expected_score = sum(
+                (
+                    component.weighted_score
+                    for component in self.components
+                    if component.weighted_score is not None
+                ),
+                Decimal(0),
+            )
+            if self.score != expected_score:
+                raise ValueError(
+                    "regime score must equal the sum of available component weighted scores"
+                )
         if self.metrics != tuple(sorted(self.metrics, key=lambda metric: metric.metric_id)):
             raise ValueError("regime metrics must be sorted by metric ID")
         if self.input_snapshot_ids != tuple(sorted(self.input_snapshot_ids)):
@@ -310,6 +366,12 @@ class RegimeResult:
             raise ValueError("calculated_at must be timezone-aware UTC")
         if self.critical_stress != bool(self.critical_stress_reasons):
             raise ValueError("critical stress and reasons must be set together")
+        if (
+            self.critical_stress
+            and self.regime is not Regime.DEFENSIVE
+            and self.regime is not Regime.UNKNOWN
+        ):
+            raise ValueError("critical stress requires DEFENSIVE or UNKNOWN regime")
 
 
 def _weighted_score(state: RegimeComponentState, weight: Decimal) -> Decimal | None:

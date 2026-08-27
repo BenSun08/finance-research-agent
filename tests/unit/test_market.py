@@ -74,6 +74,22 @@ def test_daily_bar_rejects_invalid_price_or_volume_structure(
         )
 
 
+@pytest.mark.parametrize(
+    "non_finite_price",
+    [Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")],
+)
+def test_daily_bar_rejects_non_finite_prices(non_finite_price: Decimal) -> None:
+    with pytest.raises(InvalidMarketDataError, match="positive and finite"):
+        DailyBar(
+            session_date=date(2026, 8, 25),
+            open=non_finite_price,
+            high=Decimal("102"),
+            low=Decimal("99"),
+            close=Decimal("101"),
+            volume=1_000,
+        )
+
+
 def test_market_snapshot_rejects_duplicate_or_out_of_order_sessions() -> None:
     first = DailyBar(
         session_date=date(2026, 8, 25),

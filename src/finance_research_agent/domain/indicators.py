@@ -32,8 +32,8 @@ def _direction(value: Decimal) -> MetricDirection:
 
 
 def _require_positive_window(window: int) -> None:
-    if window <= 0:
-        raise ValueError("indicator windows must be positive")
+    if not isinstance(window, int) or isinstance(window, bool) or window <= 0:
+        raise ValueError("indicator windows must be positive integers")
 
 
 def _require_utc(value: datetime) -> None:
@@ -526,14 +526,28 @@ def equal_weight_relative_return(
 
     _require_positive_window(window)
     _require_utc(cutoff_at)
-    snapshots = tuple(assets) + tuple(benchmarks)
+
+    def canonicalize(items: Sequence[MarketSnapshot]) -> tuple[MarketSnapshot, ...]:
+        snapshots = tuple(items)
+        identities = tuple((snapshot.symbol, snapshot.snapshot_id) for snapshot in snapshots)
+        if len(set(identities)) != len(identities):
+            raise InvalidMarketDataError(
+                "equal-weight baskets cannot contain duplicate snapshot identities"
+            )
+        return tuple(
+            sorted(snapshots, key=lambda snapshot: (snapshot.symbol, snapshot.snapshot_id))
+        )
+
+    canonical_assets = canonicalize(assets)
+    canonical_benchmarks = canonicalize(benchmarks)
+    snapshots = canonical_assets + canonical_benchmarks
     _require_snapshots_at_or_before_cutoff(snapshots, cutoff_at)
     parameters = (
-        ("asset_symbols", ",".join(sorted(snapshot.symbol for snapshot in assets))),
-        ("benchmark_symbols", ",".join(sorted(snapshot.symbol for snapshot in benchmarks))),
+        ("asset_symbols", ",".join(snapshot.symbol for snapshot in canonical_assets)),
+        ("benchmark_symbols", ",".join(snapshot.symbol for snapshot in canonical_benchmarks)),
         ("window", str(window)),
     )
-    if not assets or not benchmarks:
+    if not canonical_assets or not canonical_benchmarks:
         return _unavailable(
             name=MetricName.EQUAL_WEIGHT_RELATIVE_RETURN,
             unit=MetricUnit.DECIMAL,
@@ -581,7 +595,7 @@ def equal_weight_relative_return(
             )
             return sum(returns, Decimal(0)) / Decimal(len(returns))
 
-        value = basket_return(assets) - basket_return(benchmarks)
+        value = basket_return(canonical_assets) - basket_return(canonical_benchmarks)
     return _result(
         name=MetricName.EQUAL_WEIGHT_RELATIVE_RETURN,
         status=MetricStatus.AVAILABLE,
