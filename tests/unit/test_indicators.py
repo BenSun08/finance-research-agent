@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -95,6 +96,30 @@ def _ohlc_snapshot(
     )
 
 
+def _flat_price_snapshot(symbol: str, closes: tuple[str, ...]) -> MarketSnapshot:
+    bars = tuple(
+        DailyBar(
+            session_date=date(2026, 1, 1) + timedelta(days=index),
+            open=Decimal(close),
+            high=Decimal(close),
+            low=Decimal(close),
+            close=Decimal(close),
+            volume=1_000,
+        )
+        for index, close in enumerate(closes)
+    )
+    return MarketSnapshot(
+        schema_version="market-snapshot-v1",
+        snapshot_id=f"synthetic-{symbol.lower()}-flat-{len(bars)}",
+        symbol=symbol,
+        as_of=CUTOFF,
+        currency="USD",
+        source=MarketDataSource.SYNTHETIC,
+        completed_daily_bars=bars,
+        quality_flags=(),
+    )
+
+
 def test_sma_and_relative_return_are_exact_decimal_metrics() -> None:
     average = sma(_snapshot("SPY", ("10", "11", "12")), window=3, cutoff_at=CUTOFF)
     relative = relative_return(
@@ -173,15 +198,122 @@ def test_percentile_rank_uses_midrank_ties(
     ) == Decimal(expected)
 
 
-def test_percentile_metric_unit_declares_zero_to_one_hundred_scale() -> None:
-    result = atr_percentile(
+def test_percentile_metrics_use_rolling_history_and_zero_to_one_hundred_scale() -> None:
+    atr_result = atr_percentile(
         _snapshot("SPY", ("100", "101", "102", "103")),
         window=1,
         history_window=2,
         cutoff_at=CUTOFF,
     )
+    volatility_result = realized_volatility_percentile(
+        _snapshot("QQQ", ("100", "100", "100", "110", "99")),
+        window=2,
+        history_window=2,
+        cutoff_at=CUTOFF,
+    )
 
-    assert result.unit is MetricUnit.PERCENTILE_0_TO_100
+    assert atr_result.status is MetricStatus.AVAILABLE
+    assert atr_result.value == Decimal("0")
+    assert atr_result.unit is MetricUnit.PERCENTILE_0_TO_100
+    assert volatility_result.status is MetricStatus.AVAILABLE
+    assert volatility_result.value == Decimal("100")
+    assert volatility_result.unit is MetricUnit.PERCENTILE_0_TO_100
+
+
+def test_equal_weight_relative_return_is_exact_and_preserves_basket_roles() -> None:
+    result = equal_weight_relative_return(
+        (_snapshot("QQQ", ("100", "110")), _snapshot("IWM", ("100", "120"))),
+        (_snapshot("XLU", ("100", "105")), _snapshot("XLP", ("100", "95"))),
+        window=1,
+        cutoff_at=CUTOFF,
+    )
+
+    assert result.status is MetricStatus.AVAILABLE
+    assert result.value == Decimal("0.15")
+    assert result.direction is MetricDirection.UP
+    assert result.unit is MetricUnit.DECIMAL
+    assert ("asset_symbols", "IWM,QQQ") in result.parameters
+    assert ("benchmark_symbols", "XLP,XLU") in result.parameters
+
+
+def test_equal_weight_relative_return_is_independent_of_basket_order() -> None:
+    assets = (
+        _flat_price_snapshot("AAA", ("1", "1000000000000000000000000001")),
+        _flat_price_snapshot("BBB", ("1", "1.1")),
+        _flat_price_snapshot("CCC", ("10", "1")),
+    )
+    benchmarks = (
+        _flat_price_snapshot("DDD", ("1", "1000000000000000000000000001")),
+        _flat_price_snapshot("EEE", ("1", "1.1")),
+        _flat_price_snapshot("FFF", ("10", "1")),
+    )
+
+    canonical = equal_weight_relative_return(
+        assets, benchmarks, window=1, cutoff_at=CUTOFF
+    )
+    assets_reordered = equal_weight_relative_return(
+        (assets[1], assets[2], assets[0]), benchmarks, window=1, cutoff_at=CUTOFF
+    )
+    benchmarks_reordered = equal_weight_relative_return(
+        assets, (benchmarks[1], benchmarks[2], benchmarks[0]), window=1, cutoff_at=CUTOFF
+    )
+    both_reordered = equal_weight_relative_return(
+        (assets[1], assets[2], assets[0]),
+        (benchmarks[1], benchmarks[2], benchmarks[0]),
+        window=1,
+        cutoff_at=CUTOFF,
+    )
+
+    assert canonical == assets_reordered == benchmarks_reordered == both_reordered
+
+
+def test_equal_weight_relative_return_rejects_duplicate_basket_identities() -> None:
+    asset = _snapshot("QQQ", ("100", "110"))
+    benchmark = _snapshot("SPY", ("100", "105"))
+
+    with pytest.raises(InvalidMarketDataError, match="duplicate snapshot identities"):
+        equal_weight_relative_return(
+            (asset, asset), (benchmark,), window=1, cutoff_at=CUTOFF
+        )
+
+
+@pytest.mark.parametrize("invalid_window", [True, False, 1.5])
+def test_public_indicators_reject_non_integer_windows(invalid_window: object) -> None:
+    snapshot = _snapshot("SPY", ("100", "101", "102", "103"))
+    benchmark = _snapshot("QQQ", ("100", "99", "98", "97"))
+    calculations = (
+        lambda: sma(snapshot, window=invalid_window, cutoff_at=CUTOFF),
+        lambda: sma_slope(
+            snapshot, window=invalid_window, lookback=1, cutoff_at=CUTOFF
+        ),
+        lambda: sma_slope(
+            snapshot, window=2, lookback=invalid_window, cutoff_at=CUTOFF
+        ),
+        lambda: relative_return(
+            snapshot, benchmark, window=invalid_window, cutoff_at=CUTOFF
+        ),
+        lambda: atr_percent(snapshot, window=invalid_window, cutoff_at=CUTOFF),
+        lambda: realized_volatility(snapshot, window=invalid_window, cutoff_at=CUTOFF),
+        lambda: atr_percentile(
+            snapshot, window=invalid_window, history_window=1, cutoff_at=CUTOFF
+        ),
+        lambda: atr_percentile(
+            snapshot, window=1, history_window=invalid_window, cutoff_at=CUTOFF
+        ),
+        lambda: realized_volatility_percentile(
+            snapshot, window=invalid_window, history_window=1, cutoff_at=CUTOFF
+        ),
+        lambda: realized_volatility_percentile(
+            snapshot, window=1, history_window=invalid_window, cutoff_at=CUTOFF
+        ),
+        lambda: equal_weight_relative_return(
+            (snapshot,), (benchmark,), window=invalid_window, cutoff_at=CUTOFF
+        ),
+    )
+
+    for calculate in calculations:
+        with pytest.raises(ValueError, match="positive integers"):
+            calculate()  # type: ignore[call-arg]
 
 
 def test_public_indicators_reject_snapshots_newer_than_their_cutoff() -> None:
@@ -289,3 +421,15 @@ def test_metric_result_enforces_available_and_unavailable_invariants() -> None:
             value=Decimal("1"),
             unavailable_reason=MetricUnavailableReason.INSUFFICIENT_HISTORY,
         )
+
+    valid = MetricResult(
+        **common,
+        status=MetricStatus.AVAILABLE,
+        value=Decimal("1"),
+        unavailable_reason=None,
+    )
+    for non_finite in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")):
+        with pytest.raises(ValueError, match="finite Decimal"):
+            replace(valid, value=non_finite)
+    with pytest.raises(ValueError, match="immutable tuples"):
+        replace(valid, quality_flags=[])  # type: ignore[arg-type]
