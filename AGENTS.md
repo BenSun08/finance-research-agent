@@ -7,12 +7,13 @@ decision-support project. Product A is a personal premarket research brief for
 U.S.-listed common stocks and non-leveraged, non-inverse ETFs. It is research
 software, not a brokerage or trading system.
 
-The current milestone is **v0.1 Deterministic Research Core + First Market
-Regime Skill**. Implement only the explicitly approved synthetic-market-data
-to structured-`RegimeResult` vertical slice. Do not add Alpaca or live data,
-MCP, scheduling, SEC or macro adapters, portfolio-risk logic, position sizing,
-trade-plan generation, a complete premarket report, OpenAI API integration, or
-an independent agent runtime.
+The current milestone is **v0.2 Data Layer**; v0.1.0 is released and closed.
+Implement only explicitly approved provider-boundary and completed historical
+daily-bar normalization slices. Alpaca-specific response and SDK types must
+terminate inside approved market-data adapters. Do not add live provider calls,
+brokerage account/position/order APIs, streaming, MCP, scheduling, SEC or macro
+adapters, caching, portfolio-risk logic, the full premarket workflow, or LLM
+integration.
 
 The existing Product A v0.1 implementation plan is an acceptance-traceable
 master blueprint. It is not authorization to execute the plan end-to-end or to

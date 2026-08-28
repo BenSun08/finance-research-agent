@@ -46,6 +46,45 @@ def test_market_snapshot_accepts_valid_completed_synthetic_bars() -> None:
     assert snapshot.symbol == "SPY"
 
 
+def test_market_snapshot_accepts_normalized_provider_bars() -> None:
+    bar = DailyBar(
+        session_date=date(2026, 8, 24),
+        open=Decimal("100"),
+        high=Decimal("102"),
+        low=Decimal("99"),
+        close=Decimal("101"),
+        volume=1_000_000,
+    )
+
+    snapshot = MarketSnapshot(
+        schema_version="market-snapshot-v1",
+        snapshot_id="normalized-spy-valid",
+        symbol="SPY",
+        as_of=datetime(2026, 8, 25, tzinfo=UTC),
+        currency="USD",
+        source=MarketDataSource.NORMALIZED_PROVIDER,
+        completed_daily_bars=(bar,),
+        quality_flags=("ADJUSTMENT_SPLIT", "FEED_IEX_SINGLE_EXCHANGE"),
+    )
+
+    assert snapshot.source is MarketDataSource.NORMALIZED_PROVIDER
+    assert snapshot.completed_daily_bars == (bar,)
+
+
+def test_market_snapshot_rejects_a_raw_source_string() -> None:
+    with pytest.raises(InvalidMarketDataError, match="source"):
+        MarketSnapshot(
+            schema_version="market-snapshot-v1",
+            snapshot_id="normalized-spy-raw-source",
+            symbol="SPY",
+            as_of=datetime(2026, 8, 25, tzinfo=UTC),
+            currency="USD",
+            source="normalized_provider",  # type: ignore[arg-type]
+            completed_daily_bars=(),
+            quality_flags=(),
+        )
+
+
 @pytest.mark.parametrize(
     ("open_price", "high", "low", "close", "volume"),
     [

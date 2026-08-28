@@ -36,5 +36,6 @@ Human approval remains the final decision gate.
 
 ## Status
 
-v0.1 provides a deterministic, synthetic-data-only market-regime vertical slice.
-Live data, trading, and the broader Product A runtime remain intentionally deferred.
+v0.1.0 is released with a deterministic, synthetic-data-only market-regime core.
+v0.2 is building an offline, provider-independent historical daily-bar boundary.
+Live provider calls, trading, and the broader Product A runtime remain deferred.
