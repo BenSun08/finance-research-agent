@@ -15,6 +15,7 @@ class MarketDataSource(StrEnum):
     """Market-data sources permitted by the current bounded release."""
 
     SYNTHETIC = "synthetic"
+    NORMALIZED_PROVIDER = "normalized_provider"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +72,11 @@ class MarketSnapshot:
             raise InvalidMarketDataError("as_of must be timezone-aware UTC")
         if self.currency != "USD":
             raise InvalidMarketDataError("currency must be USD in market-snapshot-v1")
-        if self.source is not MarketDataSource.SYNTHETIC:
-            raise InvalidMarketDataError("only synthetic market data is supported")
+        if not isinstance(self.source, MarketDataSource) or self.source not in (
+            MarketDataSource.SYNTHETIC,
+            MarketDataSource.NORMALIZED_PROVIDER,
+        ):
+            raise InvalidMarketDataError("unsupported market data source")
 
         dates = tuple(bar.session_date for bar in self.completed_daily_bars)
         if any(current >= following for current, following in zip(dates, dates[1:])):
