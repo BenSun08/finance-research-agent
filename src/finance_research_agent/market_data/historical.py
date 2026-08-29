@@ -120,7 +120,12 @@ def coverage_for_feed(feed: MarketDataFeed) -> MarketDataCoverage:
 
 @dataclass(frozen=True, slots=True)
 class HistoricalDailyBarsRequest:
-    """Provider-neutral request and point-in-time completion context."""
+    """Provider-neutral request and point-in-time completion context.
+
+    ``expected_sessions`` must be supplied by the authoritative upstream U.S.
+    trading-calendar responsibility and must contain valid completed trading
+    sessions.
+    """
 
     symbols: tuple[str, ...]
     start_at: datetime

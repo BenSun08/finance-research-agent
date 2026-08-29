@@ -26,13 +26,14 @@ RETRIEVED_AT = datetime(2026, 8, 25, 12, 40, tzinfo=UTC)
 def _request(
     *,
     symbols: tuple[str, ...] = ("SPY",),
+    start_at: datetime = datetime(2026, 8, 21, 4, tzinfo=UTC),
     expected_sessions: tuple[date, ...] = (date(2026, 8, 21), date(2026, 8, 24)),
     completed_through_session: date = date(2026, 8, 24),
     feed: MarketDataFeed = MarketDataFeed.IEX,
 ) -> HistoricalDailyBarsRequest:
     return HistoricalDailyBarsRequest(
         symbols=symbols,
-        start_at=datetime(2026, 8, 21, 4, tzinfo=UTC),
+        start_at=start_at,
         end_at=datetime(2026, 8, 25, 3, 59, 59, tzinfo=UTC),
         expected_sessions=expected_sessions,
         completed_through_session=completed_through_session,
@@ -151,16 +152,17 @@ def test_missing_symbol_and_empty_response_are_structured_no_data(
 
 def test_missing_internal_session_and_stale_tail_are_distinct() -> None:
     internal_request = _request(
-        expected_sessions=(date(2026, 8, 21), date(2026, 8, 22), date(2026, 8, 24))
+        start_at=datetime(2026, 8, 20, 4, tzinfo=UTC),
+        expected_sessions=(date(2026, 8, 20), date(2026, 8, 21), date(2026, 8, 24)),
     )
     missing = _only_failure(
-        {"SPY": [_record(date(2026, 8, 21)), _record(date(2026, 8, 24))]},
+        {"SPY": [_record(date(2026, 8, 20)), _record(date(2026, 8, 24))]},
         request=internal_request,
     )
     stale = _only_failure({"SPY": [_record(date(2026, 8, 21))]})
 
     assert missing.reason is HistoricalBarsUnavailableReason.MISSING_EXPECTED_SESSION
-    assert missing.missing_sessions == (date(2026, 8, 22),)
+    assert missing.missing_sessions == (date(2026, 8, 21),)
     assert stale.reason is HistoricalBarsUnavailableReason.STALE
     assert stale.missing_sessions == (date(2026, 8, 24),)
 
