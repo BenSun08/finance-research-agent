@@ -7,17 +7,29 @@ decision-support project. Product A is a personal premarket research brief for
 U.S.-listed common stocks and non-leveraged, non-inverse ETFs. It is research
 software, not a brokerage or trading system.
 
-The current milestone is **v0.2 Data Layer**; v0.1.0 is released and closed.
-Implement only explicitly approved provider-boundary and completed historical
-daily-bar normalization slices. Alpaca-specific response and SDK types must
-terminate inside approved market-data adapters. Do not add live provider calls,
-brokerage account/position/order APIs, streaming, MCP, scheduling, SEC or macro
-adapters, caching, portfolio-risk logic, the full premarket workflow, or LLM
-integration.
+Current milestone: v0.2 Data Layer
 
-The existing Product A v0.1 implementation plan is an acceptance-traceable
-master blueprint. It is not authorization to execute the plan end-to-end or to
-pull later-slice functionality into the current milestone.
+Allowed:
+- market-data-only Alpaca historical client integration
+- authenticated historical market-data reads
+- request mapping
+- provider response materialization/pagination
+- provider-level error handling
+- offline fake/mock tests
+- mapping into existing normalization boundary
+
+Still prohibited:
+- accounts
+- positions
+- buying power
+- orders
+- trading
+- streaming
+- MCP
+- scheduling
+- SEC/macro
+- portfolio risk
+- LLM integration
 
 ## Safety, Numeric Truth, and Approval
 

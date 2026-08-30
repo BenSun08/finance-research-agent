@@ -8,7 +8,9 @@ version = "0.2.0.dev0"
 description = "Deterministic research core with a provider-independent market-data boundary"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "alpaca-py==0.44.0",
+]
 
 [project.optional-dependencies]
 dev = [
