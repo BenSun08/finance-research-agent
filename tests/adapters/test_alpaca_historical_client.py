@@ -161,6 +161,42 @@ def test_request_maps_exhaustively_to_stock_bars_request(
     assert "page_token" not in request_fields
 
 
+@pytest.mark.parametrize("error_type", [KeyError, TypeError])
+def test_request_mapping_programmer_errors_propagate(
+    error_type: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, sdk_client = _client(_complete_bar_set("SPY"))
+
+    def fail_mapping(request: HistoricalDailyBarsRequest) -> StockBarsRequest:
+        raise error_type("mapping implementation defect")
+
+    monkeypatch.setattr(alpaca_historical, "_to_stock_bars_request", fail_mapping)
+
+    with pytest.raises(error_type, match="mapping implementation defect"):
+        client.fetch_daily_bars(_request())
+
+    assert sdk_client.requests == []
+
+
+def test_request_mapping_validation_failure_is_invalid_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, sdk_client = _client(_complete_bar_set("SPY"))
+
+    def reject_request(request: HistoricalDailyBarsRequest) -> StockBarsRequest:
+        raise ValueError("SDK request validation failed")
+
+    monkeypatch.setattr(alpaca_historical, "_to_stock_bars_request", reject_request)
+
+    result = client.fetch_daily_bars(_request())
+
+    assert isinstance(result, AlpacaProviderFailure)
+    assert result.reason is AlpacaProviderFailureReason.INVALID_REQUEST
+    assert result.retryable is False
+    assert sdk_client.requests == []
+
+
 def test_multi_symbol_bar_set_is_materialized_before_one_normalization_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -338,6 +374,47 @@ def test_sdk_response_parsing_failure_is_invalid_response() -> None:
     assert result.reason is AlpacaProviderFailureReason.INVALID_RESPONSE
     assert result.status_code is None
     assert result.retryable is False
+
+
+@pytest.mark.parametrize("error_type", [AttributeError, TypeError, ValueError])
+def test_materialization_shape_errors_are_invalid_response(
+    error_type: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _ = _client(_complete_bar_set("SPY"))
+
+    def fail_materialization(
+        response: BarSet,
+    ) -> dict[str, tuple[AlpacaDailyBarRecord, ...]]:
+        raise error_type("malformed SDK bar")
+
+    monkeypatch.setattr(alpaca_historical, "_materialize_bar_set", fail_materialization)
+
+    result = client.fetch_daily_bars(_request())
+
+    assert isinstance(result, AlpacaProviderFailure)
+    assert result.reason is AlpacaProviderFailureReason.INVALID_RESPONSE
+    assert result.retryable is False
+
+
+@pytest.mark.parametrize("error_type", [AttributeError, TypeError, ValueError])
+def test_normalizer_programmer_errors_propagate(
+    error_type: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _ = _client(_complete_bar_set("SPY"))
+
+    def fail_normalization(*args: object, **kwargs: object) -> tuple[()]:
+        raise error_type("normalizer implementation defect")
+
+    monkeypatch.setattr(
+        alpaca_historical,
+        "normalize_alpaca_daily_bars",
+        fail_normalization,
+    )
+
+    with pytest.raises(error_type, match="normalizer implementation defect"):
+        client.fetch_daily_bars(_request())
 
 
 @pytest.mark.parametrize(

@@ -195,7 +195,7 @@ class AlpacaHistoricalBarsClient:
 
         try:
             sdk_request = _to_stock_bars_request(request)
-        except (KeyError, TypeError, ValueError):
+        except ValueError:
             return _request_failure(AlpacaProviderFailureReason.INVALID_REQUEST)
 
         try:
@@ -215,10 +215,14 @@ class AlpacaHistoricalBarsClient:
 
         try:
             records_by_symbol = _materialize_bar_set(response)
+        except (AttributeError, TypeError, ValueError):
+            return _request_failure(AlpacaProviderFailureReason.INVALID_RESPONSE)
+
+        try:
             return normalize_alpaca_daily_bars(
                 records_by_symbol,
                 request=request,
                 retrieved_at=retrieved_at,
             )
-        except (AttributeError, InvalidMarketDataError, TypeError, ValueError):
+        except InvalidMarketDataError:
             return _request_failure(AlpacaProviderFailureReason.INVALID_RESPONSE)
