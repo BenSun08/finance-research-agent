@@ -7,7 +7,7 @@ decision-support project. Product A is a personal premarket research brief for
 U.S.-listed common stocks and non-leveraged, non-inverse ETFs. It is research
 software, not a brokerage or trading system.
 
-Current milestone: v0.2 Data Layer
+Current milestone: v0.3 Workflow
 
 Allowed:
 - market-data-only Alpaca historical client integration
@@ -17,18 +17,20 @@ Allowed:
 - provider-level error handling
 - offline fake/mock tests
 - mapping into existing normalization boundary
+- deterministic application/workflow orchestration over the existing
+  historical-data and regime capabilities
 
 Still prohibited:
-- accounts
-- positions
-- buying power
-- orders
-- trading
+- Alpaca brokerage/trading capabilities
+- accounts, positions, and buying power
+- orders, routing, cancellation, and execution
 - streaming
 - MCP
 - scheduling
+- autonomous agent runtime
 - SEC/macro
 - portfolio risk
+- second providers
 - LLM integration
 
 ## Safety, Numeric Truth, and Approval
