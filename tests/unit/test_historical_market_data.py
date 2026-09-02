@@ -15,6 +15,8 @@ from finance_research_agent.market_data.historical import (
     DailyBarObservation,
     HistoricalBarsFailure,
     HistoricalBarsProvenance,
+    HistoricalBarsRequestFailure,
+    HistoricalBarsRequestFailureReason,
     HistoricalBarsUnavailableReason,
     HistoricalDailyBars,
     HistoricalDailyBarsRequest,
@@ -285,3 +287,48 @@ def test_failure_requires_a_typed_reason_and_canonical_missing_sessions() -> Non
 
     with pytest.raises(InvalidMarketDataError, match="only available"):
         to_market_snapshot(failure)  # type: ignore[arg-type]
+
+
+def test_request_failure_reason_taxonomy_is_exact() -> None:
+    assert tuple(reason.value for reason in HistoricalBarsRequestFailureReason) == (
+        "authentication",
+        "permission_denied",
+        "rate_limited",
+        "transport_unavailable",
+        "provider_unavailable",
+        "invalid_request",
+        "invalid_response",
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected_retryable"),
+    [
+        (HistoricalBarsRequestFailureReason.AUTHENTICATION, False),
+        (HistoricalBarsRequestFailureReason.PERMISSION_DENIED, False),
+        (HistoricalBarsRequestFailureReason.RATE_LIMITED, True),
+        (HistoricalBarsRequestFailureReason.TRANSPORT_UNAVAILABLE, True),
+        (HistoricalBarsRequestFailureReason.PROVIDER_UNAVAILABLE, True),
+        (HistoricalBarsRequestFailureReason.INVALID_REQUEST, False),
+        (HistoricalBarsRequestFailureReason.INVALID_RESPONSE, False),
+    ],
+)
+def test_request_failure_retryability_is_derived_from_its_neutral_reason(
+    reason: HistoricalBarsRequestFailureReason,
+    expected_retryable: bool,
+) -> None:
+    failure = HistoricalBarsRequestFailure(reason=reason)
+
+    assert failure.retryable is expected_retryable
+    assert not hasattr(failure, "status_code")
+
+
+def test_request_failure_requires_a_typed_reason_and_is_immutable() -> None:
+    failure = HistoricalBarsRequestFailure(
+        reason=HistoricalBarsRequestFailureReason.AUTHENTICATION
+    )
+
+    with pytest.raises(ValueError, match="typed reason"):
+        HistoricalBarsRequestFailure(reason="authentication")  # type: ignore[arg-type]
+    with pytest.raises(FrozenInstanceError):
+        failure.reason = HistoricalBarsRequestFailureReason.INVALID_REQUEST  # type: ignore[misc]
