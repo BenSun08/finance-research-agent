@@ -20,6 +20,14 @@ def run_regime_workflow(
 ) -> RegimeResult:
     """Project available histories and run the existing regime calculation once."""
 
+    seen_symbols: set[str] = set()
+    for outcome in outcomes:
+        if outcome.symbol in seen_symbols:
+            raise ValueError(
+                f"duplicate HistoricalBarsOutcome for symbol {outcome.symbol!r}"
+            )
+        seen_symbols.add(outcome.symbol)
+
     snapshots: dict[str, MarketSnapshot] = {}
     for outcome in outcomes:
         if isinstance(outcome, HistoricalDailyBars):

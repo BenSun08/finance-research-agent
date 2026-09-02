@@ -20,6 +20,7 @@ from finance_research_agent.market_data.historical import (
     BarAdjustment,
     DailyBarObservation,
     HistoricalBarsFailure,
+    HistoricalBarsOutcome,
     HistoricalBarsProvenance,
     HistoricalBarsUnavailableReason,
     HistoricalDailyBars,
@@ -142,6 +143,61 @@ def test_calls_calculate_regime_once_with_unchanged_policy_and_cutoff(
     assert snapshots == {}
     assert received_policy is policy
     assert received_cutoff is CUTOFF
+
+
+def _assert_duplicate_symbol_rejected_before_downstream_calls(
+    outcomes: tuple[HistoricalBarsOutcome, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    projected: list[HistoricalDailyBars] = []
+    calculations: list[Mapping[str, MarketSnapshot]] = []
+    expected = calculate_regime({}, RegimePolicy(), CUTOFF)
+    real_projection = workflow_module.to_market_snapshot
+
+    def tracking_projection(history: HistoricalDailyBars) -> MarketSnapshot:
+        projected.append(history)
+        return real_projection(history)
+
+    def tracking_calculation(
+        snapshots: Mapping[str, MarketSnapshot],
+        policy: RegimePolicy,
+        cutoff_at: datetime,
+    ) -> RegimeResult:
+        calculations.append(snapshots)
+        return expected
+
+    monkeypatch.setattr(workflow_module, "to_market_snapshot", tracking_projection)
+    monkeypatch.setattr(workflow_module, "calculate_regime", tracking_calculation)
+
+    with pytest.raises(ValueError, match="SPY"):
+        run_regime_workflow(outcomes, RegimePolicy(), CUTOFF)
+
+    assert projected == []
+    assert calculations == []
+
+
+def test_rejects_duplicate_available_histories_before_downstream_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_duplicate_symbol_rejected_before_downstream_calls(
+        (_history("SPY"), _history("SPY")), monkeypatch
+    )
+
+
+def test_rejects_available_and_failure_for_the_same_symbol_before_downstream_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_duplicate_symbol_rejected_before_downstream_calls(
+        (_history("SPY"), _failure("SPY")), monkeypatch
+    )
+
+
+def test_rejects_duplicate_failures_before_downstream_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_duplicate_symbol_rejected_before_downstream_calls(
+        (_failure("SPY"), _failure("SPY")), monkeypatch
+    )
 
 
 def test_failure_remains_missing_and_domain_owns_unknown_semantics() -> None:
