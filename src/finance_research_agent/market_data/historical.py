@@ -22,9 +22,12 @@ __all__ = [
     "NORMALIZER_VERSION",
     "BarAdjustment",
     "DailyBarObservation",
+    "HistoricalBarsFetchResult",
     "HistoricalBarsFailure",
     "HistoricalBarsOutcome",
     "HistoricalBarsProvenance",
+    "HistoricalBarsRequestFailure",
+    "HistoricalBarsRequestFailureReason",
     "HistoricalBarsUnavailableReason",
     "HistoricalDailyBars",
     "HistoricalDailyBarsRequest",
@@ -74,6 +77,18 @@ class HistoricalBarsUnavailableReason(StrEnum):
     MALFORMED_BAR = "malformed_bar"
     STALE = "stale"
     FUTURE_OR_INCOMPLETE_BAR = "future_or_incomplete_bar"
+
+
+class HistoricalBarsRequestFailureReason(StrEnum):
+    """Provider-neutral reason a complete request result is unavailable."""
+
+    AUTHENTICATION = "authentication"
+    PERMISSION_DENIED = "permission_denied"
+    RATE_LIMITED = "rate_limited"
+    TRANSPORT_UNAVAILABLE = "transport_unavailable"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    INVALID_REQUEST = "invalid_request"
+    INVALID_RESPONSE = "invalid_response"
 
 
 def _require_utc(value: datetime, field_name: str) -> None:
@@ -473,7 +488,21 @@ class HistoricalBarsFailure:
         _require_quality_flags(self.quality_flags)
 
 
+@dataclass(frozen=True, slots=True)
+class HistoricalBarsRequestFailure:
+    """Provider-neutral request-global failure before per-symbol outcomes exist."""
+
+    reason: HistoricalBarsRequestFailureReason
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reason, HistoricalBarsRequestFailureReason):
+            raise ValueError("historical-bars request failure requires a typed reason")
+
+
 type HistoricalBarsOutcome = HistoricalDailyBars | HistoricalBarsFailure
+type HistoricalBarsFetchResult = (
+    tuple[HistoricalBarsOutcome, ...] | HistoricalBarsRequestFailure
+)
 
 
 def to_market_snapshot(history: HistoricalDailyBars) -> MarketSnapshot:

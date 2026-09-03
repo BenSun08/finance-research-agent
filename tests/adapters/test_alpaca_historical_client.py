@@ -13,14 +13,12 @@ from alpaca.data.timeframe import TimeFrame
 
 import finance_research_agent.adapters.alpaca_historical as alpaca_historical
 from finance_research_agent.adapters.alpaca import AlpacaDailyBarRecord
-from finance_research_agent.adapters.alpaca_historical import (
-    AlpacaHistoricalBarsClient,
-    AlpacaProviderFailure,
-    AlpacaProviderFailureReason,
-)
+from finance_research_agent.adapters.alpaca_historical import AlpacaHistoricalBarsClient
 from finance_research_agent.market_data.historical import (
     BarAdjustment,
     HistoricalBarsFailure,
+    HistoricalBarsRequestFailure,
+    HistoricalBarsRequestFailureReason,
     HistoricalBarsUnavailableReason,
     HistoricalDailyBars,
     HistoricalDailyBarsRequest,
@@ -191,9 +189,8 @@ def test_request_mapping_validation_failure_is_invalid_request(
 
     result = client.fetch_daily_bars(_request())
 
-    assert isinstance(result, AlpacaProviderFailure)
-    assert result.reason is AlpacaProviderFailureReason.INVALID_REQUEST
-    assert result.retryable is False
+    assert isinstance(result, HistoricalBarsRequestFailure)
+    assert result.reason is HistoricalBarsRequestFailureReason.INVALID_REQUEST
     assert sdk_client.requests == []
 
 
@@ -282,28 +279,26 @@ def test_unexpected_provider_symbol_is_invalid_response_not_silent_filtering() -
 
     result = client.fetch_daily_bars(_request())
 
-    assert isinstance(result, AlpacaProviderFailure)
-    assert result.reason is AlpacaProviderFailureReason.INVALID_RESPONSE
-    assert result.retryable is False
+    assert isinstance(result, HistoricalBarsRequestFailure)
+    assert result.reason is HistoricalBarsRequestFailureReason.INVALID_RESPONSE
 
 
 @pytest.mark.parametrize(
-    ("status_code", "expected_reason", "expected_retryable"),
+    ("status_code", "expected_reason"),
     [
-        (400, AlpacaProviderFailureReason.INVALID_REQUEST, False),
-        (401, AlpacaProviderFailureReason.AUTHENTICATION, False),
-        (403, AlpacaProviderFailureReason.PERMISSION_DENIED, False),
-        (408, AlpacaProviderFailureReason.TRANSPORT_UNAVAILABLE, True),
-        (422, AlpacaProviderFailureReason.INVALID_REQUEST, False),
-        (429, AlpacaProviderFailureReason.RATE_LIMITED, True),
-        (500, AlpacaProviderFailureReason.PROVIDER_UNAVAILABLE, True),
-        (503, AlpacaProviderFailureReason.PROVIDER_UNAVAILABLE, True),
+        (400, HistoricalBarsRequestFailureReason.INVALID_REQUEST),
+        (401, HistoricalBarsRequestFailureReason.AUTHENTICATION),
+        (403, HistoricalBarsRequestFailureReason.PERMISSION_DENIED),
+        (408, HistoricalBarsRequestFailureReason.TRANSPORT_UNAVAILABLE),
+        (422, HistoricalBarsRequestFailureReason.INVALID_REQUEST),
+        (429, HistoricalBarsRequestFailureReason.RATE_LIMITED),
+        (500, HistoricalBarsRequestFailureReason.PROVIDER_UNAVAILABLE),
+        (503, HistoricalBarsRequestFailureReason.PROVIDER_UNAVAILABLE),
     ],
 )
 def test_http_provider_failures_are_typed_and_request_global(
     status_code: int,
-    expected_reason: AlpacaProviderFailureReason,
-    expected_retryable: bool,
+    expected_reason: HistoricalBarsRequestFailureReason,
 ) -> None:
     error = APIError(
         '{"code": "secret-sentinel", "message": "secret-sentinel"}',
@@ -313,23 +308,23 @@ def test_http_provider_failures_are_typed_and_request_global(
 
     result = client.fetch_daily_bars(_request())
 
-    assert isinstance(result, AlpacaProviderFailure)
+    assert isinstance(result, HistoricalBarsRequestFailure)
     assert result.reason is expected_reason
-    assert result.status_code == status_code
-    assert result.retryable is expected_retryable
+    assert not hasattr(result, "status_code")
+    assert not hasattr(result, "retryable")
     assert "secret-sentinel" not in repr(result)
     assert len(sdk_client.requests) == 1
 
 
-def test_provider_error_without_status_fails_closed_without_retry_advice() -> None:
+def test_provider_error_without_status_is_neutral_provider_unavailable() -> None:
     client, _ = _client(APIError('{"code": 0, "message": "unknown"}'))
 
     result = client.fetch_daily_bars(_request())
 
-    assert isinstance(result, AlpacaProviderFailure)
-    assert result.reason is AlpacaProviderFailureReason.PROVIDER_UNAVAILABLE
-    assert result.status_code is None
-    assert result.retryable is False
+    assert isinstance(result, HistoricalBarsRequestFailure)
+    assert result.reason is HistoricalBarsRequestFailureReason.PROVIDER_UNAVAILABLE
+    assert not hasattr(result, "status_code")
+    assert not hasattr(result, "retryable")
 
 
 def test_transport_failure_is_typed_and_does_not_reach_normalization(
@@ -348,9 +343,8 @@ def test_transport_failure_is_typed_and_does_not_reach_normalization(
 
     result = client.fetch_daily_bars(_request())
 
-    assert isinstance(result, AlpacaProviderFailure)
-    assert result.reason is AlpacaProviderFailureReason.TRANSPORT_UNAVAILABLE
-    assert result.retryable is True
+    assert isinstance(result, HistoricalBarsRequestFailure)
+    assert result.reason is HistoricalBarsRequestFailureReason.TRANSPORT_UNAVAILABLE
     assert len(sdk_client.requests) == 1
 
 
@@ -359,10 +353,8 @@ def test_raw_or_unrecognized_sdk_response_is_invalid_response() -> None:
 
     result = client.fetch_daily_bars(_request())
 
-    assert isinstance(result, AlpacaProviderFailure)
-    assert result.reason is AlpacaProviderFailureReason.INVALID_RESPONSE
-    assert result.status_code is None
-    assert result.retryable is False
+    assert isinstance(result, HistoricalBarsRequestFailure)
+    assert result.reason is HistoricalBarsRequestFailureReason.INVALID_RESPONSE
 
 
 def test_sdk_response_parsing_failure_is_invalid_response() -> None:
@@ -370,10 +362,8 @@ def test_sdk_response_parsing_failure_is_invalid_response() -> None:
 
     result = client.fetch_daily_bars(_request())
 
-    assert isinstance(result, AlpacaProviderFailure)
-    assert result.reason is AlpacaProviderFailureReason.INVALID_RESPONSE
-    assert result.status_code is None
-    assert result.retryable is False
+    assert isinstance(result, HistoricalBarsRequestFailure)
+    assert result.reason is HistoricalBarsRequestFailureReason.INVALID_RESPONSE
 
 
 @pytest.mark.parametrize("error_type", [AttributeError, TypeError, ValueError])
@@ -392,9 +382,8 @@ def test_materialization_shape_errors_are_invalid_response(
 
     result = client.fetch_daily_bars(_request())
 
-    assert isinstance(result, AlpacaProviderFailure)
-    assert result.reason is AlpacaProviderFailureReason.INVALID_RESPONSE
-    assert result.retryable is False
+    assert isinstance(result, HistoricalBarsRequestFailure)
+    assert result.reason is HistoricalBarsRequestFailureReason.INVALID_RESPONSE
 
 
 @pytest.mark.parametrize("error_type", [AttributeError, TypeError, ValueError])

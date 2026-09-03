@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal, localcontext
 
@@ -15,6 +15,8 @@ from finance_research_agent.market_data.historical import (
     DailyBarObservation,
     HistoricalBarsFailure,
     HistoricalBarsProvenance,
+    HistoricalBarsRequestFailure,
+    HistoricalBarsRequestFailureReason,
     HistoricalBarsUnavailableReason,
     HistoricalDailyBars,
     HistoricalDailyBarsRequest,
@@ -285,3 +287,38 @@ def test_failure_requires_a_typed_reason_and_canonical_missing_sessions() -> Non
 
     with pytest.raises(InvalidMarketDataError, match="only available"):
         to_market_snapshot(failure)  # type: ignore[arg-type]
+
+
+def test_request_failure_reason_taxonomy_is_exact() -> None:
+    assert tuple(reason.value for reason in HistoricalBarsRequestFailureReason) == (
+        "authentication",
+        "permission_denied",
+        "rate_limited",
+        "transport_unavailable",
+        "provider_unavailable",
+        "invalid_request",
+        "invalid_response",
+    )
+
+
+def test_request_failure_contains_only_its_neutral_reason() -> None:
+    failure = HistoricalBarsRequestFailure(
+        reason=HistoricalBarsRequestFailureReason.PROVIDER_UNAVAILABLE
+    )
+
+    assert tuple(field.name for field in fields(failure)) == ("reason",)
+    assert not hasattr(failure, "retryable")
+    assert not hasattr(failure, "transient")
+    assert not hasattr(failure, "retry_hint")
+    assert not hasattr(failure, "status_code")
+
+
+def test_request_failure_requires_a_typed_reason_and_is_immutable() -> None:
+    failure = HistoricalBarsRequestFailure(
+        reason=HistoricalBarsRequestFailureReason.AUTHENTICATION
+    )
+
+    with pytest.raises(ValueError, match="typed reason"):
+        HistoricalBarsRequestFailure(reason="authentication")  # type: ignore[arg-type]
+    with pytest.raises(FrozenInstanceError):
+        failure.reason = HistoricalBarsRequestFailureReason.INVALID_REQUEST  # type: ignore[misc]
