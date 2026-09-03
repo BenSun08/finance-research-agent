@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal, localcontext
 
@@ -301,25 +301,15 @@ def test_request_failure_reason_taxonomy_is_exact() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("reason", "expected_retryable"),
-    [
-        (HistoricalBarsRequestFailureReason.AUTHENTICATION, False),
-        (HistoricalBarsRequestFailureReason.PERMISSION_DENIED, False),
-        (HistoricalBarsRequestFailureReason.RATE_LIMITED, True),
-        (HistoricalBarsRequestFailureReason.TRANSPORT_UNAVAILABLE, True),
-        (HistoricalBarsRequestFailureReason.PROVIDER_UNAVAILABLE, True),
-        (HistoricalBarsRequestFailureReason.INVALID_REQUEST, False),
-        (HistoricalBarsRequestFailureReason.INVALID_RESPONSE, False),
-    ],
-)
-def test_request_failure_retryability_is_derived_from_its_neutral_reason(
-    reason: HistoricalBarsRequestFailureReason,
-    expected_retryable: bool,
-) -> None:
-    failure = HistoricalBarsRequestFailure(reason=reason)
+def test_request_failure_contains_only_its_neutral_reason() -> None:
+    failure = HistoricalBarsRequestFailure(
+        reason=HistoricalBarsRequestFailureReason.PROVIDER_UNAVAILABLE
+    )
 
-    assert failure.retryable is expected_retryable
+    assert tuple(field.name for field in fields(failure)) == ("reason",)
+    assert not hasattr(failure, "retryable")
+    assert not hasattr(failure, "transient")
+    assert not hasattr(failure, "retry_hint")
     assert not hasattr(failure, "status_code")
 
 

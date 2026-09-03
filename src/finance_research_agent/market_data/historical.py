@@ -498,16 +498,6 @@ class HistoricalBarsRequestFailure:
         if not isinstance(self.reason, HistoricalBarsRequestFailureReason):
             raise ValueError("historical-bars request failure requires a typed reason")
 
-    @property
-    def retryable(self) -> bool:
-        """Whether a later workflow may consider retrying this failure reason."""
-
-        return self.reason in {
-            HistoricalBarsRequestFailureReason.RATE_LIMITED,
-            HistoricalBarsRequestFailureReason.TRANSPORT_UNAVAILABLE,
-            HistoricalBarsRequestFailureReason.PROVIDER_UNAVAILABLE,
-        }
-
 
 type HistoricalBarsOutcome = HistoricalDailyBars | HistoricalBarsFailure
 type HistoricalBarsFetchResult = (
