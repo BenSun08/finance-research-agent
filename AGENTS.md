@@ -7,7 +7,7 @@ decision-support project. Product A is a personal premarket research brief for
 U.S.-listed common stocks and non-leveraged, non-inverse ETFs. It is research
 software, not a brokerage or trading system.
 
-Current milestone: v0.3 Workflow
+Current milestone: v0.4 Evals
 
 Allowed:
 - market-data-only Alpaca historical client integration
@@ -19,6 +19,11 @@ Allowed:
 - mapping into existing normalization boundary
 - deterministic application/workflow orchestration over the existing
   historical-data and regime capabilities
+- evaluation work over existing deterministic/application capabilities:
+  - offline evaluation fixtures
+  - deterministic scenario/replay evaluation
+  - benchmark/evaluation harnesses
+  - evaluation metrics and regression gates
 
 Still prohibited:
 - Alpaca brokerage/trading capabilities
