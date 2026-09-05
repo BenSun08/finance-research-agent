@@ -41,3 +41,9 @@ v0.2 includes an offline-tested, market-data-only Alpaca historical daily-bars
 client that maps fully materialized SDK responses into the provider-independent
 normalization boundary. Default tests require no credentials or network access;
 trading remains unavailable.
+
+v0.3 adds provider-independent application orchestration around historical-data
+and deterministic market-regime capabilities. The application depends on the
+provider-neutral `HistoricalBarsFetcher` port, supplied by the Alpaca adapter;
+request-global failures remain provider-neutral. The workflow remains
+offline-testable, and trading remains unavailable.
