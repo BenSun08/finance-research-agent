@@ -7,7 +7,7 @@ import pytest
 import finance_research_agent.evals.regime as eval_module
 import finance_research_agent.evals.regime_benchmark as benchmark_module
 from finance_research_agent.domain.market import InvalidMarketDataError
-from finance_research_agent.domain.regime import Regime, RegimePolicy
+from finance_research_agent.domain.regime import Regime
 from finance_research_agent.evals import (
     RegimeBenchmark,
     RegimeBenchmarkRun,
@@ -40,7 +40,11 @@ def test_corpus_identity_and_explicit_gold_coverage(benchmark: RegimeBenchmark) 
         ("risk_off", Regime.DEFENSIVE, ("stress",)),
         ("missing_broad_data", Regime.UNKNOWN, ("missing_data",)),
     )
-    assert all(case.policy == RegimePolicy() for case in benchmark.cases)
+    policy = benchmark.cases[0].policy
+    assert all(case.policy == policy for case in benchmark.cases)
+    assert policy.version == "regime-policy-v1"
+    assert policy.permissive_threshold == Decimal("35")
+    assert policy.defensive_threshold == Decimal("-35")
 
 
 def test_corpus_is_authored_without_evaluating(monkeypatch: pytest.MonkeyPatch) -> None:
