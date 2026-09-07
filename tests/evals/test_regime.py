@@ -207,8 +207,50 @@ def test_case_rejects_mutable_outcomes(missing_data_case: RegimeEvalCase) -> Non
         replace(missing_data_case, outcomes=list(missing_data_case.outcomes))  # type: ignore[arg-type]
 
 
-def test_eval_package_has_no_adapter_or_alpaca_imports() -> None:
+def test_case_tags_default_to_empty(missing_data_case: RegimeEvalCase) -> None:
+    assert missing_data_case.tags == ()
+
+
+def test_tags_preserve_order_and_do_not_affect_single_case_evaluation(
+    missing_data_case: RegimeEvalCase,
+) -> None:
+    tagged = replace(missing_data_case, tags=("stress", "missing_data"))
+
+    assert tagged.tags == ("stress", "missing_data")
+    assert evaluate_regime_case(tagged) == evaluate_regime_case(missing_data_case)
+
+
+@pytest.mark.parametrize("tags", [("",), ("   ",), ("normal", "normal")])
+def test_case_rejects_blank_or_duplicate_tags(
+    missing_data_case: RegimeEvalCase, tags: tuple[str, ...]
+) -> None:
+    with pytest.raises(ValueError, match="tag"):
+        replace(missing_data_case, tags=tags)
+
+
+def test_case_rejects_mutable_tags(missing_data_case: RegimeEvalCase) -> None:
+    with pytest.raises(ValueError, match="immutable tuple"):
+        replace(missing_data_case, tags=["normal"])  # type: ignore[arg-type]
+
+
+def test_case_rejects_non_string_tags(missing_data_case: RegimeEvalCase) -> None:
+    with pytest.raises(ValueError, match="tag"):
+        replace(missing_data_case, tags=(1,))  # type: ignore[arg-type]
+
+
+def test_eval_package_has_no_adapter_alpaca_or_network_imports() -> None:
     package_root = Path(eval_module.__file__).resolve().parent
+    forbidden_prefixes = (
+        "alpaca",
+        "finance_research_agent.adapters",
+        "aiohttp",
+        "http",
+        "httpx",
+        "requests",
+        "socket",
+        "urllib",
+        "websockets",
+    )
 
     for path in package_root.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -220,9 +262,7 @@ def test_eval_package_has_no_adapter_or_alpaca_imports() -> None:
                 imported_modules.add(node.module)
                 imported_modules.update(f"{node.module}.{alias.name}" for alias in node.names)
         assert not any(
-            module == "alpaca"
-            or module.startswith("alpaca.")
-            or module == "finance_research_agent.adapters"
-            or module.startswith("finance_research_agent.adapters.")
+            module == prefix or module.startswith(f"{prefix}.")
             for module in imported_modules
+            for prefix in forbidden_prefixes
         ), (path, imported_modules)
