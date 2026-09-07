@@ -223,6 +223,7 @@ def test_tag_summary_rejects_invalid_counts(total: int, passed: int) -> None:
         TagEvalSummary(tag="normal", total=total, passed=passed)
 
 
-def test_tag_summary_rejects_blank_tag() -> None:
+@pytest.mark.parametrize("tag", [" ", " Stress ", "stress ", "Stress", "stréss", "stress__case"])
+def test_tag_summary_rejects_noncanonical_tag(tag: str) -> None:
     with pytest.raises(ValueError, match="tag"):
-        TagEvalSummary(tag=" ", total=1, passed=1)
+        TagEvalSummary(tag=tag, total=1, passed=1)
