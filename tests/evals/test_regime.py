@@ -196,10 +196,28 @@ def test_observation_is_frozen(missing_data_case: RegimeEvalCase) -> None:
         observation.actual_regime = Regime.DEFENSIVE  # type: ignore[misc]
 
 
-@pytest.mark.parametrize("case_id", ["", "   "])
-def test_case_requires_nonempty_id(missing_data_case: RegimeEvalCase, case_id: str) -> None:
+@pytest.mark.parametrize(
+    "case_id", ["", "   ", " Stress ", "stress ", "Stress", "stress__case", "stress.", "stréss"]
+)
+def test_case_requires_canonical_id(missing_data_case: RegimeEvalCase, case_id: str) -> None:
     with pytest.raises(ValueError, match="case_id"):
         replace(missing_data_case, case_id=case_id)
+
+
+@pytest.mark.parametrize("case_id", ["risk_on", "missing-data-v1", "critical_stress"])
+def test_case_accepts_canonical_metadata(
+    missing_data_case: RegimeEvalCase, case_id: str
+) -> None:
+    case = replace(missing_data_case, case_id=case_id, tags=(case_id,))
+
+    assert case.case_id == case_id
+    assert case.tags == (case_id,)
+
+
+@pytest.mark.parametrize("case_id", ["", " Stress ", "stress ", "Stress", "stréss"])
+def test_observation_requires_canonical_id(case_id: str) -> None:
+    with pytest.raises(ValueError, match="case_id"):
+        RegimeEvalObservation(case_id, Regime.UNKNOWN, Regime.UNKNOWN)
 
 
 def test_case_rejects_mutable_outcomes(missing_data_case: RegimeEvalCase) -> None:
@@ -220,8 +238,11 @@ def test_tags_preserve_order_and_do_not_affect_single_case_evaluation(
     assert evaluate_regime_case(tagged) == evaluate_regime_case(missing_data_case)
 
 
-@pytest.mark.parametrize("tags", [("",), ("   ",), ("normal", "normal")])
-def test_case_rejects_blank_or_duplicate_tags(
+@pytest.mark.parametrize(
+    "tags",
+    [("",), ("   ",), ("normal", "normal"), (" Stress ",), ("stress ",), ("Stress",)],
+)
+def test_case_rejects_noncanonical_or_duplicate_tags(
     missing_data_case: RegimeEvalCase, tags: tuple[str, ...]
 ) -> None:
     with pytest.raises(ValueError, match="tag"):
@@ -238,7 +259,7 @@ def test_case_rejects_non_string_tags(missing_data_case: RegimeEvalCase) -> None
         replace(missing_data_case, tags=(1,))  # type: ignore[arg-type]
 
 
-def test_eval_package_has_no_adapter_alpaca_or_network_imports() -> None:
+def test_eval_package_has_no_adapter_alpaca_network_or_test_imports() -> None:
     package_root = Path(eval_module.__file__).resolve().parent
     forbidden_prefixes = (
         "alpaca",
@@ -248,6 +269,7 @@ def test_eval_package_has_no_adapter_alpaca_or_network_imports() -> None:
         "httpx",
         "requests",
         "socket",
+        "tests",
         "urllib",
         "websockets",
     )

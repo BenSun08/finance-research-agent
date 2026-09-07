@@ -7,6 +7,7 @@ from types import MappingProxyType
 
 from finance_research_agent.application.regime_workflow import run_regime_workflow
 from finance_research_agent.domain.regime import Regime, RegimePolicy
+from finance_research_agent.evals._metadata import require_canonical_token
 from finance_research_agent.market_data.historical import HistoricalBarsOutcome
 
 __all__ = [
@@ -17,11 +18,6 @@ __all__ = [
     "evaluate_regime_case",
     "evaluate_regime_cases",
 ]
-
-
-def _require_tag(tag: str) -> None:
-    if not isinstance(tag, str) or not tag.strip():
-        raise ValueError("evaluation tag must be a nonblank string")
 
 
 def _require_unique_case_ids(case_ids: tuple[str, ...]) -> None:
@@ -44,14 +40,13 @@ class RegimeEvalCase:
     tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.case_id, str) or not self.case_id.strip():
-            raise ValueError("case_id must be a nonempty string")
+        require_canonical_token(self.case_id, "case_id")
         if not isinstance(self.outcomes, tuple):
             raise ValueError("evaluation outcomes must be an immutable tuple")
         if not isinstance(self.tags, tuple):
             raise ValueError("evaluation tags must be an immutable tuple")
         for tag in self.tags:
-            _require_tag(tag)
+            require_canonical_token(tag, "evaluation tag")
         if len(set(self.tags)) != len(self.tags):
             raise ValueError("evaluation tags must be unique")
 
@@ -63,6 +58,9 @@ class RegimeEvalObservation:
     case_id: str
     expected_regime: Regime
     actual_regime: Regime
+
+    def __post_init__(self) -> None:
+        require_canonical_token(self.case_id, "case_id")
 
     @property
     def passed(self) -> bool:
@@ -91,7 +89,7 @@ class TagEvalSummary:
     passed: int
 
     def __post_init__(self) -> None:
-        _require_tag(self.tag)
+        require_canonical_token(self.tag, "evaluation tag")
         if not isinstance(self.total, int) or isinstance(self.total, bool) or self.total <= 0:
             raise ValueError("tag total must be a positive integer")
         if (
