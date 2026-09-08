@@ -259,16 +259,29 @@ def test_case_rejects_non_string_tags(missing_data_case: RegimeEvalCase) -> None
         replace(missing_data_case, tags=(1,))  # type: ignore[arg-type]
 
 
-def test_eval_package_has_no_adapter_alpaca_network_or_test_imports() -> None:
+def test_eval_package_has_no_transport_process_environment_git_or_test_imports() -> None:
     package_root = Path(eval_module.__file__).resolve().parent
     forbidden_prefixes = (
         "alpaca",
         "finance_research_agent.adapters",
         "aiohttp",
+        "asyncio",
+        "ctypes",
+        "dotenv",
+        "dulwich",
+        "git",
         "http",
         "httpx",
+        "importlib",
+        "nt",
+        "os",
+        "posix",
+        "pty",
+        "pygit2",
         "requests",
+        "sh",
         "socket",
+        "subprocess",
         "tests",
         "urllib",
         "websockets",

@@ -15,7 +15,7 @@ from decimal import ROUND_HALF_EVEN, Context, Decimal, localcontext
 
 from finance_research_agent.domain.market import DailyBar
 from finance_research_agent.domain.regime import Regime, RegimeComponent, RegimePolicy
-from finance_research_agent.evals._metadata import require_canonical_token
+from finance_research_agent.evals._metadata import require_canonical_token, require_system_revision
 from finance_research_agent.evals.regime import (
     RegimeEvalCase,
     RegimeEvalReport,
@@ -37,8 +37,10 @@ from finance_research_agent.market_data.historical import (
 
 __all__ = [
     "RegimeBenchmark",
+    "RegimeBenchmarkComparison",
     "RegimeBenchmarkRun",
     "build_regime_benchmark_v1",
+    "compare_regime_benchmark_runs",
     "run_regime_benchmark",
 ]
 
@@ -65,27 +67,61 @@ class RegimeBenchmark:
 
 @dataclass(frozen=True, slots=True)
 class RegimeBenchmarkRun:
-    """Benchmark and existing policy identity attached to the original eval report."""
+    """Separate benchmark, policy, and caller-supplied system identities with results."""
 
     benchmark_name: str
     benchmark_version: str
     policy_version: str
+    system_revision: str
     report: RegimeEvalReport
 
     def __post_init__(self) -> None:
         require_canonical_token(self.benchmark_name, "benchmark name")
         require_canonical_token(self.benchmark_version, "benchmark version")
+        require_system_revision(self.system_revision)
 
 
-def run_regime_benchmark(benchmark: RegimeBenchmark) -> RegimeBenchmarkRun:
+def run_regime_benchmark(
+    benchmark: RegimeBenchmark, *, system_revision: str
+) -> RegimeBenchmarkRun:
     """Evaluate the frozen cases once and attach identity without duplicating metrics."""
 
+    require_system_revision(system_revision)
     report = evaluate_regime_cases(benchmark.cases)
     return RegimeBenchmarkRun(
         benchmark_name=benchmark.name,
         benchmark_version=benchmark.version,
         policy_version=benchmark.cases[0].policy.version,
+        system_revision=system_revision,
         report=report,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeBenchmarkComparison:
+    """Accuracy delta (candidate minus baseline) between compatible benchmark runs."""
+
+    baseline_revision: str
+    candidate_revision: str
+    accuracy_delta: float
+
+
+def compare_regime_benchmark_runs(
+    baseline: RegimeBenchmarkRun, candidate: RegimeBenchmarkRun
+) -> RegimeBenchmarkComparison:
+    """Require matching benchmark/configuration identity before reading report accuracy.
+
+    System revisions may differ or match. A positive delta means candidate
+    accuracy is higher: baseline 0.75 and candidate 1.00 yield +0.25.
+    """
+
+    for field in ("benchmark_name", "benchmark_version", "policy_version"):
+        if getattr(baseline, field) != getattr(candidate, field):
+            raise ValueError(f"benchmark runs have different {field}")
+    return RegimeBenchmarkComparison(
+        baseline_revision=baseline.system_revision,
+        candidate_revision=candidate.system_revision,
+        accuracy_delta=candidate.report.accuracy - baseline.report.accuracy,
     )
 
 
