@@ -99,3 +99,58 @@ version remains the explicit corpus contract; callers must update the benchmark
 version for corpus changes and the policy version for configuration changes.
 No benchmark fingerprint or execution timestamp is added. These synthetic results
 measure deterministic scenario behavior, not predictive alpha or trading performance.
+
+## Temporal evaluation contracts
+
+v0.4 Slice 4A adds `WalkForwardWindow` and `validate_walk_forward_plan` to the
+public `finance_research_agent.evals` API. These contracts describe temporal
+boundaries for future walk-forward evaluation; they do not select data, train
+models, download history, or run historical replay or backtesting.
+
+`WalkForwardWindow` is a frozen, slotted dataclass with `train_start`, `train_end`,
+`eval_start`, and `eval_end` datetime fields. Training and evaluation use closed
+intervals, `[train_start, train_end]` and `[eval_start, eval_end]`, with positive
+duration and strict separation:
+
+```text
+train_start < train_end < eval_start < eval_end
+```
+
+All four timestamps must already be timezone-aware with zero UTC offset,
+matching the existing datetime validation convention. Naive datetimes and
+nonzero-offset datetimes are rejected, not converted. Zero-offset timezone
+objects are accepted without requiring identity with `datetime.UTC`; the
+supplied datetime objects are preserved.
+
+`validate_walk_forward_plan(windows)` requires a nonempty tuple of
+`WalkForwardWindow` values and returns `None` on success. It rejects duplicate
+windows and checks the supplied order without sorting. Consecutive windows must
+satisfy `previous.eval_end < next.eval_start`. Reversed, overlapping, and touching
+evaluation periods are rejected; any strictly positive gap is allowed. Invalid
+windows and plans raise `ValueError`.
+
+Training periods have no cross-window ordering constraint. Both expanding
+training (2018-2020 for evaluation in 2021, then 2018-2021 for evaluation in 2022)
+and rolling training (2018-2020, then 2019-2021 for those evaluation years) are
+valid. Later training may incorporate previous evaluation outcomes after they
+become historical; each window must still end training before its own evaluation
+starts. These contracts enforce temporal separation without selecting a
+model-development strategy.
+
+Data roles describe permitted influence on the system:
+
+- **Development data** may influence implementation.
+- **Validation data** may influence configuration or model selection.
+- **Holdout data** must not influence development or tuning before final
+  evaluation. Inspecting holdout failures and changing the system contaminates
+  the holdout; subsequent results on that data are no longer an untouched final
+  evaluation.
+
+For future historical decisions, source information used must have been
+available no later than the decision/evidence cutoff. An old observation date
+alone does not establish that the information was available at that time.
+The existing `HistoricalBarsOutcome` is `HistoricalDailyBars | HistoricalBarsFailure`;
+provenance constrains retrieval to `evidence_cutoff_at`, and available bars also
+constrain source timestamps to retrieval and cutoff. Those contracts remain
+unchanged. A valid window or plan does not verify source availability or provide
+a point-in-time dataset or replay mechanism.
