@@ -1,5 +1,5 @@
 from dataclasses import FrozenInstanceError, fields, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, localcontext
 
 import pytest
@@ -151,6 +151,71 @@ def test_history_identity_is_independent_of_ambient_decimal_precision() -> None:
         to_market_snapshot(low_precision).snapshot_id
         == to_market_snapshot(high_precision).snapshot_id
     )
+
+
+def test_late_retrieval_preserves_evidence_cutoff_and_changes_history_identity() -> None:
+    original = HistoricalDailyBars.create(
+        symbol="SPY", observations=(_observation(),),
+        provenance=_provenance(), quality_flags=(),
+    )
+    retrieved_at = datetime(2026, 9, 9, 12, tzinfo=UTC)
+    later = HistoricalDailyBars.create(
+        symbol="SPY", observations=original.observations,
+        provenance=_provenance(retrieved_at=retrieved_at), quality_flags=(),
+    )
+
+    assert later.provenance.retrieved_at == retrieved_at > CUTOFF
+    assert later.provenance.evidence_cutoff_at == CUTOFF
+    assert later.history_id != original.history_id
+    assert to_market_snapshot(later).as_of == to_market_snapshot(original).as_of == CUTOFF
+
+
+def test_late_retrieval_does_not_allow_request_end_after_evidence_cutoff() -> None:
+    with pytest.raises(InvalidMarketDataError, match="end_at cannot be after evidence cutoff"):
+        replace(
+            _provenance(),
+            retrieved_at=datetime(2026, 9, 9, tzinfo=UTC),
+            requested_end_at=CUTOFF + timedelta(microseconds=1),
+        )
+
+
+def test_late_retrieval_does_not_allow_an_incomplete_session() -> None:
+    with pytest.raises(InvalidMarketDataError, match="earlier than the cutoff market date"):
+        replace(
+            _provenance(),
+            retrieved_at=datetime(2026, 9, 9, tzinfo=UTC),
+            completed_through_session=date(2026, 8, 25),
+        )
+
+
+def test_history_still_rejects_source_timestamp_after_retrieval() -> None:
+    provenance = replace(
+        _provenance(),
+        requested_end_at=datetime(2026, 8, 24, 4, tzinfo=UTC),
+        retrieved_at=datetime(2026, 8, 24, 4, tzinfo=UTC),
+    )
+    observation = replace(
+        _observation(), source_timestamp=datetime(2026, 8, 24, 5, tzinfo=UTC)
+    )
+
+    with pytest.raises(InvalidMarketDataError, match="source timestamps"):
+        HistoricalDailyBars.create(
+            symbol="SPY", observations=(observation,), provenance=provenance, quality_flags=(),
+        )
+
+
+def test_future_source_session_cannot_enter_history_with_late_retrieval() -> None:
+    observation = DailyBarObservation(
+        source_timestamp=datetime(2026, 8, 26, 4, tzinfo=UTC),
+        bar=_bar(session_date=date(2026, 8, 26)),
+    )
+    provenance = _provenance(retrieved_at=datetime(2026, 9, 9, tzinfo=UTC))
+
+    assert observation.source_timestamp > provenance.evidence_cutoff_at
+    with pytest.raises(InvalidMarketDataError, match="completed-through session"):
+        HistoricalDailyBars.create(
+            symbol="SPY", observations=(observation,), provenance=provenance, quality_flags=(),
+        )
 
 
 def test_historical_contracts_are_deeply_immutable_at_collection_boundaries() -> None:

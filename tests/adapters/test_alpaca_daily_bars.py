@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -14,6 +14,7 @@ from finance_research_agent.market_data.historical import (
     HistoricalBarsUnavailableReason,
     HistoricalDailyBars,
     HistoricalDailyBarsRequest,
+    InvalidMarketDataError,
     MarketDataCoverage,
     MarketDataFeed,
     to_market_snapshot,
@@ -267,3 +268,30 @@ def test_one_symbol_failure_does_not_discard_another_symbol() -> None:
     assert tuple(outcome.symbol for outcome in outcomes) == ("QQQ", "SPY")
     assert isinstance(outcomes[0], HistoricalBarsFailure)
     assert isinstance(outcomes[1], HistoricalDailyBars)
+
+
+@pytest.mark.parametrize("has_bars", [True, False], ids=["available", "missing-data"])
+def test_standalone_normalizer_rejects_retrieval_after_live_cutoff(has_bars: bool) -> None:
+    records = [_record(date(2026, 8, 21)), _record(date(2026, 8, 24))] if has_bars else []
+
+    with pytest.raises(
+        InvalidMarketDataError, match="retrieved_at cannot be after evidence cutoff"
+    ):
+        normalize_alpaca_daily_bars(
+            {"SPY": records}, request=_request(),
+            retrieved_at=CUTOFF + timedelta(microseconds=1),
+        )
+
+
+@pytest.mark.parametrize("has_bars", [True, False], ids=["available", "missing-data"])
+def test_standalone_normalizer_accepts_retrieval_at_live_cutoff(has_bars: bool) -> None:
+    records = [_record(date(2026, 8, 21)), _record(date(2026, 8, 24))] if has_bars else []
+
+    outcomes = normalize_alpaca_daily_bars(
+        {"SPY": records}, request=_request(), retrieved_at=CUTOFF
+    )
+
+    assert len(outcomes) == 1
+    assert isinstance(outcomes[0], HistoricalDailyBars if has_bars else HistoricalBarsFailure)
+    provenance = outcomes[0].provenance
+    assert provenance.retrieved_at == provenance.evidence_cutoff_at == CUTOFF
