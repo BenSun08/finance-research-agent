@@ -61,7 +61,7 @@ def _provenance(
     request: HistoricalDailyBarsRequest,
     retrieved_at: datetime,
 ) -> HistoricalBarsProvenance:
-    return HistoricalBarsProvenance(
+    provenance = HistoricalBarsProvenance(
         provider="alpaca",
         feed=request.feed,
         coverage=coverage_for_feed(request.feed),
@@ -73,6 +73,11 @@ def _provenance(
         completed_through_session=request.completed_through_session,
         adapter_version=ADAPTER_VERSION,
     )
+    # Keep the live evidence freeze at the adapter boundary; neutral historical
+    # provenance also supports offline datasets retrieved after their cutoff.
+    if provenance.retrieved_at > request.evidence_cutoff_at:
+        raise InvalidMarketDataError("retrieved_at cannot be after evidence cutoff")
+    return provenance
 
 
 def _base_quality_flags(

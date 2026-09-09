@@ -216,7 +216,12 @@ class DailyBarObservation:
 
 @dataclass(frozen=True, slots=True)
 class HistoricalBarsProvenance:
-    """Provider-neutral provenance for one normalized historical response."""
+    """Provider-neutral provenance for one normalized historical response.
+
+    Retrieval records dataset acquisition, not historical information availability,
+    and may follow the evidence cutoff. Live collection boundaries enforce their
+    own retrieval deadline. Publication/revision availability is not represented.
+    """
 
     provider: str
     feed: MarketDataFeed
@@ -263,8 +268,6 @@ class HistoricalBarsProvenance:
             raise InvalidMarketDataError(
                 "requested_end_at cannot be after retrieved_at"
             )
-        if self.retrieved_at > self.evidence_cutoff_at:
-            raise InvalidMarketDataError("retrieved_at cannot be after evidence cutoff")
         if not isinstance(self.completed_through_session, date) or isinstance(
             self.completed_through_session, datetime
         ):

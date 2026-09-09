@@ -16,6 +16,7 @@ from finance_research_agent.evals.regime_benchmark import (
     compare_regime_benchmark_runs,
     run_regime_benchmark,
 )
+from finance_research_agent.evals.regime_replay import RegimeReplayCase
 from finance_research_agent.evals.temporal import WalkForwardWindow, validate_walk_forward_plan
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "RegimeEvalCase",
     "RegimeEvalObservation",
     "RegimeEvalReport",
+    "RegimeReplayCase",
     "TagEvalSummary",
     "WalkForwardWindow",
     "build_regime_benchmark_v1",

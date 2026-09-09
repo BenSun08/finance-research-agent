@@ -299,7 +299,58 @@ Configuration changed during a run applies only to a new revision.
 
 ### 11.2 Evidence freeze
 
-Collection creates `evidence_cutoff_at`. Information retrieved after this timestamp cannot enter the same revision. Refreshing data requires a new revision.
+For live research, collection creates `evidence_cutoff_at`. Information retrieved after this timestamp cannot enter the same revision. Refreshing data requires a new revision.
+
+#### 11.2.1 Historical regime replay contracts (v0.4 Slice 4B)
+
+Offline historical replay separates the simulated decision from the time a
+dataset was retrieved. The approved shared `HistoricalBarsProvenance` contract
+retains its existing fields and no longer requires
+`retrieved_at <= evidence_cutoff_at`. Retrieval remains part of history identity.
+Request end must remain no later than both retrieval and evidence cutoff.
+Available bars still require source timestamps no later than both retrieval and
+evidence cutoff, and the existing completed-session checks remain in force.
+
+The live Alpaca SDK client and standalone Alpaca normalizer continue to reject
+retrieval after the request evidence cutoff. This restriction belongs to those
+live collection entry points, rather than all offline historical datasets.
+
+`RegimeReplayCase` is a frozen, slotted eval value containing only an existing
+`RegimeEvalCase` and an explicit `decision_at`. Construction requires actual
+timezone-aware datetimes with zero UTC offset, preserves inputs without
+conversion, and enforces:
+
+```text
+case.cutoff_at == decision_at
+outcome.provenance.evidence_cutoff_at <= decision_at  (every outcome)
+```
+
+Both `HistoricalDailyBars` and `HistoricalBarsFailure` contain evidence and must
+pass this check. The replay layer trusts their validated source timestamps and
+completed-session invariants without reimplementing those algorithms. It does
+not derive decision time from retrieval or a clock. Invalid replay inputs raise
+`ValueError`; existing evaluator/domain errors are not caught or translated.
+
+Timestamp meanings are distinct:
+
+- `DailyBarObservation.source_timestamp` is the provider's observation/event
+  timestamp; it is not a publication or revision-availability timestamp.
+- `HistoricalBarsProvenance.evidence_cutoff_at` bounds the historical evidence
+  claimed by the dataset supplier.
+- `HistoricalBarsProvenance.retrieved_at` records our dataset retrieval.
+- `RegimeReplayCase.decision_at` is the simulated decision timestamp and equals
+  the wrapped evaluator's `cutoff_at`.
+
+Retrieval after a historical decision is not itself leakage. Using evidence
+that was unavailable at the simulated decision is leakage. These contracts
+check the supplied temporal claims; without historical publication/revision
+metadata they cannot detect later revisions or establish that a failure was
+actually known at the decision time. The dataset supplier must establish that
+point-in-time meaning, including for unavailable-data outcomes.
+
+Slice 4B adds no runner, downloader, backtester, or dataset system. Evaluation
+continues through `evaluate_regime_case(replay.case)`. Walk-forward binding is
+deferred; Slice 4A's closed-interval contract is unchanged.
 
 ### 11.3 Deterministic analysis
 
@@ -439,7 +490,7 @@ Rules:
 - Lower-tier evidence cannot silently override a regulator, official filing, exchange, or official company source.
 - Material conflicts remain visible and create `SOURCE_CONFLICT`.
 - Unresolved material conflicts block affected plans.
-- Evidence obtained after `evidence_cutoff_at` is prohibited in the revision.
+- In a live research revision, evidence obtained after `evidence_cutoff_at` is prohibited.
 
 The report's Markdown may render citations as linked evidence IDs or footnotes. The JSON claim map remains canonical.
 

@@ -150,7 +150,70 @@ For future historical decisions, source information used must have been
 available no later than the decision/evidence cutoff. An old observation date
 alone does not establish that the information was available at that time.
 The existing `HistoricalBarsOutcome` is `HistoricalDailyBars | HistoricalBarsFailure`;
-provenance constrains retrieval to `evidence_cutoff_at`, and available bars also
-constrain source timestamps to retrieval and cutoff. Those contracts remain
-unchanged. A valid window or plan does not verify source availability or provide
-a point-in-time dataset or replay mechanism.
+both outcomes carry provenance. Available bars constrain source timestamps to
+retrieval and cutoff, while completed sessions must precede the cutoff's New York
+market date. A valid window or plan does not verify source availability or provide
+a point-in-time dataset.
+
+## Point-in-time regime replay contracts
+
+v0.4 Slice 4B adds `RegimeReplayCase(case, decision_at)` to the public eval API.
+It is a frozen, slotted dataclass that preserves the supplied `RegimeEvalCase`
+and binds it to an explicit simulated decision time. Construction requires:
+
+```text
+case.cutoff_at == decision_at
+every outcome.provenance.evidence_cutoff_at <= decision_at
+```
+
+Equality at the decision cutoff is allowed. Every outcome is checked, including
+`HistoricalBarsFailure` and symbols unused by the regime calculation. Failures
+can represent knowledge that data was unavailable; they cannot carry a future
+evidence cutoff. Invalid replay inputs raise `ValueError`.
+
+`decision_at` and the wrapped case's `cutoff_at` must already be timezone-aware
+datetimes with zero UTC offset, following `WalkForwardWindow`. Naive or nonzero
+offset values are rejected without conversion. No timestamp is inferred from
+the current clock or retrieval time.
+
+The timestamps describe different facts:
+
+| Field | Meaning |
+| --- | --- |
+| `DailyBarObservation.source_timestamp` | Source/event time associated with the bar; its New York date must match the bar's session. It is not a publication or revision timestamp. |
+| `provenance.evidence_cutoff_at` | Upper bound on the historical evidence used. It becomes the projected market snapshot's `as_of`. |
+| `provenance.retrieved_at` | Time this dataset was retrieved; it remains part of provenance and history identity. |
+| `RegimeReplayCase.decision_at` | Caller-supplied simulated decision time, also used as the wrapped evaluator's cutoff. |
+
+Retrieval after a historical decision is not itself leakage. Provider-neutral
+`HistoricalBarsProvenance` therefore permits retrieval after its evidence cutoff;
+the SDK client and standalone Alpaca normalizer retain their live requirement
+`retrieved_at <= evidence_cutoff_at`. Existing request bounds, source timestamp
+bounds, UTC checks, completed-session validation, and history hashing remain in
+force. The replay layer trusts validated market-data objects and does not
+duplicate bar or session validation.
+
+For a caller-supplied `historical_case` whose `cutoff_at` is the same UTC instant:
+
+```python
+from datetime import UTC, datetime
+
+from finance_research_agent.evals import RegimeReplayCase, evaluate_regime_case
+
+replay = RegimeReplayCase(
+    case=historical_case,
+    decision_at=datetime(2026, 8, 25, 13, tzinfo=UTC),
+)
+observation = evaluate_regime_case(replay.case)
+```
+
+Evaluation uses the existing regime evaluator unchanged; programmer and domain
+errors propagate. This slice adds no replay runner or `WalkForwardWindow`
+binding, downloader, backtester, or new runtime dependency.
+
+Using evidence that was unavailable at the simulated decision is leakage.
+These contracts check the timestamps the dataset actually carries; they cannot
+solve revision leakage without historical publication/revision metadata. An old
+bar timestamp or an asserted failure cutoff alone does not prove historical
+availability. Callers remain responsible for selecting evidence, including
+unavailability outcomes, that was actually knowable at the decision time.
