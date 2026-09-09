@@ -208,8 +208,8 @@ observation = evaluate_regime_case(replay.case)
 ```
 
 Evaluation uses the existing regime evaluator unchanged; programmer and domain
-errors propagate. This slice adds no replay runner or `WalkForwardWindow`
-binding, downloader, backtester, or new runtime dependency.
+errors propagate. Slice 4C composes this contract with `WalkForwardWindow` in the
+orchestration layer below.
 
 Using evidence that was unavailable at the simulated decision is leakage.
 These contracts check the timestamps the dataset actually carries; they cannot
@@ -217,3 +217,83 @@ solve revision leakage without historical publication/revision metadata. An old
 bar timestamp or an asserted failure cutoff alone does not prove historical
 availability. Callers remain responsible for selecting evidence, including
 unavailability outcomes, that was actually knowable at the decision time.
+
+## Walk-forward regime replay orchestration
+
+v0.4 Slice 4C adds `WalkForwardReplay`, `WalkForwardReplayPlan`, and
+`evaluate_walk_forward_replay` to the public eval API. This is historical
+evaluation orchestration, not a trading backtester.
+
+The three temporal contracts have distinct responsibilities:
+
+| Contract | Responsibility |
+| --- | --- |
+| `WalkForwardWindow` | Defines the allowed evaluation region and its separation from the training interval. |
+| `RegimeReplayCase` | Validates that the supplied evidence cutoffs do not extend beyond decision time and that the case cutoff equals that decision. Historical availability still depends on the supplied provenance. |
+| `WalkForwardReplay` | Binds each validated replay decision to the correct evaluation window. |
+
+`WalkForwardReplay(window, cases)` is a frozen, slotted dataclass containing an
+existing `WalkForwardWindow` and a nonempty immutable tuple of `RegimeReplayCase`
+values. It preserves the supplied objects and case order, rejects duplicate case
+IDs, and uses Slice 4A's closed evaluation interval exactly:
+
+```text
+window.eval_start <= replay.decision_at <= window.eval_end
+```
+
+Both endpoints are accepted. A decision even one microsecond outside the
+interval is rejected. The binding composes validated contracts without repeating
+the replay's evidence checks or converting timestamps.
+
+`WalkForwardReplayPlan(windows)` is also frozen and slotted. It requires a
+nonempty immutable tuple of replay bindings and delegates temporal validation to
+`validate_walk_forward_plan`. Window order is preserved without sorting;
+duplicate, reversed, overlapping, or touching evaluation windows are rejected.
+Expanding and rolling training periods remain valid under Slice 4A's rules.
+
+Case IDs must be globally unique within the plan, including across windows.
+An ID identifies one evaluation observation. If the same economic scenario
+appears in several windows, give each occurrence a different case ID. Invalid
+bindings and plans raise `ValueError` before evaluation.
+
+For the validated `replay` constructed above:
+
+```python
+from finance_research_agent.evals import (
+    WalkForwardReplay,
+    WalkForwardReplayPlan,
+    WalkForwardWindow,
+    evaluate_walk_forward_replay,
+)
+
+window = WalkForwardWindow(
+    train_start=datetime(2025, 1, 1, tzinfo=UTC),
+    train_end=datetime(2026, 7, 31, 23, 59, 59, tzinfo=UTC),
+    eval_start=datetime(2026, 8, 1, tzinfo=UTC),
+    eval_end=datetime(2026, 8, 31, 23, 59, 59, tzinfo=UTC),
+)
+plan = WalkForwardReplayPlan(
+    windows=(WalkForwardReplay(window=window, cases=(replay,)),),
+)
+report = evaluate_walk_forward_replay(plan)
+```
+
+The runner flattens the wrapped cases in window order and then case order,
+delegates once to `evaluate_regime_cases`, and returns its existing
+`RegimeEvalReport` directly. Every case is evaluated once through
+`evaluate_regime_case`; observations, accuracy, confusion counts, and tag
+summaries keep their existing semantics. Programmer and domain errors propagate
+without a partial report. Keep the plan alongside the report when window
+diagnostics are needed; globally unique case IDs connect observations to windows.
+
+The training interval is descriptive/contractual today because the system has no
+fitting/training stage. It describes the historical period that would be
+permitted for system development or configuration before that evaluation window.
+The runner evaluates preconstructed cases only; it does not select training data,
+fit or tune a model, or enforce how a caller developed the system. Replay evidence
+may include information available during the evaluation interval by decision
+time; it is not restricted to the training interval.
+
+No clock, network, Git, process, or adapter dependency is added to orchestration.
+There is no downloader, portfolio simulation, trading-performance calculation,
+persistence, generated timestamp, or new runtime dependency.
