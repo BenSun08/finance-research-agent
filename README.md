@@ -100,6 +100,97 @@ version for corpus changes and the policy version for configuration changes.
 No benchmark fingerprint or execution timestamp is added. These synthetic results
 measure deterministic scenario behavior, not predictive alpha or trading performance.
 
+## Deterministic benchmark regression gate
+
+v0.4 Slice 5 adds `RegimeRegressionPolicy`, `RegimeRegressionGateResult`, and
+`evaluate_regime_regression_gate` to the public eval API. A metric describes an
+evaluation outcome; a gate applies a caller-supplied release-quality policy to
+those metrics. `RegimeEvalReport` continues to own accuracy, and
+`compare_regime_benchmark_runs` continues to own compatibility checks and the
+candidate-minus-baseline accuracy delta.
+
+`RegimeRegressionPolicy` is a frozen, slotted dataclass with two independent
+thresholds:
+
+- `minimum_accuracy`: the absolute candidate accuracy floor.
+- `maximum_accuracy_regression`: the maximum allowed degradation, expressed as
+  a nonnegative magnitude. A value of `0.02` allows a delta of at least `-0.02`
+  (two percentage points of accuracy), not a relative two-percent decline.
+
+Both thresholds must be finite `int` or `float` values in `[0.0, 1.0]`.
+Booleans, other types, NaN, infinity, and out-of-range values raise `ValueError`.
+Accepted values are preserved without conversion or clamping. This release gate
+policy is separate from the regime evaluation configuration identified by a
+benchmark run's `policy_version`.
+
+For caller-supplied `baseline` and `candidate` benchmark runs:
+
+```python
+from finance_research_agent.evals import (
+    RegimeRegressionPolicy,
+    evaluate_regime_regression_gate,
+)
+
+policy = RegimeRegressionPolicy(
+    minimum_accuracy=0.75,
+    maximum_accuracy_regression=0.02,
+)
+result = evaluate_regime_regression_gate(baseline, candidate, policy)
+```
+
+The gate delegates once to `compare_regime_benchmark_runs(baseline, candidate)`
+before reading candidate report accuracy. Incompatible benchmark names,
+benchmark versions, or evaluation policy versions raise the existing `ValueError`;
+they do not become quality failures. Benchmarks and cases are not evaluated
+again, and the gate does not duplicate accuracy or delta calculations.
+
+The exact pass equation is:
+
+```text
+candidate_accuracy >= policy.minimum_accuracy
+AND
+comparison.accuracy_delta >= -policy.maximum_accuracy_regression
+```
+
+With a floor of `0.75` and maximum regression of `0.02`:
+
+| Baseline accuracy | Candidate accuracy | Absolute check | Regression check | Result |
+| --- | --- | --- | --- | --- |
+| 0.80 | 0.79 | Pass | Pass | PASS |
+| 0.95 | 0.90 | Pass | Fail | FAIL |
+| 0.70 | 0.74 | Fail | Pass | FAIL |
+| 0.95 | 0.70 | Fail | Fail | FAIL |
+
+Equality of the actual float values passes both checks. There is no rounding
+or implicit epsilon, so an immediately lower float fails. For an exactly
+representable example, baseline `0.9375` and candidate `0.90625`, with floor
+`0.85` and maximum regression `0.03125`, PASS: candidate accuracy exceeds the
+floor and the delta is exactly `-0.03125`. Zero allowed regression accepts an
+unchanged or improved accuracy and rejects every negative delta.
+
+Decimal-looking values may not produce an exact decimal difference in binary
+floating point. Baseline `0.92` and candidate `0.90` produce the existing delta
+`-0.020000000000000018`. With floor `0.85` and maximum regression `0.02`, the
+absolute check passes but the regression check FAILS. The gate preserves this
+value and strict comparison; it does not silently treat it as `-0.02`.
+
+`RegimeRegressionGateResult` is frozen and slotted. It retains `passed: bool`,
+the original `candidate_accuracy: float`, the original `accuracy_delta: float`,
+and `failures: tuple[str, ...]`. Passing results have an empty failure tuple.
+Failures use fixed strings in deterministic order, with both included when
+both checks fail:
+
+1. `"candidate accuracy below minimum"`
+2. `"accuracy regression exceeds maximum"`
+
+The result explains the decision without recalculating metrics. Retain the
+policy and runs alongside it when their thresholds and identities are needed.
+Same inputs produce the same result without clock, network, Git, environment,
+process, filesystem, or random dependencies. This slice is a reusable eval
+policy, not CI integration: it does not discover a baseline or revision, print
+annotations, exit the process, write files, or add a workflow, CLI, configuration
+format, persistence, serialization, or runtime dependency.
+
 ## Temporal evaluation contracts
 
 v0.4 Slice 4A adds `WalkForwardWindow` and `validate_walk_forward_plan` to the
