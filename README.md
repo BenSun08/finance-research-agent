@@ -144,12 +144,20 @@ benchmark versions, or evaluation policy versions raise the existing `ValueError
 they do not become quality failures. Benchmarks and cases are not evaluated
 again, and the gate does not duplicate accuracy or delta calculations.
 
-The exact pass equation is:
+The mathematical policy requires candidate accuracy at or above the floor and
+candidate-minus-baseline delta at or above the negative regression limit. The
+implemented pass equation includes an explicit numerical-comparison tolerance
+only at a positive regression limit:
 
-```text
-candidate_accuracy >= policy.minimum_accuracy
-AND
-comparison.accuracy_delta >= -policy.maximum_accuracy_regression
+```python
+regression_passed = accuracy_delta >= -maximum_accuracy_regression or (
+    maximum_accuracy_regression > 0.0
+    and math.isclose(
+        accuracy_delta, -maximum_accuracy_regression,
+        rel_tol=0.0, abs_tol=1e-12,
+    )
+)
+passed = candidate_accuracy >= minimum_accuracy and regression_passed
 ```
 
 With a floor of `0.75` and maximum regression of `0.02`:
@@ -161,18 +169,29 @@ With a floor of `0.75` and maximum regression of `0.02`:
 | 0.70 | 0.74 | Fail | Pass | FAIL |
 | 0.95 | 0.70 | Fail | Fail | FAIL |
 
-Equality of the actual float values passes both checks. There is no rounding
-or implicit epsilon, so an immediately lower float fails. For an exactly
-representable example, baseline `0.9375` and candidate `0.90625`, with floor
+Boundary equality passes both checks. The regression comparison uses a fixed
+absolute tolerance of `1e-12` in accuracy units (`1e-10` percentage points), with
+relative tolerance disabled. This small allowance absorbs binary subtraction
+artifacts without scaling with the configured regression limit. A delta below
+the boundary by more than this allowance fails. Numerical differences within
+this allowance are treated as equality only for the regression decision; no
+stored or reported metric is rounded or changed. The absolute accuracy floor
+remains strict, so even an immediately lower float fails that check.
+
+For an exactly representable example, baseline `0.9375` and candidate `0.90625`, with floor
 `0.85` and maximum regression `0.03125`, PASS: candidate accuracy exceeds the
 floor and the delta is exactly `-0.03125`. Zero allowed regression accepts an
 unchanged or improved accuracy and rejects every negative delta.
 
 Decimal-looking values may not produce an exact decimal difference in binary
 floating point. Baseline `0.92` and candidate `0.90` produce the existing delta
-`-0.020000000000000018`. With floor `0.85` and maximum regression `0.02`, the
-absolute check passes but the regression check FAILS. The gate preserves this
-value and strict comparison; it does not silently treat it as `-0.02`.
+`-0.020000000000000018`. With floor `0.85` and maximum regression `0.02`, both
+checks now PASS: the mathematical two-percentage-point regression is exactly
+allowed, and its float representation is within the explicit boundary tolerance.
+The result still reports candidate accuracy `0.90` and delta
+`-0.020000000000000018`. A genuinely larger regression, such as `0.92` to `0.89`,
+still FAILS. A zero regression limit disables the numerical allowance entirely,
+so it rejects every negative delta, including declines smaller than `1e-12`.
 
 `RegimeRegressionGateResult` is frozen and slotted. It retains `passed: bool`,
 the original `candidate_accuracy: float`, the original `accuracy_delta: float`,

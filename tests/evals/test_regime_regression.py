@@ -102,13 +102,29 @@ def test_exact_allowed_regression_passes() -> None:
     assert result == RegimeRegressionGateResult(True, 0.90625, -0.03125, ())
 
 
-def test_decimal_example_preserves_strict_float_boundary() -> None:
+def test_decimal_regression_boundary_passes_without_changing_metrics() -> None:
+    baseline, candidate = _run(92, "baseline"), _run(90, "candidate")
+    accuracy = candidate.report.accuracy
+    delta = compare_regime_benchmark_runs(baseline, candidate).accuracy_delta
     result = evaluate_regime_regression_gate(
-        _run(92, "baseline"), _run(90, "candidate"), RegimeRegressionPolicy(0.85, 0.02),
+        baseline, candidate, RegimeRegressionPolicy(0.85, 0.02),
+    )
+
+    assert result == RegimeRegressionGateResult(True, 0.9, -0.020000000000000018, ())
+    assert result.candidate_accuracy == accuracy
+    assert result.accuracy_delta == delta
+
+
+def test_genuinely_larger_decimal_regression_fails() -> None:
+    baseline, candidate = _run(92, "baseline"), _run(89, "candidate")
+    comparison = compare_regime_benchmark_runs(baseline, candidate)
+
+    result = evaluate_regime_regression_gate(
+        baseline, candidate, RegimeRegressionPolicy(0.85, 0.02),
     )
 
     assert result == RegimeRegressionGateResult(
-        False, 0.9, -0.020000000000000018, (REGRESSION_FAILURE,),
+        False, candidate.report.accuracy, comparison.accuracy_delta, (REGRESSION_FAILURE,),
     )
 
 
@@ -118,13 +134,17 @@ def test_decimal_example_preserves_strict_float_boundary() -> None:
         (0.75, -0.03125, 0.03125, ()),
         (nextafter(0.75, -inf), -0.03125, 0.03125, (ABSOLUTE_FAILURE,)),
         (nextafter(0.75, inf), -0.03125, 0.03125, ()),
-        (0.75, nextafter(-0.03125, -inf), 0.03125, (REGRESSION_FAILURE,)),
+        (0.75, nextafter(-0.03125, -inf), 0.03125, ()),
         (0.75, nextafter(-0.03125, inf), 0.03125, ()),
+        (0.75, -0.02 - 5e-13, 0.02, ()),
+        (0.75, -0.02 - 2e-12, 0.02, (REGRESSION_FAILURE,)),
+        (0.75, -0.5 - 1e-10, 0.5, (REGRESSION_FAILURE,)),
+        (0.75, -5e-13, 0.0, (REGRESSION_FAILURE,)),
         (0.75, nextafter(0.0, -inf), 0.0, (REGRESSION_FAILURE,)),
         (0.75, 0.0, 0.0, ()),
     ],
 )
-def test_actual_float_boundaries_without_epsilon_or_rounding(
+def test_explicit_regression_tolerance_with_strict_floor_and_zero_limit(
     candidate_accuracy: float,
     delta: float,
     maximum: float,
@@ -304,7 +324,7 @@ def test_repeated_evaluation_is_deterministic(candidate_passed: int) -> None:
 
 def test_gate_has_no_clock_network_git_process_environment_file_or_random_dependency() -> None:
     tree = ast.parse(Path(regression_module.__file__).read_text(encoding="utf-8"))
-    allowed_imports = {"dataclasses", "finance_research_agent.evals.regime_benchmark"}
+    allowed_imports = {"dataclasses", "math", "finance_research_agent.evals.regime_benchmark"}
     forbidden_calls = {"open", "print", "input", "exec", "eval", "__import__", "exit", "quit"}
 
     for node in ast.walk(tree):

@@ -1,6 +1,7 @@
 """Deterministic release-quality policy over existing benchmark comparison metrics."""
 
 from dataclasses import dataclass
+from math import isclose
 
 from finance_research_agent.evals.regime_benchmark import (
     RegimeBenchmarkRun,
@@ -13,14 +14,19 @@ __all__ = [
     "evaluate_regime_regression_gate",
 ]
 
+# Accuracy units (1e-10 percentage points): comparison-only subtraction slack.
+# No relative tolerance, metric rounding, or slack for a zero regression limit.
+_REGRESSION_COMPARISON_ABS_TOLERANCE = 1e-12
+
 
 @dataclass(frozen=True, slots=True)
 class RegimeRegressionPolicy:
     """Absolute candidate accuracy floor and nonnegative allowed degradation.
 
     Both thresholds must be finite int/float values in [0, 1], excluding bool.
-    Values are preserved without conversion or clamping. Comparisons use exact
-    float ordering, with equality allowed and no rounding or implicit epsilon.
+    Values are preserved without conversion or clamping. The accuracy floor is
+    strict; positive regression limits allow 1e-12 absolute numerical-comparison
+    tolerance. A zero regression limit rejects every negative delta.
     """
 
     minimum_accuracy: float
@@ -58,13 +64,14 @@ def evaluate_regime_regression_gate(
     candidate: RegimeBenchmarkRun,
     policy: RegimeRegressionPolicy,
 ) -> RegimeRegressionGateResult:
-    """Require candidate accuracy >= floor AND delta >= -allowed regression.
+    """Require the accuracy floor and the regression limit, allowing boundary equality.
 
     Compatibility validation and candidate-minus-baseline delta belong to the
     existing comparison; its errors propagate unchanged. Report accuracy is
     read directly without rerunning benchmarks or duplicating metric formulas.
-    Equality of the actual float values passes; no rounding or tolerance is
-    applied. This returns a policy decision without performing CI or I/O work.
+    Positive regression limits allow 1e-12 absolute comparison tolerance with
+    no relative tolerance. Zero limits and the accuracy floor remain strict.
+    Original metrics are never rounded or changed. No CI or I/O work is done.
     """
 
     comparison = compare_regime_benchmark_runs(baseline, candidate)
@@ -72,7 +79,16 @@ def evaluate_regime_regression_gate(
     failures: list[str] = []
     if candidate_accuracy < policy.minimum_accuracy:
         failures.append("candidate accuracy below minimum")
-    if comparison.accuracy_delta < -policy.maximum_accuracy_regression:
+    regression_passed = comparison.accuracy_delta >= -policy.maximum_accuracy_regression or (
+        policy.maximum_accuracy_regression > 0.0
+        and isclose(
+            comparison.accuracy_delta,
+            -policy.maximum_accuracy_regression,
+            rel_tol=0.0,
+            abs_tol=_REGRESSION_COMPARISON_ABS_TOLERANCE,
+        )
+    )
+    if not regression_passed:
         failures.append("accuracy regression exceeds maximum")
     return RegimeRegressionGateResult(
         passed=not failures,
