@@ -29,8 +29,8 @@ Human approval remains the final decision gate.
 - v0.1 Deterministic Research Core + First Market Regime Skill
 - v0.2 Data Layer
 - v0.3 Workflow
-- v0.4 Evals
-- v0.5 Agent Runtime
+- v0.4 Evals — complete
+- v0.5 Agent Runtime — next; not implemented
 - v0.6 MCP
 - v0.7 Automation / Production
 
@@ -47,6 +47,140 @@ and deterministic market-regime capabilities. The application depends on the
 provider-neutral `HistoricalBarsFetcher` port, supplied by the Alpaca adapter;
 request-global failures remain provider-neutral. The workflow remains
 offline-testable, and trading remains unavailable.
+
+v0.4 Evals is complete for its deterministic, offline evaluation scope. The
+closeout audit covers the implementation through merged PR #17 at
+`ce618fb64e13a709f8b62958d6a8f830aacfc5bc`. The layers compose the existing
+workflow, market-data contracts, and report metrics without introducing another
+evaluation engine. The next milestone is **v0.5 Agent Runtime**, which requires
+a separately approved design; this closeout adds no runtime capability.
+
+## v0.4 architecture and public API
+
+The supported eval entry point is `finance_research_agent.evals`. The following
+inventory covers all 21 names in its explicit `__all__`; the linked modules
+contain their signatures and contract docstrings.
+
+| Layer | Public API | Responsibility |
+| --- | --- | --- |
+| [Case evaluation](src/finance_research_agent/evals/regime.py) | `RegimeEvalCase`, `RegimeEvalObservation`, `evaluate_regime_case` | Freeze caller-supplied historical outcomes, policy, cutoff, expected regime, and tags; run the existing regime workflow once; record expected versus actual regime. |
+| [Aggregate evaluation](src/finance_research_agent/evals/regime.py) | `RegimeEvalReport`, `TagEvalSummary`, `evaluate_regime_cases` | Evaluate a nonempty tuple with unique case IDs in caller order; own aggregate counts, accuracy, confusion counts, and per-tag summaries. |
+| [Frozen benchmark execution](src/finance_research_agent/evals/regime_benchmark.py) | `RegimeBenchmark`, `build_regime_benchmark_v1`, `RegimeBenchmarkRun`, `run_regime_benchmark` | Define a named/versioned corpus sharing one complete policy; build the four authored synthetic v1 cases; attach benchmark, policy, and caller-supplied system identity to the aggregate evaluator's original report. |
+| [Benchmark comparison](src/finance_research_agent/evals/regime_benchmark.py) | `RegimeBenchmarkComparison`, `compare_regime_benchmark_runs` | Check matching benchmark name/version and policy version, then return candidate-minus-baseline report accuracy with both revision labels. |
+| [Temporal contracts](src/finance_research_agent/evals/temporal.py) | `WalkForwardWindow`, `validate_walk_forward_plan` | Validate strictly separated UTC training/evaluation bounds and caller-ordered, nonoverlapping evaluation windows. |
+| [Point-in-time replay](src/finance_research_agent/evals/regime_replay.py) | `RegimeReplayCase` | Wrap an existing case; require its cutoff to equal decision time and every outcome's evidence cutoff to be no later than that decision. |
+| [Walk-forward orchestration](src/finance_research_agent/evals/walk_forward_replay.py) | `WalkForwardReplay`, `WalkForwardReplayPlan`, `evaluate_walk_forward_replay` | Bind replay cases to closed evaluation intervals, validate temporal order and global case-ID uniqueness, then flatten cases into the existing aggregate evaluator. |
+| [Regression policy](src/finance_research_agent/evals/regime_regression.py) | `RegimeRegressionPolicy`, `RegimeRegressionGateResult`, `evaluate_regime_regression_gate` | Apply an absolute accuracy floor and allowed degradation to compatible benchmark runs, retaining original metrics and deterministic failure reasons. |
+
+```mermaid
+flowchart TD
+    C[RegimeEvalCase] --> E[evaluate_regime_case]
+    E --> W[run_regime_workflow]
+    W --> D[Market-data projection and domain calculate_regime]
+    E -->|returns| O[RegimeEvalObservation]
+    A[evaluate_regime_cases] -->|once per case| E
+    A -->|aggregates observations| R[RegimeEvalReport and TagEvalSummary]
+    B[Frozen RegimeBenchmark] --> BR[run_regime_benchmark]
+    BR -->|delegates once| A
+    BR -->|retains report and identities| RUN[RegimeBenchmarkRun]
+    RUN -->|baseline and candidate| CMP[compare_regime_benchmark_runs]
+    CMP -->|returns| DELTA[RegimeBenchmarkComparison]
+    G[evaluate_regime_regression_gate] -->|delegates comparison| CMP
+    G -->|applies RegimeRegressionPolicy| GR[RegimeRegressionGateResult]
+    T[WalkForwardWindow] --> BIND[WalkForwardReplay]
+    C --> RC[RegimeReplayCase]
+    RC --> BIND
+    BIND --> PLAN[WalkForwardReplayPlan]
+    PLAN -->|delegates temporal checks| V[validate_walk_forward_plan]
+    PLAN --> WR[evaluate_walk_forward_replay]
+    WR -->|flattens cases and delegates once| A
+```
+
+`evaluate_regime_case` calls the provider-independent `run_regime_workflow`,
+which projects available `HistoricalDailyBars` through `to_market_snapshot`
+and calls the domain's `calculate_regime`. Per-symbol `HistoricalBarsFailure`
+outcomes remain unavailable evidence, never fabricated bars. Replay uses this
+same path over preconstructed cases; it does not invoke the historical fetcher
+or Alpaca adapter. Domain, market-data, and application modules do not depend
+on evals, and evals has no transport dependency.
+
+The dependency audit found no duplicated evaluation engine, aggregate metric
+calculation in orchestration, or reversed layer dependency. Benchmark execution
+and walk-forward replay delegate once to `evaluate_regime_cases`; comparison
+reads report accuracy; the regression gate reuses comparison. Replay owns
+decision/evidence relationships, while market data owns bar, request, session,
+and provenance validation. The UTC predicate is repeated at separate temporal
+and replay input boundaries; this small local check does not duplicate replay
+or market-data validation and does not warrant a shared framework.
+
+The API audit retains all existing exports. Names distinguish inputs,
+observations/reports, runs/comparisons, and policy decisions. `TagEvalSummary`
+is intentionally public as the report's per-tag result. Metadata validators,
+the shared case-ID uniqueness helper, synthetic fixture helpers, and the
+regression tolerance constant remain internal and are not package exports.
+
+Single-case mismatches produce `passed=False`; programmer/domain errors
+propagate. Aggregate evaluation rejects empty or duplicate-ID collections before
+execution and returns no partial report on errors. `confusion_counts` is a
+read-only mapping of all 16 `(expected, actual)` regime pairs, including zeros.
+Tag summaries are ordered by tag name; cases with multiple tags contribute once
+to each, so tag totals need not sum to the overall total. Tags do not affect
+classification. Case IDs and tags use canonical lowercase ASCII tokens with
+optional single underscore/hyphen separators; they are rejected rather than
+normalized. Temporal and replay details, identity rules, and the regression
+gate's numerical boundary behavior are documented below.
+
+## What v0.4 establishes and what it does not
+
+v0.4 supports deterministic capability evaluation, aggregate regime evaluation,
+reproducible benchmark identity/comparison, temporal walk-forward contracts,
+point-in-time evidence-cutoff validation, and a deterministic regression policy.
+Its accuracy measures agreement with caller-authored regime labels for the
+supplied cases. The built-in benchmark has four synthetic scenarios with a
+frozen policy and a weekday-only schedule, not an exchange calendar or observed
+IEX data. It is not representative of real market frequencies.
+
+The milestone does **not** establish:
+
+- Investment alpha, profitable trading, or portfolio performance.
+- Realistic transaction execution, fills, slippage, fees, or a trading backtest.
+- Historical publication/revision correctness when source data lacks that
+  metadata. Cutoff checks validate supplied timestamps, not historical truth.
+- External benchmark performance or live provider reliability.
+- LLM-agent quality; no LLM judge or agent runtime is implemented.
+- Production CI enforcement. The gate is a callable policy; baseline selection,
+  policy choice, invocation, and release decisions remain caller responsibilities.
+
+Training intervals are contractual: replay does not fit models or enforce how
+the caller developed or tuned the system. An inspected-and-retuned holdout is
+no longer untouched. Benchmark comparability trusts caller-maintained corpus
+and policy versions and the supplied system revision; it does not verify a
+corpus fingerprint, formula version, or the code associated with that revision.
+These limitations bound the closeout claim; a passing gate is not approval to
+trade or evidence of general market performance.
+
+## Release readiness
+
+The closeout audit found no production-code or public-export correction needed.
+Existing tests cover delegation, metric reuse, invalid inputs, temporal and
+evidence boundaries, error propagation, immutability, and regression tolerance;
+this documentation closeout adds no tests. Local verification at closeout:
+`pytest` (545 passed; one existing `websockets.legacy` deprecation warning),
+`ruff check .`, `mypy src` (23 source files), and `git diff --check`.
+These local checks do not imply automated CI enforcement.
+
+The repository has a GitHub `v0.1.0` release/tag and two existing package-version
+fields: `project.version` in `pyproject.toml` and `__version__` in
+`src/finance_research_agent/__init__.py`, both `0.2.0.dev0`. They remained unchanged
+through the v0.3 closeout and v0.4 implementation. No release procedure requires
+a version bump for this documentation closeout, so both are retained.
+
+After this PR is reviewed and merged, the recommendation is a **v0.4.0 GitHub
+release/tag** on the reviewed release commit. Before publishing, explicitly
+decide whether to align both existing package-version fields to `0.4.0`; an
+installable package advertised as `0.4.0` should report that version consistently.
+Milestone completion here does not mean a release has been published. This PR
+creates no tag/release or packaging infrastructure.
 
 ## Deterministic regime benchmark comparison
 
