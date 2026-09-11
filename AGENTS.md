@@ -7,7 +7,9 @@ decision-support project. Product A is a personal premarket research brief for
 U.S.-listed common stocks and non-leveraged, non-inverse ETFs. It is research
 software, not a brokerage or trading system.
 
-Current milestone: v0.4 Evals
+Completed milestone: v0.4 Evals
+Next milestone: v0.5 Agent Runtime (requires a separately approved design;
+runtime implementation is not authorized by this closeout).
 
 Allowed:
 - market-data-only Alpaca historical client integration
