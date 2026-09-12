@@ -8,10 +8,14 @@ U.S.-listed common stocks and non-leveraged, non-inverse ETFs. It is research
 software, not a brokerage or trading system.
 
 Completed milestone: v0.4 Evals
-Next milestone: v0.5 Agent Runtime (requires a separately approved design;
-runtime implementation is not authorized by this closeout).
+Current milestone: v0.5 Agent Runtime, Slice 1 only: approved provider-neutral
+model contracts, synchronous model port, and deterministic fake adapter.
+Runtime implementation and production model integration require separately
+approved designs.
 
 Allowed:
+- provider-neutral model message/request/response contracts and model port
+- deterministic fake model for offline dependency substitution and testing
 - market-data-only Alpaca historical client integration
 - authenticated historical market-data reads
 - request mapping
@@ -38,7 +42,7 @@ Still prohibited:
 - SEC/macro
 - portfolio risk
 - second providers
-- LLM integration
+- production LLM integration
 
 ## Safety, Numeric Truth, and Approval
 
