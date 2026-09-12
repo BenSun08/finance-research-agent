@@ -30,7 +30,7 @@ Human approval remains the final decision gate.
 - v0.2 Data Layer
 - v0.3 Workflow
 - v0.4 Evals — complete
-- v0.5 Agent Runtime — next; not implemented
+- v0.5 Agent Runtime — Slice 1 model boundary; runtime deferred
 - v0.6 MCP
 - v0.7 Automation / Production
 
@@ -52,8 +52,84 @@ v0.4 Evals is complete for its deterministic, offline evaluation scope. The
 closeout audit covers the implementation through merged PR #17 at
 `ce618fb64e13a709f8b62958d6a8f830aacfc5bc`. The layers compose the existing
 workflow, market-data contracts, and report metrics without introducing another
-evaluation engine. The next milestone is **v0.5 Agent Runtime**, which requires
-a separately approved design; this closeout adds no runtime capability.
+evaluation engine. v0.4.0 is released and closed. **v0.5 Agent Runtime** begins
+with the separately approved Slice 1 model boundary below; the runtime itself
+is not implemented.
+
+## v0.5 architecture: model boundary (Slice 1)
+
+`ModelPort` is provider-neutral. The public `finance_research_agent.agent`
+package exports `ModelMessage`, `ModelRequest`, `ModelResponse`, and `ModelPort`.
+The port follows the existing structural `Protocol` convention; implementations
+need not inherit from it. The intended dependency boundary is:
+
+```text
+Agent Runtime (future)
+      |
+      v
+ModelPort
+      |
+      +------ future OpenAI adapter
+      |
+      +------ future other providers
+      |
+      +------ FakeModelPort (deterministic fake)
+```
+
+The three value contracts are frozen, slotted dataclasses:
+
+| Contract | Fields and validation |
+| --- | --- |
+| `ModelMessage` | `role: Literal["system", "user", "assistant"]`, `content: str`; only those roles and nonblank text are accepted. |
+| `ModelRequest` | `messages: tuple[ModelMessage, ...]`; requires a nonempty tuple containing only messages, preserving caller order and duplicates. |
+| `ModelResponse` | `content: str`; requires nonblank text, with no provider metadata. |
+
+Invalid contract inputs raise `ValueError`. Content must be a string with at
+least one non-whitespace character. Validation checks `content.strip()` for
+emptiness but preserves the original text exactly, including surrounding
+whitespace, line breaks, and Unicode. No system prompt is added and no role
+sequencing is imposed.
+
+The synchronous port has one method:
+
+```python
+def complete(self, request: ModelRequest) -> ModelResponse: ...
+```
+
+`finance_research_agent.adapters.fake_model.FakeModelPort` exists for
+deterministic runtime testing through dependency substitution. It consumes a
+caller-supplied tuple of `ModelResponse` values, returning the original response
+objects in order without interpreting prompts. Its state belongs to each
+instance; a fresh instance with the same responses and calls reproduces the
+same behavior.
+
+```python
+from finance_research_agent.adapters.fake_model import FakeModelPort
+from finance_research_agent.agent import ModelMessage, ModelPort, ModelRequest, ModelResponse
+
+fake = FakeModelPort(responses=(ModelResponse("Risk-off"),))
+model: ModelPort = fake
+request = ModelRequest(messages=(ModelMessage("user", "Example research request"),))
+response = model.complete(request)
+assert response.content == "Risk-off"
+assert fake.requests == (request,)
+```
+
+The fake's read-only `requests` property returns an immutable tuple snapshot of
+every valid received request, including exhausted calls. Invalid requests raise
+`ValueError` before recording or consuming anything. An empty response tuple is
+valid and starts exhausted. Every exhausted call raises
+`RuntimeError("fake model responses exhausted")`; the final response is never
+repeated. Exhaustion represents missing test configuration. A general model
+failure abstraction and production-adapter failure semantics are deferred.
+
+No production LLM integration exists in Slice 1. This boundary adds no SDK,
+network call, API key, environment discovery, clock, Git/process dependency, or
+runtime dependency. It adds no agent loop, tools, prompts, retries, streaming,
+async API, structured output, multimodal input, model metadata, or evaluation
+framework. Later runtime and production-adapter slices require separate designs.
+Deterministic code continues to own numeric truth; model text does not approve
+trades or alter calculations, gates, or state transitions.
 
 ## v0.4 architecture and public API
 
