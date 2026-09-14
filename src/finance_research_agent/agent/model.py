@@ -1,9 +1,19 @@
-"""Minimal provider-neutral text contracts for the future agent runtime."""
+"""Provider-neutral model messages and assistant actions; no action execution."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-__all__ = ["ModelMessage", "ModelRequest", "ModelResponse"]
+from finance_research_agent.agent.tool import ToolArgumentValue, _copy_arguments, _require_name
+
+__all__ = [
+    "AssistantAction",
+    "FinalAnswer",
+    "ModelMessage",
+    "ModelRequest",
+    "ModelResponse",
+    "ToolCall",
+]
 
 
 def _require_content(content: str) -> None:
@@ -40,10 +50,41 @@ class ModelRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelResponse:
-    """Nonblank response text, preserved exactly without provider metadata."""
+class FinalAnswer:
+    """Nonblank final-answer text, preserved exactly without provider metadata."""
 
     content: str
 
     def __post_init__(self) -> None:
         _require_content(self.content)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCall:
+    """Model intent to request a capability, without lookup or execution.
+
+    Name and copied scalar arguments follow ToolRequest validation. A future
+    runtime translates this intent into ToolRequest execution intent; neither
+    contract establishes capability availability or authorization.
+    """
+
+    name: str
+    arguments: Mapping[str, ToolArgumentValue]
+
+    def __post_init__(self) -> None:
+        _require_name(self.name)
+        object.__setattr__(self, "arguments", _copy_arguments(self.arguments))
+
+
+type AssistantAction = FinalAnswer | ToolCall
+
+
+@dataclass(frozen=True, slots=True)
+class ModelResponse:
+    """Exactly one supported assistant action, without provider metadata."""
+
+    action: AssistantAction
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action, (FinalAnswer, ToolCall)):
+            raise ValueError("action must be a FinalAnswer or ToolCall")

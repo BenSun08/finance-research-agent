@@ -6,8 +6,9 @@ __all__ = ["FakeModelPort"]
 
 
 class FakeModelPort:
-    """Consume predetermined responses without interpreting request text.
+    """Consume predetermined responses without interpreting text or actions.
 
+    ToolCall responses are returned unchanged, without lookup or execution.
     Each instance owns its call history and response cursor. An empty response
     tuple is valid and starts exhausted. All valid requests are recorded,
     including exhausted calls; invalid requests leave state unchanged.

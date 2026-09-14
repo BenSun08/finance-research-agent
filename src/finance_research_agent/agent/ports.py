@@ -9,7 +9,7 @@ __all__ = ["ModelPort", "ToolPort"]
 
 
 class ModelPort(Protocol):
-    """Complete one explicit text request through an injected implementation."""
+    """Return one assistant action for an explicit request, without executing it."""
 
     def complete(self, request: ModelRequest) -> ModelResponse: ...
 

@@ -1,9 +1,18 @@
 from dataclasses import FrozenInstanceError
-from typing import Literal, cast
+from typing import Literal, assert_type, cast
 
 import pytest
 
-from finance_research_agent.agent import ModelMessage, ModelPort, ModelRequest, ModelResponse
+from finance_research_agent.agent import (
+    AssistantAction,
+    FinalAnswer,
+    ModelMessage,
+    ModelPort,
+    ModelRequest,
+    ModelResponse,
+    ToolCall,
+    ToolRequest,
+)
 
 
 @pytest.mark.parametrize("role", ["system", "user", "assistant"])
@@ -29,15 +38,15 @@ def test_invalid_message_content_rejected(content: object) -> None:
 
 
 @pytest.mark.parametrize("content", ["", " ", "\t\n\r", "\u2003", None, 1, b"Text", []])
-def test_invalid_response_content_rejected(content: object) -> None:
+def test_invalid_final_answer_content_rejected(content: object) -> None:
     with pytest.raises(ValueError, match="content must be a nonempty string"):
-        ModelResponse(cast(str, content))
+        FinalAnswer(cast(str, content))
 
 
-def test_response_preserves_nonblank_text() -> None:
+def test_final_answer_preserves_nonblank_text() -> None:
     content = "  Risk-off\nRésumé 市场\t "
 
-    assert ModelResponse(content).content is content
+    assert FinalAnswer(content).content is content
 
 
 @pytest.mark.parametrize("messages", [[], [ModelMessage("user", "Text")], None, "Text"])
@@ -51,7 +60,7 @@ def test_request_requires_messages() -> None:
         ModelRequest(())
 
 
-@pytest.mark.parametrize("invalid", [None, "Text", ModelResponse("Text"), 1])
+@pytest.mark.parametrize("invalid", [None, "Text", ModelResponse(action=FinalAnswer("Text")), 1])
 def test_request_rejects_non_message_members(invalid: object) -> None:
     messages = (ModelMessage("user", "Text"), invalid)
 
@@ -83,7 +92,11 @@ def test_request_does_not_add_system_prompt() -> None:
         (ModelMessage("user", "Question"), "role", "system"),
         (ModelMessage("user", "Question"), "content", "Changed"),
         (ModelRequest((ModelMessage("user", "Question"),)), "messages", ()),
-        (ModelResponse("Answer"), "content", "Changed"),
+        (FinalAnswer("Answer"), "content", "Changed"),
+        (ToolCall("test", {}), "name", "changed"),
+        (ToolCall("test", {}), "arguments", {}),
+        (ModelResponse(action=FinalAnswer("Answer")), "action", ToolCall("test", {})),
+        (ModelResponse(action=ToolCall("test", {})), "action", FinalAnswer("Answer")),
     ],
 )
 def test_contracts_are_frozen_and_slotted(
@@ -96,11 +109,58 @@ def test_contracts_are_frozen_and_slotted(
 
 class _IndependentModel:
     def complete(self, request: ModelRequest) -> ModelResponse:
-        return ModelResponse(request.messages[-1].content)
+        return ModelResponse(action=FinalAnswer(request.messages[-1].content))
 
 
 def test_protocol_accepts_structural_implementation_without_inheritance() -> None:
     model: ModelPort = _IndependentModel()
     request = ModelRequest((ModelMessage("user", "Caller text"),))
 
-    assert model.complete(request) == ModelResponse("Caller text")
+    assert model.complete(request) == ModelResponse(action=FinalAnswer("Caller text"))
+
+
+@pytest.mark.parametrize("action", [FinalAnswer("Answer"), ToolCall("unregistered", {})])
+def test_response_accepts_and_preserves_each_action(action: AssistantAction) -> None:
+    response = ModelResponse(action=action)
+
+    assert response.action is action
+    assert not hasattr(response, "content")
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        None,
+        "Answer",
+        1,
+        {},
+        (),
+        object(),
+        ToolRequest("test", {}),
+        ModelMessage("assistant", "Answer"),
+    ],
+)
+def test_response_rejects_unsupported_actions(action: object) -> None:
+    with pytest.raises(ValueError, match="action must be a FinalAnswer or ToolCall"):
+        ModelResponse(action=cast(AssistantAction, action))
+
+
+def test_assistant_action_union_supports_both_variants_and_narrowing() -> None:
+    actions: tuple[AssistantAction, ...] = (FinalAnswer("Answer"), ToolCall("test", {}))
+    for action in actions:
+        assert_type(action, AssistantAction)
+        if isinstance(action, FinalAnswer):
+            assert_type(action, FinalAnswer)
+            assert action.content == "Answer"
+        else:
+            assert_type(action, ToolCall)
+            assert action.name == "test"
+
+
+def test_tool_call_and_execution_request_are_distinct_protocol_stages() -> None:
+    call = ToolCall("test", {"limit": 2})
+    request = ToolRequest("test", {"limit": 2})
+
+    assert not isinstance(call, ToolRequest)
+    assert not isinstance(request, ToolCall)
+    assert not hasattr(call, "execute")
