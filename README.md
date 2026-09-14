@@ -30,7 +30,7 @@ Human approval remains the final decision gate.
 - v0.2 Data Layer
 - v0.3 Workflow
 - v0.4 Evals — complete
-- v0.5 Agent Runtime — Slice 1 model boundary; runtime deferred
+- v0.5 Agent Runtime — Slices 1–2 model/tool boundaries; runtime deferred
 - v0.6 MCP
 - v0.7 Automation / Production
 
@@ -53,28 +53,35 @@ closeout audit covers the implementation through merged PR #17 at
 `ce618fb64e13a709f8b62958d6a8f830aacfc5bc`. The layers compose the existing
 workflow, market-data contracts, and report metrics without introducing another
 evaluation engine. v0.4.0 is released and closed. **v0.5 Agent Runtime** begins
-with the separately approved Slice 1 model boundary below; the runtime itself
-is not implemented.
+with the separately approved Slice 1 model boundary and Slice 2 tool boundary
+below; the runtime itself is not implemented.
 
-## v0.5 architecture: model boundary (Slice 1)
+## v0.5 architecture: model and tool boundaries (Slices 1–2)
 
 `ModelPort` is provider-neutral. The public `finance_research_agent.agent`
 package exports `ModelMessage`, `ModelRequest`, `ModelResponse`, and `ModelPort`.
-The port follows the existing structural `Protocol` convention; implementations
-need not inherit from it. The intended dependency boundary is:
+The ports follow the existing structural `Protocol` convention; implementations
+need not inherit from them. The intended architecture is:
 
 ```text
-Agent Runtime (future)
-      |
-      v
-ModelPort
-      |
-      +------ future OpenAI adapter
-      |
-      +------ future other providers
-      |
-      +------ FakeModelPort (deterministic fake)
+            AgentRuntime (future)
+             /              \
+       ModelPort         ToolRegistry
+          ↑                  |
+    provider adapter       ToolPort
+                              ↑
+                       domain-tool adapter
+                              |
+                    existing domain/workflow
 ```
+
+`FakeModelPort` and `FakeToolPort` are the only implemented model/tool adapters.
+Provider adapters, domain-tool adapters, and `AgentRuntime` remain future work.
+Adapters implement the ports: future domain-tool adapters depend on the tool
+contracts and existing domain/workflow APIs. Existing deterministic financial
+domain logic remains outside the agent package, with no domain or workflow
+dependency on agent contracts or runtime. Existing Python domain functions are
+not directly exposed to a model.
 
 The three value contracts are frozen, slotted dataclasses:
 
@@ -123,13 +130,111 @@ valid and starts exhausted. Every exhausted call raises
 repeated. Exhaustion represents missing test configuration. A general model
 failure abstraction and production-adapter failure semantics are deferred.
 
-No production LLM integration exists in Slice 1. This boundary adds no SDK,
+No production LLM integration exists in Slices 1–2. These boundaries add no SDK,
 network call, API key, environment discovery, clock, Git/process dependency, or
-runtime dependency. It adds no agent loop, tools, prompts, retries, streaming,
-async API, structured output, multimodal input, model metadata, or evaluation
-framework. Later runtime and production-adapter slices require separate designs.
+runtime dependency. They add no agent loop, model tool calling, prompts, retries,
+streaming, async API, structured output, multimodal input, model metadata, or
+evaluation framework. Later runtime and production-adapter slices require separate designs.
 Deterministic code continues to own numeric truth; model text does not approve
 trades or alter calculations, gates, or state transitions.
+
+## Tool contracts, registry, and deterministic fake (Slice 2)
+
+The public `finance_research_agent.agent` API additionally exports
+`ToolArgumentValue`, `ToolDefinition`, `ToolRequest`, `ToolResult`, `ToolPort`,
+and `ToolRegistry`. **Slice 2 does not implement model tool calling.** Model
+messages, requests, and responses retain their Slice 1 fields unchanged.
+
+| Contract | Fields and validation |
+| --- | --- |
+| `ToolDefinition` | `name: str`, `description: str`; a canonical tool name and nonblank description. |
+| `ToolRequest` | `name: str`, `arguments: Mapping[str, ToolArgumentValue]`; a canonical tool name and a copied, read-only argument mapping. Empty arguments are valid. |
+| `ToolResult` | `content: str`; nonblank text, with no metadata or error envelope. |
+
+All three contracts are frozen, slotted dataclasses. Invalid inputs raise
+`ValueError`. Names follow the existing canonical token convention:
+`[a-z][a-z0-9]*(?:[_-][a-z0-9]+)*`. Examples include `test`, `test_tool`, and
+`test-tool2`. Uppercase, whitespace, non-ASCII names, leading/trailing
+separators, and repeated separators are rejected without normalization.
+Descriptions and result text must contain non-whitespace text and are preserved
+exactly, including surrounding whitespace, line breaks, and Unicode.
+
+`ToolArgumentValue` is the flat scalar alias `str | int | float | bool | None`.
+Values must be built-in instances of those types, and floats must be finite.
+Keys must be strings and are preserved without normalization or schema rules.
+Construction copies the mapping into a private dictionary wrapped in
+`MappingProxyType`, preserving its iteration order. Mutating the original
+dictionary, including one behind an input mapping proxy, cannot change the
+request. The public argument mapping cannot be mutated either.
+
+Named arguments fit a mapping, and immutable JSON scalar values make the copy
+sufficient without a recursive freezing framework. Nested objects/arrays,
+arbitrary Python objects, and scalar subclasses are rejected. A concrete future
+adapter can justify extending this deliberately limited argument model. There
+is no JSON Schema framework, serialization API, or provider function schema.
+
+The synchronous structural port is:
+
+```python
+class ToolPort(Protocol):
+    @property
+    def definition(self) -> ToolDefinition: ...
+
+    def execute(self, request: ToolRequest) -> ToolResult: ...
+```
+
+A tool exposes a fixed definition and must reject requests naming another tool.
+`ToolRegistry(tools: tuple[ToolPort, ...])` requires an immutable tuple of tools
+with valid definitions and callable `execute` methods. Its frozen `tools`
+collection retains the caller's tuple, order, and tool instances. Its frozen
+`definitions` tuple snapshots their original definitions in the same order.
+Duplicate names raise `ValueError`, even for the same instance registered twice.
+An empty registry is valid and has empty tools and definitions.
+
+`registry.get(name)` returns the original tool by exact registered name. Unknown
+names, including case or whitespace variants, raise `KeyError`; non-string
+lookup inputs raise `ValueError`. Construction and lookup never call `execute`.
+The registry is capability discovery/lookup, not planning: it does not choose
+tools, parse model output, retry, authorize commands, or call a model. The tool
+collection is immutable; individual tool instances may own execution state.
+
+`finance_research_agent.adapters.fake_tool.FakeToolPort(definition, results)`
+accepts one fixed `ToolDefinition` and a tuple of predetermined `ToolResult`
+values. It exposes the definition through a read-only property, returns the
+original result objects in order, and does not interpret argument values or
+simulate financial logic. Like `FakeModelPort`, it records every valid request
+in caller order through read-only `requests` tuple snapshots, including calls
+after exhaustion. Invalid request types and wrong tool names raise `ValueError`
+before recording or consuming a result, even when already exhausted.
+
+An empty result tuple starts exhausted. Every exhausted valid call raises
+`RuntimeError("fake tool results exhausted")`; the last result is never repeated.
+Each fake has independent history and cursor state. Reconstructing it with the
+same configuration and calls reproduces the same results and exhaustion.
+Exhaustion is missing test configuration. General tool failure outcomes and
+production-adapter error semantics remain deferred.
+
+```python
+from finance_research_agent.adapters.fake_tool import FakeToolPort
+from finance_research_agent.agent import ToolDefinition, ToolRegistry, ToolRequest, ToolResult
+
+fake = FakeToolPort(
+    definition=ToolDefinition("example", "Returns predetermined offline test text"),
+    results=(ToolResult("Predetermined result"),),
+)
+registry = ToolRegistry(tools=(fake,))
+request = ToolRequest(name="example", arguments={"label": "sample", "limit": 2})
+tool = registry.get(request.name)  # The caller explicitly names the tool.
+assert tool.execute(request).content == "Predetermined result"
+assert fake.requests == (request,)
+```
+
+Slice 2 defines execution contracts only. Registration does not grant permission
+to execute a consequential action. Before enabling such actions, future runtime
+work must distinguish read-only/query tools from side-effecting command tools
+and define their authorization gates. No permission framework or `is_safe`
+boolean is introduced. There is no agent control loop, planner, model tool-call
+field, domain-tool adapter, or portfolio/trading execution in this slice.
 
 ## v0.4 architecture and public API
 

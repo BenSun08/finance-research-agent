@@ -8,14 +8,18 @@ U.S.-listed common stocks and non-leveraged, non-inverse ETFs. It is research
 software, not a brokerage or trading system.
 
 Completed milestone: v0.4 Evals
-Current milestone: v0.5 Agent Runtime, Slice 1 only: approved provider-neutral
-model contracts, synchronous model port, and deterministic fake adapter.
+Current milestone: v0.5 Agent Runtime, Slices 1 and 2 only: approved
+provider-neutral model/tool contracts, synchronous ports, deterministic tool
+registry, and fake adapters.
 Runtime implementation and production model integration require separately
 approved designs.
 
 Allowed:
 - provider-neutral model message/request/response contracts and model port
 - deterministic fake model for offline dependency substitution and testing
+- provider-neutral tool definition/request/result contracts and tool port
+- immutable caller-ordered tool registry for capability discovery and exact lookup
+- deterministic fake tool for offline dependency substitution and testing
 - market-data-only Alpaca historical client integration
 - authenticated historical market-data reads
 - request mapping
@@ -43,6 +47,7 @@ Still prohibited:
 - portfolio risk
 - second providers
 - production LLM integration
+- model tool calling and direct exposure of domain functions as model tools
 
 ## Safety, Numeric Truth, and Approval
 
@@ -57,6 +62,14 @@ Still prohibited:
   alter them.
 - Keep credentials, private configuration, local data, runtime artifacts, and
   generated reports outside tracked source.
+- Slice 2 defines tool execution contracts only. ToolRegistry provides capability
+  discovery and lookup, not planning or authorization. Before enabling
+  consequential actions, future runtime work must distinguish read-only/query
+  tools from side-effecting command tools and define their authorization gates.
+  No permission framework or safety boolean is defined by these contracts.
+- Existing deterministic financial domain logic stays outside the agent package.
+  Future domain-tool adapters may depend on tool contracts and domain/workflow
+  APIs; the domain and workflows must not depend on agent contracts or runtime.
 
   ## Planning and Skill Policy
 
