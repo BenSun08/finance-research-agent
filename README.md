@@ -30,7 +30,7 @@ Human approval remains the final decision gate.
 - v0.2 Data Layer
 - v0.3 Workflow
 - v0.4 Evals — complete
-- v0.5 Agent Runtime — Slices 1–2 model/tool boundaries; runtime deferred
+- v0.5 Agent Runtime — Slices 1–3A model/tool boundaries and assistant actions; runtime deferred
 - v0.6 MCP
 - v0.7 Automation / Production
 
@@ -53,13 +53,14 @@ closeout audit covers the implementation through merged PR #17 at
 `ce618fb64e13a709f8b62958d6a8f830aacfc5bc`. The layers compose the existing
 workflow, market-data contracts, and report metrics without introducing another
 evaluation engine. v0.4.0 is released and closed. **v0.5 Agent Runtime** begins
-with the separately approved Slice 1 model boundary and Slice 2 tool boundary
-below; the runtime itself is not implemented.
+with the approved Slice 1 model boundary, Slice 2 tool boundary, and Slice 3A
+assistant action contract below; the runtime itself is not implemented.
 
-## v0.5 architecture: model and tool boundaries (Slices 1–2)
+## v0.5 architecture: model and tool boundaries (Slices 1–3A)
 
 `ModelPort` is provider-neutral. The public `finance_research_agent.agent`
-package exports `ModelMessage`, `ModelRequest`, `ModelResponse`, and `ModelPort`.
+package exports `ModelMessage`, `ModelRequest`, `ModelResponse`, `ModelPort`,
+`FinalAnswer`, `ToolCall`, and `AssistantAction`.
 The ports follow the existing structural `Protocol` convention; implementations
 need not inherit from them. The intended architecture is:
 
@@ -83,13 +84,15 @@ domain logic remains outside the agent package, with no domain or workflow
 dependency on agent contracts or runtime. Existing Python domain functions are
 not directly exposed to a model.
 
-The three value contracts are frozen, slotted dataclasses:
+The model value contracts are frozen, slotted dataclasses:
 
 | Contract | Fields and validation |
 | --- | --- |
 | `ModelMessage` | `role: Literal["system", "user", "assistant"]`, `content: str`; only those roles and nonblank text are accepted. |
 | `ModelRequest` | `messages: tuple[ModelMessage, ...]`; requires a nonempty tuple containing only messages, preserving caller order and duplicates. |
-| `ModelResponse` | `content: str`; requires nonblank text, with no provider metadata. |
+| `FinalAnswer` | `content: str`; requires nonblank text, preserved exactly. |
+| `ToolCall` | `name: str`, `arguments: Mapping[str, ToolArgumentValue]`; uses the same canonical name and copied scalar argument rules as `ToolRequest`. |
+| `ModelResponse` | `action: AssistantAction`; exactly one `FinalAnswer` or `ToolCall`, checked at construction. |
 
 Invalid contract inputs raise `ValueError`. Content must be a string with at
 least one non-whitespace character. Validation checks `content.strip()` for
@@ -106,20 +109,35 @@ def complete(self, request: ModelRequest) -> ModelResponse: ...
 `finance_research_agent.adapters.fake_model.FakeModelPort` exists for
 deterministic runtime testing through dependency substitution. It consumes a
 caller-supplied tuple of `ModelResponse` values, returning the original response
-objects in order without interpreting prompts. Its state belongs to each
-instance; a fresh instance with the same responses and calls reproduces the
+objects in order without interpreting prompts or actions. A `ToolCall` response
+is returned unchanged without capability lookup or tool execution. Its state
+belongs to each instance; a fresh instance with the same responses and calls reproduces the
 same behavior.
 
 ```python
 from finance_research_agent.adapters.fake_model import FakeModelPort
-from finance_research_agent.agent import ModelMessage, ModelPort, ModelRequest, ModelResponse
+from finance_research_agent.agent import (
+    FinalAnswer,
+    ModelMessage,
+    ModelPort,
+    ModelRequest,
+    ModelResponse,
+    ToolCall,
+)
 
-fake = FakeModelPort(responses=(ModelResponse("Risk-off"),))
+fake = FakeModelPort(responses=(
+    ModelResponse(action=FinalAnswer("Risk-off")),
+    ModelResponse(action=ToolCall("example", {"limit": 2})),
+))
 model: ModelPort = fake
 request = ModelRequest(messages=(ModelMessage("user", "Example research request"),))
 response = model.complete(request)
-assert response.content == "Risk-off"
+assert isinstance(response.action, FinalAnswer)
+assert response.action.content == "Risk-off"
 assert fake.requests == (request,)
+response = model.complete(request)
+assert isinstance(response.action, ToolCall)
+assert response.action.name == "example"  # Returned as intent; nothing is executed.
 ```
 
 The fake's read-only `requests` property returns an immutable tuple snapshot of
@@ -130,20 +148,79 @@ valid and starts exhausted. Every exhausted call raises
 repeated. Exhaustion represents missing test configuration. A general model
 failure abstraction and production-adapter failure semantics are deferred.
 
-No production LLM integration exists in Slices 1–2. These boundaries add no SDK,
+No production LLM integration exists in Slices 1–3A. These boundaries add no SDK,
 network call, API key, environment discovery, clock, Git/process dependency, or
-runtime dependency. They add no agent loop, model tool calling, prompts, retries,
-streaming, async API, structured output, multimodal input, model metadata, or
+runtime dependency. They add no agent loop, model-driven tool execution, prompts,
+retries, streaming, async API, structured output, multimodal input, model metadata, or
 evaluation framework. Later runtime and production-adapter slices require separate designs.
 Deterministic code continues to own numeric truth; model text does not approve
 trades or alter calculations, gates, or state transitions.
+
+## Assistant actions and protocol separation (Slice 3A)
+
+`type AssistantAction = FinalAnswer | ToolCall` is a closed union of two actions.
+Every `ModelResponse` contains exactly one action, with no correlated optional
+fields or additional action variants. `FinalAnswer` uses the original response
+text validation and preservation rules. `ToolCall` shares the canonical name
+validator, `ToolArgumentValue` alias, and argument validation/copy helper with
+`ToolRequest`; it does not inherit from or construct an execution request.
+The scalar argument rules are detailed in the tool-contract section below.
+
+```text
+              ModelPort
+                  ↓
+             ModelResponse
+                  ↓
+            AssistantAction
+           /               \
+    FinalAnswer          ToolCall
+                            │
+                            │ future runtime translation
+                            ▼
+                        ToolRequest
+                            ↓
+                        ToolRegistry
+                            ↓
+                         ToolPort
+                            ↓
+                        ToolResult
+```
+
+The model protocol and tool execution protocol are separate. **ToolCall is
+model intent:** the model requests a named capability. **ToolRequest is validated
+runtime execution intent:** a caller supplies the request to an execution port.
+Both validate their data shape today. Neither proves capability availability,
+authorization, or policy approval. A syntactically valid `ToolCall` can name an
+unregistered capability, and construction performs no registry lookup.
+
+A future runtime will translate `ToolCall` into `ToolRequest`. That translation
+point is a natural location for capability validation, authorization, policy,
+and tracing; none is implemented in Slice 3A. The diagram shows the conceptual
+handoff: the runtime will look up a port by name and pass the execution request
+to that port. `ToolRegistry` itself only discovers and looks up tools; it neither
+accepts `ModelResponse` nor executes `ToolRequest`. `ToolPort` depends only on
+execution contracts, and `ModelPort` never executes tools.
+
+This deliberately replaces the pre-1.0 text-only response API:
+`ModelResponse("Answer")` becomes `ModelResponse(action=FinalAnswer("Answer"))`.
+Consumers inspect `response.action`, narrow it to `FinalAnswer` or `ToolCall`,
+and read that variant's fields. There is no `ModelResponse.content` compatibility
+property. `FakeModelPort` keeps its response cursor, request history, and
+exhaustion behavior unchanged and only returns the configured response.
+
+Future provider adapters must translate native responses into `AssistantAction`.
+No provider call IDs, response IDs, finish reasons, content blocks, token usage,
+reasoning metadata, or JSON Schema are part of this contract. Slice 3A does not
+execute model actions or implement runtime orchestration, loops, retries, memory,
+RAG, planning, authorization, step limits, tracing infrastructure, streaming,
+async, a CLI, storage, or a new evaluation framework.
 
 ## Tool contracts, registry, and deterministic fake (Slice 2)
 
 The public `finance_research_agent.agent` API additionally exports
 `ToolArgumentValue`, `ToolDefinition`, `ToolRequest`, `ToolResult`, `ToolPort`,
-and `ToolRegistry`. **Slice 2 does not implement model tool calling.** Model
-messages, requests, and responses retain their Slice 1 fields unchanged.
+and `ToolRegistry`. Slice 2 defines the execution boundary. Slice 3A adds model
+actions separately; `ModelMessage` and `ModelRequest` retain their Slice 1 fields.
 
 | Contract | Fields and validation |
 | --- | --- |
@@ -233,8 +310,8 @@ Slice 2 defines execution contracts only. Registration does not grant permission
 to execute a consequential action. Before enabling such actions, future runtime
 work must distinguish read-only/query tools from side-effecting command tools
 and define their authorization gates. No permission framework or `is_safe`
-boolean is introduced. There is no agent control loop, planner, model tool-call
-field, domain-tool adapter, or portfolio/trading execution in this slice.
+boolean is introduced. There is no agent control loop, planner, domain-tool
+adapter, or portfolio/trading execution in these slices.
 
 ## v0.4 architecture and public API
 

@@ -9,11 +9,17 @@ import pytest
 
 from finance_research_agent.agent import (
     ToolArgumentValue,
+    ToolCall,
     ToolDefinition,
     ToolPort,
     ToolRequest,
     ToolResult,
 )
+
+
+@pytest.fixture(params=[ToolRequest, ToolCall], ids=["execution-request", "model-call"])
+def request_contract(request: pytest.FixtureRequest) -> type[ToolRequest] | type[ToolCall]:
+    return cast(type[ToolRequest] | type[ToolCall], request.param)
 
 
 @pytest.mark.parametrize("name", ["a", "tool", "tool2", "test_tool", "test-tool", "a_1-b2"])
@@ -24,6 +30,7 @@ def test_valid_definition_and_request_preserve_name(name: str) -> None:
     assert definition.name is name
     assert definition.description is description
     assert ToolRequest(name, {}).name is name
+    assert ToolCall(name, {}).name is name
 
 
 @pytest.mark.parametrize(
@@ -55,6 +62,8 @@ def test_invalid_name_rejected_by_definition_and_request(name: object) -> None:
         ToolDefinition(cast(str, name), "Description")
     with pytest.raises(ValueError, match="name must be a canonical lowercase ASCII token"):
         ToolRequest(cast(str, name), {})
+    with pytest.raises(ValueError, match="name must be a canonical lowercase ASCII token"):
+        ToolCall(cast(str, name), {})
 
 
 @pytest.mark.parametrize("text", ["", " ", "\t\n\r", "\u2003", None, 1, b"Text", []])
@@ -71,7 +80,9 @@ def test_result_preserves_text_exactly() -> None:
     assert ToolResult(content).content is content
 
 
-def test_arguments_copy_preserves_scalar_types_values_and_caller_order() -> None:
+def test_arguments_copy_preserves_scalar_types_values_and_caller_order(
+    request_contract: type[ToolRequest] | type[ToolCall],
+) -> None:
     arguments: dict[str, ToolArgumentValue] = {
         "text": "  unchanged  ",
         "integer": 2,
@@ -82,7 +93,7 @@ def test_arguments_copy_preserves_scalar_types_values_and_caller_order() -> None
         "negative": -1,
         "zero": -0.0,
     }
-    request = ToolRequest("test", arguments)
+    request = request_contract("test", arguments)
 
     assert request.arguments == arguments
     assert tuple(request.arguments) == tuple(arguments)
@@ -99,35 +110,44 @@ def test_arguments_copy_preserves_scalar_types_values_and_caller_order() -> None
 
 @pytest.mark.parametrize("arguments", [{}, UserDict({"key": "value"}), MappingProxyType({})])
 def test_mapping_inputs_and_empty_arguments_are_valid(
+    request_contract: type[ToolRequest] | type[ToolCall],
     arguments: Mapping[str, ToolArgumentValue],
 ) -> None:
-    assert ToolRequest("test", arguments).arguments == arguments
+    assert request_contract("test", arguments).arguments == arguments
 
 
-def test_proxy_backing_dictionary_is_also_disconnected() -> None:
+def test_proxy_backing_dictionary_is_also_disconnected(
+    request_contract: type[ToolRequest] | type[ToolCall],
+) -> None:
     original: dict[str, ToolArgumentValue] = {"key": "original"}
-    request = ToolRequest("test", MappingProxyType(original))
+    request = request_contract("test", MappingProxyType(original))
     original["key"] = "changed"
 
     assert request.arguments == {"key": "original"}
 
 
 @pytest.mark.parametrize("arguments", [None, [], (), [("key", "value")], "text", 1])
-def test_non_mapping_arguments_rejected(arguments: object) -> None:
+def test_non_mapping_arguments_rejected(
+    request_contract: type[ToolRequest] | type[ToolCall], arguments: object
+) -> None:
     with pytest.raises(ValueError, match="arguments must be a mapping"):
-        ToolRequest("test", cast(Mapping[str, ToolArgumentValue], arguments))
+        request_contract("test", cast(Mapping[str, ToolArgumentValue], arguments))
 
 
 @pytest.mark.parametrize("key", [1, None, ("key",), b"key"])
-def test_non_string_argument_keys_rejected(key: object) -> None:
+def test_non_string_argument_keys_rejected(
+    request_contract: type[ToolRequest] | type[ToolCall], key: object
+) -> None:
     with pytest.raises(ValueError, match="argument keys must be strings"):
-        ToolRequest("test", cast(Mapping[str, ToolArgumentValue], {key: "value"}))
+        request_contract("test", cast(Mapping[str, ToolArgumentValue], {key: "value"}))
 
 
-def test_string_keys_are_preserved_without_schema_or_normalization() -> None:
+def test_string_keys_are_preserved_without_schema_or_normalization(
+    request_contract: type[ToolRequest] | type[ToolCall],
+) -> None:
     arguments = {"": None, " free form ": True, "工具": "text"}
 
-    assert ToolRequest("test", arguments).arguments == arguments
+    assert request_contract("test", arguments).arguments == arguments
 
 
 class _ScalarSubclass(int):
@@ -138,15 +158,19 @@ class _ScalarSubclass(int):
     "value",
     [[], {}, (), {1}, object(), b"bytes", Decimal("1"), _ScalarSubclass(1)],
 )
-def test_nested_and_non_builtin_argument_values_rejected(value: object) -> None:
+def test_nested_and_non_builtin_argument_values_rejected(
+    request_contract: type[ToolRequest] | type[ToolCall], value: object
+) -> None:
     with pytest.raises(ValueError, match="argument values must be built-in JSON scalars"):
-        ToolRequest("test", {"key": cast(ToolArgumentValue, value)})
+        request_contract("test", {"key": cast(ToolArgumentValue, value)})
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
-def test_nonfinite_argument_floats_rejected(value: float) -> None:
+def test_nonfinite_argument_floats_rejected(
+    request_contract: type[ToolRequest] | type[ToolCall], value: float
+) -> None:
     with pytest.raises(ValueError, match="argument floats must be finite"):
-        ToolRequest("test", {"key": value})
+        request_contract("test", {"key": value})
 
 
 @pytest.mark.parametrize(

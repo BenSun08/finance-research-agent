@@ -4,6 +4,9 @@ import pytest
 
 from finance_research_agent.adapters.fake_tool import FakeToolPort
 from finance_research_agent.agent import (
+    FinalAnswer,
+    ModelResponse,
+    ToolCall,
     ToolDefinition,
     ToolPort,
     ToolRegistry,
@@ -82,7 +85,18 @@ def test_fake_rejects_non_result_members(result: object) -> None:
         FakeToolPort(DEFINITION, (ToolResult("Valid"), cast(ToolResult, result)))
 
 
-@pytest.mark.parametrize("invalid", [None, "Request", (), ToolResult("Result")])
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        None,
+        "Request",
+        (),
+        ToolResult("Result"),
+        ToolCall("fake", {}),
+        ModelResponse(action=ToolCall("fake", {})),
+        ModelResponse(action=FinalAnswer("Answer")),
+    ],
+)
 @pytest.mark.parametrize("exhausted", [False, True])
 def test_invalid_request_neither_records_nor_consumes(invalid: object, exhausted: bool) -> None:
     result = ToolResult("Next result")
