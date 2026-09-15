@@ -56,6 +56,7 @@ evaluation engine. v0.4.0 is released and closed. **v0.5 Agent Runtime** begins
 with the approved Slice 1 model boundary, Slice 2 tool boundary, Slice 3A
 assistant action contract, and Slice 3B minimal deterministic runtime below.
 No production LLM provider or domain-tool adapter exists yet.
+The current development package version is `0.5.0.dev0`.
 
 ## v0.5 architecture: model, tools, and runtime (Slices 1–3B)
 
@@ -352,6 +353,14 @@ contains exactly one action. Runtime code reads no clock, environment, Git,
 process, filesystem, or network. Existing domain, application, market-data, and
 eval layers remain independent of the agent package.
 
+### Internal validation maintenance
+
+Validation helpers currently live beside their contracts: `runtime.py` reuses
+`model.py`'s `_require_content`, and `model.py` reuses `tool.py`'s name and
+argument validators. This small amount of internal sharing is acceptable for
+Slice 3B. If one or two more contracts need these helpers, consider extracting
+them into `agent/_validation.py`, preserving their validation and error semantics.
+
 ## Tool contracts, registry, and deterministic fake (Slice 2)
 
 The public `finance_research_agent.agent` API additionally exports
@@ -565,18 +574,16 @@ this documentation closeout adds no tests. Local verification at closeout:
 `ruff check .`, `mypy src` (23 source files), and `git diff --check`.
 These local checks do not imply automated CI enforcement.
 
-The repository has a GitHub `v0.1.0` release/tag and two existing package-version
-fields: `project.version` in `pyproject.toml` and `__version__` in
-`src/finance_research_agent/__init__.py`, both `0.2.0.dev0`. They remained unchanged
-through the v0.3 closeout and v0.4 implementation. No release procedure requires
-a version bump for this documentation closeout, so both are retained.
+### Package version alignment
 
-After this PR is reviewed and merged, the recommendation is a **v0.4.0 GitHub
-release/tag** on the reviewed release commit. Before publishing, explicitly
-decide whether to align both existing package-version fields to `0.4.0`; an
-installable package advertised as `0.4.0` should report that version consistently.
-Milestone completion here does not mean a release has been published. This PR
-creates no tag/release or packaging infrastructure.
+The latest released milestone is `v0.4.0`; the current v0.5 development package
+reports `0.5.0.dev0` in both `project.version` in `pyproject.toml` and `__version__`
+in `src/finance_research_agent/__init__.py`. Update these two fields together and
+keep current-version documentation aligned. The smoke suite checks that the
+package version matches the project metadata without pinning the next version.
+Dependency pins and domain schema, formula, and policy versions have separate
+meanings and do not follow package-version bumps. This development version does
+not declare v0.5 complete or publish a new tag/release.
 
 ## Deterministic regime benchmark comparison
 

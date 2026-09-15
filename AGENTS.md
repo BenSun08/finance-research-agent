@@ -152,6 +152,8 @@ Still prohibited:
 - Keep source code, tests, configuration, logs, reports, and technical
   documentation in English.
 - Keep runtime dependencies empty until an approved milestone requires them.
+- Keep `project.version` in `pyproject.toml`, package `__version__`, and current
+  version documentation aligned. The current development version is `0.5.0.dev0`.
 - Run the repository checks before requesting review:
 
   ```text
