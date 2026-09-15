@@ -26,13 +26,24 @@ Human approval remains the final decision gate.
 
 ## Development Roadmap
 
-- v0.1 Deterministic Research Core + First Market Regime Skill
-- v0.2 Data Layer
-- v0.3 Workflow
-- v0.4 Evals — complete
-- v0.5 Agent Runtime — Slices 1–3B model/tool boundaries, assistant actions, and bounded runtime
-- v0.6 MCP
-- v0.7 Automation / Production
+Completed foundation:
+
+- v0.1 Deterministic Research Core + First Market Regime Skill — complete
+- v0.2 Data Layer — complete
+- v0.3 Deterministic Workflow — complete
+- v0.4 Evaluation / Replay — complete
+- v0.5 Minimal Agent Runtime Foundation — complete through Slice 3B
+
+Forward direction; exact future release numbers remain provisional:
+
+1. Product A deterministic application/evidence contracts
+2. Product A skills and a declarative workflow contract
+3. MCP over approved typed operations
+4. production model provider adapter
+5. shadow-mode automation, evaluation, and learning loop
+
+The sequencing and authority rationale are recorded in the
+[Product A Roadmap Reconciliation Design](docs/superpowers/specs/2026-09-15-roadmap-reconciliation-design.md).
 
 ## Status
 
@@ -52,13 +63,21 @@ v0.4 Evals is complete for its deterministic, offline evaluation scope. The
 closeout audit covers the implementation through merged PR #17 at
 `ce618fb64e13a709f8b62958d6a8f830aacfc5bc`. The layers compose the existing
 workflow, market-data contracts, and report metrics without introducing another
-evaluation engine. v0.4.0 is released and closed. **v0.5 Agent Runtime** begins
-with the approved Slice 1 model boundary, Slice 2 tool boundary, Slice 3A
-assistant action contract, and Slice 3B minimal deterministic runtime below.
+evaluation engine. v0.4.0 is released and closed. **v0.5 Agent Runtime** is
+complete through the approved Slice 1 model boundary, Slice 2 tool boundary,
+Slice 3A assistant action contract, and Slice 3B minimal deterministic runtime
+below.
 No production LLM provider or domain-tool adapter exists yet.
 The current development package version is `0.5.0.dev0`.
 
 ## v0.5 architecture: model, tools, and runtime (Slices 1–3B)
+
+`AgentRuntime` is a bounded generic orchestration shell. It does not own Product
+A business workflow, financial policy, evidence freshness or source authority,
+publication validity, run/revision identity, or human approval state.
+Deterministic Product A domain/application services remain authoritative. A tool
+being registered does not make it authorized or permitted by a Product A
+workflow.
 
 `ModelPort` is provider-neutral. The public `finance_research_agent.agent`
 package exports `ModelMessage`, `ModelRequest`, `ModelResponse`, `ModelPort`,
@@ -242,12 +261,13 @@ do not execute actions; the bounded runtime below owns that responsibility.
              ToolObservation(call, result) ---------+
 ```
 
-The arrows show control/data flow owned by `AgentRuntime`. The registry only
-returns a port; the runtime constructs the execution request, calls that port,
-and appends the observation. The model chooses actions, the runtime owns state
-transitions, and tools own capability execution. Orchestration is deterministic
-given the supplied model/tool responses; it does not make arbitrary future model
-or tool implementations deterministic.
+The arrows show the generic model/tool control and data flow owned by
+`AgentRuntime`; they are not Product A business-state transitions. The registry
+only returns a port; the runtime constructs the execution request, calls that
+port, and appends the observation. The model chooses actions, the runtime owns
+those generic loop transitions, and tools own capability execution.
+Orchestration is deterministic given the supplied model/tool responses; it does
+not make arbitrary future model or tool implementations deterministic.
 
 ```python
 AgentRuntime(model: ModelPort, tools: ToolRegistry)
