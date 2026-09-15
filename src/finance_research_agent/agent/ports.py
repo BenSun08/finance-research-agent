@@ -1,4 +1,4 @@
-"""Provider-neutral outbound capabilities for the future agent runtime."""
+"""Provider-neutral outbound capabilities for the agent runtime."""
 
 from typing import Protocol
 

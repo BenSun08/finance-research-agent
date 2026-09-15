@@ -8,16 +8,19 @@ U.S.-listed common stocks and non-leveraged, non-inverse ETFs. It is research
 software, not a brokerage or trading system.
 
 Completed milestone: v0.4 Evals
-Current milestone: v0.5 Agent Runtime, Slices 1, 2, and 3A only: approved
+Current milestone: v0.5 Agent Runtime, Slices 1, 2, 3A, and 3B: approved
 provider-neutral model/tool contracts, assistant actions, synchronous ports,
-deterministic tool registry, and fake adapters.
-Runtime implementation and production model integration require separately
-approved designs.
+deterministic tool registry, fake adapters, and minimal bounded runtime.
+Production model integration and runtime capabilities beyond Slice 3B require
+separately approved designs.
 
 Allowed:
 - provider-neutral model message/request/response contracts and model port
 - deterministic fake model for offline dependency substitution and testing
-- provider-neutral FinalAnswer / ToolCall assistant actions without execution
+- provider-neutral FinalAnswer / ToolCall assistant action contracts
+- bounded synchronous AgentRuntime over injected ModelPort and ToolRegistry
+- runtime-owned ToolCall to ToolRequest translation and sequential tool execution
+- immutable ToolObservation history pairing each successful result with its call
 - provider-neutral tool definition/request/result contracts and tool port
 - immutable caller-ordered tool registry for capability discovery and exact lookup
 - deterministic fake tool for offline dependency substitution and testing
@@ -43,12 +46,12 @@ Still prohibited:
 - streaming
 - MCP
 - scheduling
-- autonomous agent runtime
+- unbounded or autonomous runtime capabilities beyond the approved Slice 3B loop
 - SEC/macro
 - portfolio risk
 - second providers
 - production LLM integration
-- model-driven tool execution and direct exposure of domain functions as model tools
+- direct exposure of domain functions as model tools
 
 ## Safety, Numeric Truth, and Approval
 
@@ -69,9 +72,15 @@ Still prohibited:
   tools from side-effecting command tools and define their authorization gates.
   No permission framework or safety boolean is defined by these contracts.
 - Slice 3A separates ToolCall model intent from ToolRequest runtime execution
-  intent. Both validate data shape; neither establishes authorization. Future
-  runtime translation may apply capability validation, authorization, policy,
-  and tracing. Slice 3A does not implement that translation or execute actions.
+  intent. Both validate data shape; neither establishes authorization. Slice 3B
+  owns translation, exact registry lookup, sequential execution, and paired
+  ToolObservation history. Registry membership is not authorization for a
+  consequential action; authorization, policy, and tracing remain deferred.
+- Slice 3B counts one model completion as one step. A positive max_steps is
+  mandatory. FinalAnswer stops immediately; a ToolCall on the final permitted
+  step executes before explicit exhaustion. Lookup/model/tool failures propagate
+  unchanged. No retry, approval framework, production provider, domain-tool
+  adapter, or additional financial capability is introduced.
 - Existing deterministic financial domain logic stays outside the agent package.
   Future domain-tool adapters may depend on tool contracts and domain/workflow
   APIs; the domain and workflows must not depend on agent contracts or runtime.
@@ -143,6 +152,8 @@ Still prohibited:
 - Keep source code, tests, configuration, logs, reports, and technical
   documentation in English.
 - Keep runtime dependencies empty until an approved milestone requires them.
+- Keep `project.version` in `pyproject.toml`, package `__version__`, and current
+  version documentation aligned. The current development version is `0.5.0.dev0`.
 - Run the repository checks before requesting review:
 
   ```text
