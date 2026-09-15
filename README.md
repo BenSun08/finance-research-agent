@@ -30,7 +30,7 @@ Human approval remains the final decision gate.
 - v0.2 Data Layer
 - v0.3 Workflow
 - v0.4 Evals — complete
-- v0.5 Agent Runtime — Slices 1–3A model/tool boundaries and assistant actions; runtime deferred
+- v0.5 Agent Runtime — Slices 1–3B model/tool boundaries, assistant actions, and bounded runtime
 - v0.6 MCP
 - v0.7 Automation / Production
 
@@ -53,31 +53,34 @@ closeout audit covers the implementation through merged PR #17 at
 `ce618fb64e13a709f8b62958d6a8f830aacfc5bc`. The layers compose the existing
 workflow, market-data contracts, and report metrics without introducing another
 evaluation engine. v0.4.0 is released and closed. **v0.5 Agent Runtime** begins
-with the approved Slice 1 model boundary, Slice 2 tool boundary, and Slice 3A
-assistant action contract below; the runtime itself is not implemented.
+with the approved Slice 1 model boundary, Slice 2 tool boundary, Slice 3A
+assistant action contract, and Slice 3B minimal deterministic runtime below.
+No production LLM provider or domain-tool adapter exists yet.
 
-## v0.5 architecture: model and tool boundaries (Slices 1–3A)
+## v0.5 architecture: model, tools, and runtime (Slices 1–3B)
 
 `ModelPort` is provider-neutral. The public `finance_research_agent.agent`
 package exports `ModelMessage`, `ModelRequest`, `ModelResponse`, `ModelPort`,
-`FinalAnswer`, `ToolCall`, and `AssistantAction`.
+`FinalAnswer`, `ToolCall`, `AssistantAction`, `ToolObservation`, `AgentRuntime`,
+and `AgentRunResult`, plus the tool contracts and registry described below.
 The ports follow the existing structural `Protocol` convention; implementations
-need not inherit from them. The intended architecture is:
+need not inherit from them. The dependency direction is:
 
 ```text
-            AgentRuntime (future)
+               AgentRuntime
              /              \
        ModelPort         ToolRegistry
           ↑                  |
     provider adapter       ToolPort
-                              ↑
-                       domain-tool adapter
+       (future)               ↑
+                       domain-tool adapter (future)
                               |
                     existing domain/workflow
 ```
 
 `FakeModelPort` and `FakeToolPort` are the only implemented model/tool adapters.
-Provider adapters, domain-tool adapters, and `AgentRuntime` remain future work.
+Provider adapters and domain-tool adapters remain future work. `AgentRuntime`
+uses injected `ModelPort` and `ToolRegistry` dependencies.
 Adapters implement the ports: future domain-tool adapters depend on the tool
 contracts and existing domain/workflow APIs. Existing deterministic financial
 domain logic remains outside the agent package, with no domain or workflow
@@ -89,9 +92,10 @@ The model value contracts are frozen, slotted dataclasses:
 | Contract | Fields and validation |
 | --- | --- |
 | `ModelMessage` | `role: Literal["system", "user", "assistant"]`, `content: str`; only those roles and nonblank text are accepted. |
-| `ModelRequest` | `messages: tuple[ModelMessage, ...]`; requires a nonempty tuple containing only messages, preserving caller order and duplicates. |
+| `ModelRequest` | `messages: tuple[ModelMessage \| ToolObservation, ...]`; requires a nonempty tuple of supported history entries, preserving caller order and duplicates. |
 | `FinalAnswer` | `content: str`; requires nonblank text, preserved exactly. |
 | `ToolCall` | `name: str`, `arguments: Mapping[str, ToolArgumentValue]`; uses the same canonical name and copied scalar argument rules as `ToolRequest`. |
+| `ToolObservation` | `call: ToolCall`, `result: ToolResult`; validates both types and retains the original objects as one completed tool interaction. |
 | `ModelResponse` | `action: AssistantAction`; exactly one `FinalAnswer` or `ToolCall`, checked at construction. |
 
 Invalid contract inputs raise `ValueError`. Content must be a string with at
@@ -148,11 +152,12 @@ valid and starts exhausted. Every exhausted call raises
 repeated. Exhaustion represents missing test configuration. A general model
 failure abstraction and production-adapter failure semantics are deferred.
 
-No production LLM integration exists in Slices 1–3A. These boundaries add no SDK,
+No production LLM integration exists in Slices 1–3B. These boundaries add no SDK,
 network call, API key, environment discovery, clock, Git/process dependency, or
-runtime dependency. They add no agent loop, model-driven tool execution, prompts,
-retries, streaming, async API, structured output, multimodal input, model metadata, or
-evaluation framework. Later runtime and production-adapter slices require separate designs.
+runtime dependency. Slice 3B adds bounded orchestration and sequential tool
+execution. Prompts, retries, streaming, async APIs, provider structured output,
+multimodal input, model metadata, and a new evaluation framework remain outside
+this scope. Further runtime and production-adapter slices require separate designs.
 Deterministic code continues to own numeric truth; model text does not approve
 trades or alter calculations, gates, or state transitions.
 
@@ -175,7 +180,7 @@ The scalar argument rules are detailed in the tool-contract section below.
            /               \
     FinalAnswer          ToolCall
                             │
-                            │ future runtime translation
+                            │ AgentRuntime translation (Slice 3B)
                             ▼
                         ToolRequest
                             ↓
@@ -193,11 +198,10 @@ Both validate their data shape today. Neither proves capability availability,
 authorization, or policy approval. A syntactically valid `ToolCall` can name an
 unregistered capability, and construction performs no registry lookup.
 
-A future runtime will translate `ToolCall` into `ToolRequest`. That translation
-point is a natural location for capability validation, authorization, policy,
-and tracing; none is implemented in Slice 3A. The diagram shows the conceptual
-handoff: the runtime will look up a port by name and pass the execution request
-to that port. `ToolRegistry` itself only discovers and looks up tools; it neither
+`AgentRuntime` translates `ToolCall` into `ToolRequest` in Slice 3B. It looks up
+the exact registered name and passes the execution request to that port.
+Authorization, policy, and tracing at this boundary remain future work.
+`ToolRegistry` itself only discovers and looks up tools; it neither
 accepts `ModelResponse` nor executes `ToolRequest`. `ToolPort` depends only on
 execution contracts, and `ModelPort` never executes tools.
 
@@ -210,17 +214,151 @@ exhaustion behavior unchanged and only returns the configured response.
 
 Future provider adapters must translate native responses into `AssistantAction`.
 No provider call IDs, response IDs, finish reasons, content blocks, token usage,
-reasoning metadata, or JSON Schema are part of this contract. Slice 3A does not
-execute model actions or implement runtime orchestration, loops, retries, memory,
-RAG, planning, authorization, step limits, tracing infrastructure, streaming,
-async, a CLI, storage, or a new evaluation framework.
+reasoning metadata, or JSON Schema are part of this contract. The model contracts
+do not execute actions; the bounded runtime below owns that responsibility.
+
+## Minimal deterministic AgentRuntime (Slice 3B)
+
+```text
+        User ModelRequest
+               |
+          AgentRuntime
+               |
+           ModelPort <-----------------------------+
+               |                                   |
+        AssistantAction                            |
+          /         \                              |
+   FinalAnswer     ToolCall                         |
+        |              |                           |
+       STOP       ToolRequest                      |
+                       |                           |
+                  ToolRegistry                     |
+                       |                           |
+                    ToolPort                       |
+                       |                           |
+                   ToolResult                      |
+                       |                           |
+             ToolObservation(call, result) ---------+
+```
+
+The arrows show control/data flow owned by `AgentRuntime`. The registry only
+returns a port; the runtime constructs the execution request, calls that port,
+and appends the observation. The model chooses actions, the runtime owns state
+transitions, and tools own capability execution. Orchestration is deterministic
+given the supplied model/tool responses; it does not make arbitrary future model
+or tool implementations deterministic.
+
+```python
+AgentRuntime(model: ModelPort, tools: ToolRegistry)
+runtime.run(request: ModelRequest, *, max_steps: int) -> AgentRunResult
+```
+
+`AgentRuntime` is frozen and slotted and retains the injected dependencies. It
+requires a callable model `complete` and a `ToolRegistry`, constructing no
+concrete adapters internally. Each run keeps its current request and counter
+locally. `AgentRunResult` is frozen and slotted with exact nonblank
+`final_answer: str` and positive `steps: int`.
+
+### Transitions, bounds, and failures
+
+`run` validates a `ModelRequest` and positive integer `max_steps` before calling
+any port. Booleans, non-integers, zero, and negative bounds raise `ValueError`.
+There is no default or implicit unbounded mode.
+
+1. An explicit bounded iteration calls `model.complete(current_request)`.
+2. `FinalAnswer` immediately returns `AgentRunResult(action.content, step)`.
+3. `ToolCall` triggers exact registry lookup, runtime-owned translation into
+   `ToolRequest(name=action.name, arguments=action.arguments)`, and one execution.
+4. A successful result appends one `ToolObservation(action, result)` to a new
+   `ModelRequest`, followed by the next model turn if the bound permits it.
+
+**One model completion is one step.** Tool execution does not consume another
+step. A tool call followed by a final answer therefore returns `steps == 2`.
+A final answer on completion `max_steps` succeeds. A tool call on the final
+permitted completion still executes and forms its observation, then the runtime
+raises `RuntimeError("agent max_steps exhausted")`. With N successive tool calls
+and no intervening failure, there are exactly N model completions and N tool
+executions, with no completion N+1. The final observation is not sent to another
+model call or returned as a partial result.
+
+Unknown tools propagate the registry's `KeyError` without executing an unrelated
+tool. Model and tool exceptions propagate unchanged, including fake exhaustion;
+there is no wrapping, retry, or successful observation for a failed execution.
+A lookup/tool failure on the final step takes precedence over step exhaustion.
+The step bound protects against an endless sequence of model turns; it does not
+impose a wall-clock timeout on a blocking model or tool implementation.
+
+### Typed history and preservation
+
+`ModelMessage` continues to mean text with a `system`, `user`, or `assistant`
+role. `ToolObservation(call: ToolCall, result: ToolResult)` is a distinct history
+entry that pairs the requested capability and its exact arguments with the
+successful result. It retains both immutable objects, without encoding tool
+results as user prose, adding provider IDs, or serializing a text envelope.
+A future provider adapter can translate the pair into native assistant-call and
+tool-result messages.
+
+`ModelRequest.messages` now accepts `ModelMessage | ToolObservation` entries in
+one nonempty immutable tuple. Consumers narrow the entry type before accessing
+text: `message.content` for a `ModelMessage`, `observation.result.content` for
+an observation. Construction validates types without imposing a role sequence.
+Caller-supplied observations are history; they are preserved and never replayed
+as executions or checked against the current registry.
+
+The first completion receives the caller's original request. Subsequent requests
+preserve all original entries, duplicates, ordering, and text, appending one
+paired observation after each successful execution. No caller request is mutated,
+no system prompt is inserted, and registry definitions are not automatically
+injected into model input. Tool names, scalar argument types and order, and
+result text retain their existing validation and preservation rules.
+
+### Offline example
+
+```python
+from finance_research_agent.adapters.fake_model import FakeModelPort
+from finance_research_agent.adapters.fake_tool import FakeToolPort
+from finance_research_agent.agent import (
+    AgentRunResult, AgentRuntime, FinalAnswer, ModelMessage, ModelRequest,
+    ModelResponse, ToolCall, ToolDefinition, ToolObservation, ToolRegistry, ToolResult,
+)
+
+call = ToolCall("market_regime", {})
+observation_result = ToolResult("risk_off")
+model = FakeModelPort((ModelResponse(call), ModelResponse(FinalAnswer("Risk-off"))))
+tool = FakeToolPort(
+    ToolDefinition("market_regime", "Predetermined offline example; no finance logic"),
+    (observation_result,),
+)
+request = ModelRequest((ModelMessage("user", "Explain the configured result"),))
+runtime = AgentRuntime(model=model, tools=ToolRegistry((tool,)))
+result = runtime.run(request, max_steps=2)
+
+assert result == AgentRunResult(final_answer="Risk-off", steps=2)
+assert model.requests[1].messages == (
+    *request.messages, ToolObservation(call, observation_result),
+)
+assert len(tool.requests) == 1
+```
+
+Fresh equivalently configured fakes reproduce the result and full request
+history offline. Reusing a runtime starts fresh run history and counters, but
+does not reset the injected fakes' response cursors or recorded requests.
+
+This slice adds no production LLM provider, domain-tool adapter, new finance
+logic, SDK/framework dependency, planner, memory, RAG, async, streaming, retries,
+authorization/approval framework, persistence, tracing, CLI, MCP, parallel tool
+execution, token/cost accounting, or new eval framework. Each response still
+contains exactly one action. Runtime code reads no clock, environment, Git,
+process, filesystem, or network. Existing domain, application, market-data, and
+eval layers remain independent of the agent package.
 
 ## Tool contracts, registry, and deterministic fake (Slice 2)
 
 The public `finance_research_agent.agent` API additionally exports
 `ToolArgumentValue`, `ToolDefinition`, `ToolRequest`, `ToolResult`, `ToolPort`,
 and `ToolRegistry`. Slice 2 defines the execution boundary. Slice 3A adds model
-actions separately; `ModelMessage` and `ModelRequest` retain their Slice 1 fields.
+actions separately. Slice 3B extends `ModelRequest.messages` with paired tool
+observations while preserving `ModelMessage` text semantics.
 
 | Contract | Fields and validation |
 | --- | --- |
@@ -310,8 +448,8 @@ Slice 2 defines execution contracts only. Registration does not grant permission
 to execute a consequential action. Before enabling such actions, future runtime
 work must distinguish read-only/query tools from side-effecting command tools
 and define their authorization gates. No permission framework or `is_safe`
-boolean is introduced. There is no agent control loop, planner, domain-tool
-adapter, or portfolio/trading execution in these slices.
+boolean is introduced. Slice 3B adds the bounded control loop described above;
+planners, domain-tool adapters, and portfolio/trading execution remain absent.
 
 ## v0.4 architecture and public API
 

@@ -1,4 +1,4 @@
-"""Public model/tool contracts, ports, and registry; no agent runtime yet."""
+"""Public provider-neutral contracts, ports, registry, and bounded agent runtime."""
 
 from finance_research_agent.agent.model import (
     AssistantAction,
@@ -7,9 +7,11 @@ from finance_research_agent.agent.model import (
     ModelRequest,
     ModelResponse,
     ToolCall,
+    ToolObservation,
 )
 from finance_research_agent.agent.ports import ModelPort, ToolPort
 from finance_research_agent.agent.registry import ToolRegistry
+from finance_research_agent.agent.runtime import AgentRunResult, AgentRuntime
 from finance_research_agent.agent.tool import (
     ToolArgumentValue,
     ToolDefinition,
@@ -18,6 +20,8 @@ from finance_research_agent.agent.tool import (
 )
 
 __all__ = [
+    "AgentRunResult",
+    "AgentRuntime",
     "AssistantAction",
     "FinalAnswer",
     "ModelMessage",
@@ -27,6 +31,7 @@ __all__ = [
     "ToolArgumentValue",
     "ToolCall",
     "ToolDefinition",
+    "ToolObservation",
     "ToolPort",
     "ToolRegistry",
     "ToolRequest",

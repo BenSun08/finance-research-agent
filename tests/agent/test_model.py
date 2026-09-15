@@ -11,7 +11,9 @@ from finance_research_agent.agent import (
     ModelRequest,
     ModelResponse,
     ToolCall,
+    ToolObservation,
     ToolRequest,
+    ToolResult,
 )
 
 
@@ -60,11 +62,21 @@ def test_request_requires_messages() -> None:
         ModelRequest(())
 
 
-@pytest.mark.parametrize("invalid", [None, "Text", ModelResponse(action=FinalAnswer("Text")), 1])
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        None,
+        "Text",
+        ModelResponse(action=FinalAnswer("Text")),
+        1,
+        ToolCall("test", {}),
+        ToolResult("Result"),
+    ],
+)
 def test_request_rejects_non_message_members(invalid: object) -> None:
     messages = (ModelMessage("user", "Text"), invalid)
 
-    with pytest.raises(ValueError, match="messages must contain ModelMessage values"):
+    with pytest.raises(ValueError, match="messages must contain ModelMessage or ToolObservation"):
         ModelRequest(cast(tuple[ModelMessage, ...], messages))
 
 
@@ -97,6 +109,8 @@ def test_request_does_not_add_system_prompt() -> None:
         (ToolCall("test", {}), "arguments", {}),
         (ModelResponse(action=FinalAnswer("Answer")), "action", ToolCall("test", {})),
         (ModelResponse(action=ToolCall("test", {})), "action", FinalAnswer("Answer")),
+        (ToolObservation(ToolCall("test", {}), ToolResult("Result")), "call", None),
+        (ToolObservation(ToolCall("test", {}), ToolResult("Result")), "result", None),
     ],
 )
 def test_contracts_are_frozen_and_slotted(
@@ -109,7 +123,9 @@ def test_contracts_are_frozen_and_slotted(
 
 class _IndependentModel:
     def complete(self, request: ModelRequest) -> ModelResponse:
-        return ModelResponse(action=FinalAnswer(request.messages[-1].content))
+        last = request.messages[-1]
+        content = last.content if isinstance(last, ModelMessage) else last.result.content
+        return ModelResponse(action=FinalAnswer(content))
 
 
 def test_protocol_accepts_structural_implementation_without_inheritance() -> None:
@@ -164,3 +180,45 @@ def test_tool_call_and_execution_request_are_distinct_protocol_stages() -> None:
     assert not isinstance(call, ToolRequest)
     assert not isinstance(request, ToolCall)
     assert not hasattr(call, "execute")
+
+
+def test_observation_retains_original_call_and_result_without_conversion() -> None:
+    call = ToolCall("test", {"label": "  Résumé 市场\n", "limit": 2})
+    result = ToolResult("  Unchanged result\t\n")
+
+    observation = ToolObservation(call, result)
+
+    assert observation.call is call
+    assert observation.result is result
+
+
+@pytest.mark.parametrize("call", [None, "test", ToolRequest("test", {}), FinalAnswer("Done")])
+def test_observation_rejects_invalid_call(call: object) -> None:
+    with pytest.raises(ValueError, match="call must be a ToolCall"):
+        ToolObservation(cast(ToolCall, call), ToolResult("Result"))
+
+
+@pytest.mark.parametrize(
+    "result", [None, "Result", FinalAnswer("Done"), ModelMessage("user", "Text")]
+)
+def test_observation_rejects_invalid_result(result: object) -> None:
+    with pytest.raises(ValueError, match="result must be a ToolResult"):
+        ToolObservation(ToolCall("test", {}), cast(ToolResult, result))
+
+
+def test_request_preserves_mixed_history_tuple_order_identity_and_duplicates() -> None:
+    observation = ToolObservation(ToolCall("test", {}), ToolResult("Result"))
+    message = ModelMessage("user", "Follow up")
+    messages = (observation, message, observation)
+
+    request = ModelRequest(messages)
+
+    assert request.messages is messages
+    assert ModelRequest((observation,)).messages == (observation,)
+    for entry in request.messages:
+        if isinstance(entry, ModelMessage):
+            assert_type(entry, ModelMessage)
+            assert entry is message
+        else:
+            assert_type(entry, ToolObservation)
+            assert entry is observation

@@ -4,7 +4,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from finance_research_agent.agent.tool import ToolArgumentValue, _copy_arguments, _require_name
+from finance_research_agent.agent.tool import (
+    ToolArgumentValue,
+    ToolResult,
+    _copy_arguments,
+    _require_name,
+)
 
 __all__ = [
     "AssistantAction",
@@ -13,6 +18,7 @@ __all__ = [
     "ModelRequest",
     "ModelResponse",
     "ToolCall",
+    "ToolObservation",
 ]
 
 
@@ -35,21 +41,6 @@ class ModelMessage:
 
 
 @dataclass(frozen=True, slots=True)
-class ModelRequest:
-    """A nonempty immutable message tuple in caller order, with no added prompt."""
-
-    messages: tuple[ModelMessage, ...]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.messages, tuple):
-            raise ValueError("messages must be an immutable tuple")
-        if not self.messages:
-            raise ValueError("messages must not be empty")
-        if any(not isinstance(message, ModelMessage) for message in self.messages):
-            raise ValueError("messages must contain ModelMessage values")
-
-
-@dataclass(frozen=True, slots=True)
 class FinalAnswer:
     """Nonblank final-answer text, preserved exactly without provider metadata."""
 
@@ -63,7 +54,7 @@ class FinalAnswer:
 class ToolCall:
     """Model intent to request a capability, without lookup or execution.
 
-    Name and copied scalar arguments follow ToolRequest validation. A future
+    Name and copied scalar arguments follow ToolRequest validation. The
     runtime translates this intent into ToolRequest execution intent; neither
     contract establishes capability availability or authorization.
     """
@@ -74,6 +65,42 @@ class ToolCall:
     def __post_init__(self) -> None:
         _require_name(self.name)
         object.__setattr__(self, "arguments", _copy_arguments(self.arguments))
+
+
+@dataclass(frozen=True, slots=True)
+class ToolObservation:
+    """One requested call paired with its successful result, preserved exactly.
+
+    This is typed model history, not user prose or a provider-native message.
+    The call retains capability identity and arguments without generated IDs.
+    Construction validates shape; caller-supplied history is not re-executed.
+    """
+
+    call: ToolCall
+    result: ToolResult
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.call, ToolCall):
+            raise ValueError("call must be a ToolCall")
+        if not isinstance(self.result, ToolResult):
+            raise ValueError("result must be a ToolResult")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRequest:
+    """Nonempty immutable text/observation history in caller order, with no prompt added."""
+
+    messages: tuple[ModelMessage | ToolObservation, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.messages, tuple):
+            raise ValueError("messages must be an immutable tuple")
+        if not self.messages:
+            raise ValueError("messages must not be empty")
+        if any(
+            not isinstance(message, (ModelMessage, ToolObservation)) for message in self.messages
+        ):
+            raise ValueError("messages must contain ModelMessage or ToolObservation values")
 
 
 type AssistantAction = FinalAnswer | ToolCall

@@ -31,6 +31,7 @@ def test_agent_boundary_has_no_sdk_network_environment_clock_git_or_process_depe
         "finance_research_agent.agent.model",
         "finance_research_agent.agent.ports",
         "finance_research_agent.agent.registry",
+        "finance_research_agent.agent.runtime",
         "finance_research_agent.agent.tool",
     }
     forbidden_calls = {"open", "print", "input", "exec", "eval", "__import__", "exit", "quit"}
@@ -85,12 +86,23 @@ def test_execution_contracts_and_registry_do_not_reference_model_contracts(
 ) -> None:
     path = Path(agent_package.__file__).parent / filename
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    forbidden = {"ModelResponse", "ModelRequest", "ModelPort", "AssistantAction", "ToolCall"}
+    forbidden = {
+        "ModelResponse",
+        "ModelRequest",
+        "ModelPort",
+        "AssistantAction",
+        "ToolCall",
+        "ToolObservation",
+        "AgentRuntime",
+    }
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
             assert node.id not in forbidden
         elif isinstance(node, ast.ImportFrom):
-            assert node.module != "finance_research_agent.agent.model"
+            assert node.module not in {
+                "finance_research_agent.agent.model",
+                "finance_research_agent.agent.runtime",
+            }
             assert not any(alias.name in forbidden for alias in node.names)
 
 
@@ -103,6 +115,7 @@ def test_model_boundary_does_not_lookup_or_execute_tools(filename: str) -> None:
             assert node.module not in {
                 "finance_research_agent.agent.ports",
                 "finance_research_agent.agent.registry",
+                "finance_research_agent.agent.runtime",
             }
             assert not any(alias.name in {"ToolPort", "ToolRequest"} for alias in node.names)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
