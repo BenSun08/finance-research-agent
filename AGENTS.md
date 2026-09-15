@@ -7,12 +7,15 @@ decision-support project. Product A is a personal premarket research brief for
 U.S.-listed common stocks and non-leveraged, non-inverse ETFs. It is research
 software, not a brokerage or trading system.
 
-Completed milestone: v0.4 Evals
-Current milestone: v0.5 Agent Runtime, Slices 1, 2, 3A, and 3B: approved
+Completed foundation: v0.5 Agent Runtime through Slice 3B, including approved
 provider-neutral model/tool contracts, assistant actions, synchronous ports,
-deterministic tool registry, fake adapters, and minimal bounded runtime.
+deterministic tool registry, fake adapters, and the minimal bounded runtime.
+
+Current forward direction: Product A deterministic application/evidence
+contracts under the approved
+`docs/superpowers/specs/2026-09-15-roadmap-reconciliation-design.md`.
 Production model integration and runtime capabilities beyond Slice 3B require
-separately approved designs.
+separately approved designs and are not the immediate next milestone.
 
 Allowed:
 - provider-neutral model message/request/response contracts and model port
@@ -50,7 +53,8 @@ Still prohibited:
 - SEC/macro
 - portfolio risk
 - second providers
-- production LLM integration
+- production model/LLM integration before Product A typed application/workflow
+  prerequisites are stable and separately approved
 - direct exposure of domain functions as model tools
 
 ## Safety, Numeric Truth, and Approval
@@ -84,6 +88,65 @@ Still prohibited:
 - Existing deterministic financial domain logic stays outside the agent package.
   Future domain-tool adapters may depend on tool contracts and domain/workflow
   APIs; the domain and workflows must not depend on agent contracts or runtime.
+
+## Product A Workflow Authority
+
+Product A remains the primary product goal. Its authority hierarchy is:
+
+```text
+deterministic domain/application contracts
+        ↓
+declarative workflow contracts
+        ↓
+skills
+        ↓
+MCP typed operations
+        ↓
+optional AgentRuntime orchestration
+```
+
+- Product A domain/application code owns business semantics, including evidence
+  freshness and source authority, financial calculations, scores, sizing,
+  eligibility gates, candidate ranking, publication validity, human approval
+  state, watchlist rules, run/revision identity, scheduling semantics, and
+  Product A state transitions.
+- A declarative workflow manifest is a contract describing approved
+  orchestration and artifact handoffs; it is not a general-purpose workflow
+  engine.
+- Skills guide use of approved operations. MCP may later expose approved typed
+  operations. Neither layer becomes the source of deterministic financial truth.
+- `AgentRuntime` is a non-authoritative generic model/tool orchestration shell.
+  Do not use it as Product A's authoritative workflow engine.
+- Registry membership establishes capability discovery only:
+  `Tool registered != Tool authorized != Workflow permits execution`.
+- Do not move deterministic financial policy into prompts or model decisions.
+- Do not let model reasoning define evidence freshness or source authority.
+- Do not let a model alter deterministic scores, sizing, gates, or state
+  transitions.
+- Do not equate `ToolRegistry` membership with authorization.
+- Do not create production provider integration before Product A typed
+  application/workflow prerequisites are stable and separately approved.
+- Do not add a generalized workflow engine. Do not add `skills-index.yaml` now;
+  reconsider a canonical skill registry when approximately 3–5 production skills
+  or multiple declarative workflows create a demonstrated discovery or drift
+  problem.
+
+Future Product A architecture may be proposed in small reviewed slices around:
+
+- `ResearchPacket` and evidence/source metadata contracts;
+- immutable run context and run/revision identity;
+- configuration and policy boundaries;
+- deterministic packet assembly;
+- publication and validation boundaries;
+- Product A replay integration;
+- Product A skills and declarative workflow contracts after typed prerequisites;
+- MCP over approved application operations after workflow contracts stabilize;
+  and
+- production model provider integration only after those boundaries stabilize.
+
+This list identifies future design areas; it does not authorize implementation.
+MCP, production model integration, scheduling, and additional Product A
+capabilities remain prohibited until separately designed and approved.
 
   ## Planning and Skill Policy
 
