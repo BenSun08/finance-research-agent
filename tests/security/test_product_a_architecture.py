@@ -45,11 +45,13 @@ BROKER_OPERATION_CONTEXT_TOKENS = frozenset(
         "cancel",
         "cancellation",
         "client",
+        "close",
         "endpoint",
         "execute",
         "fill",
         "fills",
         "gateway",
+        "liquidate",
         "place",
         "port",
         "service",
@@ -448,11 +450,32 @@ def test_dependency_guard_detects_each_forbidden_import_form_independently(
             id="neutral-alias-trading-module-import",
         ),
         pytest.param(
+            "from provider import close_position as client\n",
+            ("import:provider.close_position",),
+            id="neutral-alias-close-position-operation-import",
+        ),
+        pytest.param(
+            "from provider import liquidate_positions as client\n",
+            ("import:provider.liquidate_positions",),
+            id="neutral-alias-liquidate-positions-operation-import",
+        ),
+        pytest.param(
             "from provider import AccountClient as _account_client\n"
             "AccountClient = _account_client\n"
             "__all__ = ['AccountClient']\n",
             ("AccountClient", "import:provider.AccountClient", "export:AccountClient"),
             id="private-import-public-re-export",
+        ),
+        pytest.param(
+            "from provider import close_position as _close_position\n"
+            "close_position = _close_position\n"
+            "__all__ = ['close_position']\n",
+            (
+                "close_position",
+                "import:provider.close_position",
+                "export:close_position",
+            ),
+            id="private-operation-import-public-re-export",
         ),
     ],
 )
