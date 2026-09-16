@@ -51,9 +51,12 @@ BROKER_OPERATION_CONTEXT_TOKENS = frozenset(
         "fill",
         "fills",
         "gateway",
+        "get",
         "liquidate",
+        "list",
         "place",
         "port",
+        "replace",
         "service",
         "submit",
     }
@@ -460,6 +463,26 @@ def test_dependency_guard_detects_each_forbidden_import_form_independently(
             id="neutral-alias-liquidate-positions-operation-import",
         ),
         pytest.param(
+            "from provider import get_all_positions as client\n",
+            ("import:provider.get_all_positions",),
+            id="neutral-alias-position-query-import",
+        ),
+        pytest.param(
+            "from provider import get_open_position as client\n",
+            ("import:provider.get_open_position",),
+            id="neutral-alias-single-position-query-import",
+        ),
+        pytest.param(
+            "from provider import replace_order as client\n",
+            ("import:provider.replace_order",),
+            id="neutral-alias-order-amendment-import",
+        ),
+        pytest.param(
+            "from provider import list_open_orders as client\n",
+            ("import:provider.list_open_orders",),
+            id="neutral-alias-order-query-import",
+        ),
+        pytest.param(
             "from provider import AccountClient as _account_client\n"
             "AccountClient = _account_client\n"
             "__all__ = ['AccountClient']\n",
@@ -476,6 +499,13 @@ def test_dependency_guard_detects_each_forbidden_import_form_independently(
                 "export:close_position",
             ),
             id="private-operation-import-public-re-export",
+        ),
+        pytest.param(
+            "from provider import get_all_positions as _get_all_positions\n"
+            "market_access = _get_all_positions\n"
+            "__all__ = ['market_access']\n",
+            ("import:provider.get_all_positions",),
+            id="private-operation-import-neutral-public-re-export",
         ),
     ],
 )
