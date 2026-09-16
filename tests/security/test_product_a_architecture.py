@@ -143,8 +143,65 @@ def _special_assignment_values(
     return _literal_strings(node.value)
 
 
+def _module_public_binding_names(tree: ast.Module) -> frozenset[str]:
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            names.update(
+                alias.asname or alias.name.split(".", 1)[0]
+                for alias in node.names
+                if not (alias.asname or alias.name.split(".", 1)[0]).startswith("_")
+            )
+        elif isinstance(node, ast.ImportFrom):
+            names.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if (alias.asname or alias.name) != "*"
+                and not (alias.asname or alias.name).startswith("_")
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if not node.name.startswith("_"):
+                names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names.update(name for target in node.targets for name in _assignment_names(target))
+        elif isinstance(node, ast.AnnAssign):
+            names.update(_assignment_names(node.target))
+        elif isinstance(node, ast.TypeAlias) and isinstance(node.name, ast.Name):
+            if not node.name.id.startswith("_"):
+                names.add(node.name.id)
+    return frozenset(names)
+
+
+def _import_binding_origins(tree: ast.Module) -> dict[str, str]:
+    origins: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                origins[alias.asname or alias.name.split(".", 1)[0]] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            for alias in node.names:
+                if alias.name != "*":
+                    origins[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return origins
+
+
+def _public_assignment_import_origins(
+    node: ast.Assign | ast.AnnAssign,
+    import_origins: dict[str, str],
+) -> tuple[str, ...]:
+    if not isinstance(node.value, ast.Name):
+        return ()
+    origin = import_origins.get(node.value.id)
+    if origin is None:
+        return ()
+    targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+    return tuple(origin for target in targets if _assignment_names(target))
+
+
 def _public_surface_exposures(path: Path) -> tuple[str, ...]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    public_binding_names = _module_public_binding_names(tree)
+    import_origins = _import_binding_origins(tree)
     exposures: list[str] = []
     for node in tree.body:
         if isinstance(node, ast.Import):
@@ -152,13 +209,14 @@ def _public_surface_exposures(path: Path) -> tuple[str, ...]:
                 exposed_name = alias.asname or alias.name.split(".", 1)[0]
                 if not exposed_name.startswith("_"):
                     exposures.append(exposed_name)
+                    exposures.append(alias.name)
         elif isinstance(node, ast.ImportFrom):
-            exposures.extend(
-                alias.asname or alias.name
-                for alias in node.names
-                if (alias.asname or alias.name) != "*"
-                and not (alias.asname or alias.name).startswith("_")
-            )
+            for alias in node.names:
+                exposed_name = alias.asname or alias.name
+                if exposed_name != "*" and not exposed_name.startswith("_"):
+                    exposures.append(exposed_name)
+                    if node.module is not None:
+                        exposures.append(f"{node.module}.{alias.name}")
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if not node.name.startswith("_"):
                 exposures.append(node.name)
@@ -202,13 +260,17 @@ def _public_surface_exposures(path: Path) -> tuple[str, ...]:
                         exposures.append(member.name.id)
                         exposures.append(ast.unparse(member.value))
         elif isinstance(node, ast.Assign):
-            exposures.extend(_special_assignment_values(node, "__all__"))
+            exports = _special_assignment_values(node, "__all__")
+            exposures.extend(f"export:{name}" for name in exports if name in public_binding_names)
             exposures.extend(name for target in node.targets for name in _assignment_names(target))
+            exposures.extend(_public_assignment_import_origins(node, import_origins))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            exposures.extend(_special_assignment_values(node, "__all__"))
+            exports = _special_assignment_values(node, "__all__")
+            exposures.extend(f"export:{name}" for name in exports if name in public_binding_names)
             if not node.target.id.startswith("_"):
                 exposures.append(node.target.id)
                 exposures.extend(_annotation_text(node.annotation))
+            exposures.extend(_public_assignment_import_origins(node, import_origins))
         elif isinstance(node, ast.TypeAlias) and isinstance(node.name, ast.Name):
             if not node.name.id.startswith("_"):
                 exposures.append(node.name.id)
@@ -288,52 +350,78 @@ def test_dependency_guard_detects_each_forbidden_import_form_independently(
 
 
 @pytest.mark.parametrize(
-    "source_text",
+    ("source_text", "expected_exposures"),
     [
-        pytest.param("class OrderGateway:\n    pass\n", id="declaration"),
+        pytest.param(
+            "class OrderGateway:\n    pass\n",
+            ("OrderGateway",),
+            id="declaration",
+        ),
         pytest.param(
             "class MarketData:\n    def stream_quotes(self):\n        pass\n",
+            ("stream_quotes",),
             id="public-method",
         ),
         pytest.param(
             "class Snapshot:\n    positions: tuple[str, ...]\n",
+            ("positions",),
             id="public-class-field",
         ),
         pytest.param(
             "class Snapshot:\n    __slots__ = ('orders',)\n",
+            ("orders",),
             id="public-slotted-field",
         ),
         pytest.param(
             "class Snapshot:\n    def __init__(self):\n        self.buying_power = 1\n",
+            ("buying_power",),
             id="public-instance-field",
         ),
         pytest.param(
             "def fetch_quotes() -> StreamingFeed:\n    pass\n",
+            ("StreamingFeed",),
             id="annotation",
         ),
         pytest.param(
             "def submit(order):\n    pass\n",
+            ("order",),
             id="public-parameter",
         ),
         pytest.param(
             "from provider import PositionClient\n",
+            ("PositionClient", "provider.PositionClient"),
             id="public-import",
         ),
         pytest.param(
             "from provider import Client as TradingClient\n",
+            ("TradingClient",),
             id="aliased-public-import",
         ),
         pytest.param(
-            "from provider import Client as _client\n__all__: list[str] = ['AccountClient']\n",
-            id="explicit-re-export",
+            "from provider import PositionClient as client\n",
+            ("provider.PositionClient",),
+            id="neutral-alias-from-import",
+        ),
+        pytest.param(
+            "import provider.brokerage as market_api\n",
+            ("provider.brokerage",),
+            id="neutral-alias-module-import",
+        ),
+        pytest.param(
+            "from provider import AccountClient as _account_client\n"
+            "AccountClient = _account_client\n"
+            "__all__ = ['AccountClient']\n",
+            ("AccountClient", "provider.AccountClient", "export:AccountClient"),
+            id="private-import-public-re-export",
         ),
     ],
 )
 def test_capability_guard_detects_each_public_exposure_form(
     tmp_path: Path,
     source_text: str,
+    expected_exposures: tuple[str, ...],
 ) -> None:
     source = tmp_path / "capability.py"
     source.write_text(source_text, encoding="utf-8")
 
-    assert _forbidden_capability_exposures(source)
+    assert _forbidden_capability_exposures(source) == expected_exposures
