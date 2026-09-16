@@ -32,8 +32,15 @@ FORBIDDEN_MARKET_CAPABILITY_TOKENS = frozenset(
         "positions",
         "route",
         "routing",
+        "stream",
+        "streaming",
+        "subscribe",
+        "subscription",
+        "subscriptions",
         "trade",
         "trading",
+        "websocket",
+        "websockets",
     }
 )
 
@@ -64,30 +71,165 @@ def _uses_forbidden_dependency(module_name: str) -> bool:
     return absolute_match or relative_root in {"adapters", "agent"}
 
 
-def _public_names(path: Path) -> tuple[str, ...]:
+def _assignment_names(target: ast.expr) -> tuple[str, ...]:
+    if isinstance(target, ast.Name):
+        return (target.id,) if not target.id.startswith("_") else ()
+    if (
+        isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+        and not target.attr.startswith("_")
+    ):
+        return (target.attr,)
+    if isinstance(target, (ast.List, ast.Tuple)):
+        return tuple(name for element in target.elts for name in _assignment_names(element))
+    return ()
+
+
+def _instance_field_names(target: ast.expr) -> tuple[str, ...]:
+    if (
+        isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+        and not target.attr.startswith("_")
+    ):
+        return (target.attr,)
+    if isinstance(target, (ast.List, ast.Tuple)):
+        return tuple(name for element in target.elts for name in _instance_field_names(element))
+    return ()
+
+
+def _annotation_text(annotation: ast.expr | None) -> tuple[str, ...]:
+    return () if annotation is None else (ast.unparse(annotation),)
+
+
+def _argument_surface(arguments: ast.arguments) -> tuple[str, ...]:
+    values: list[str] = []
+    all_arguments = (
+        *arguments.posonlyargs,
+        *arguments.args,
+        *arguments.kwonlyargs,
+    )
+    for argument in all_arguments:
+        if argument.arg not in {"self", "cls"} and not argument.arg.startswith("_"):
+            values.append(argument.arg)
+        values.extend(_annotation_text(argument.annotation))
+    for variadic_argument in (arguments.vararg, arguments.kwarg):
+        if variadic_argument is None:
+            continue
+        if not variadic_argument.arg.startswith("_"):
+            values.append(variadic_argument.arg)
+        values.extend(_annotation_text(variadic_argument.annotation))
+    return tuple(values)
+
+
+def _literal_strings(value: ast.expr | None) -> tuple[str, ...]:
+    if not isinstance(value, (ast.List, ast.Set, ast.Tuple)):
+        return ()
+    return tuple(
+        element.value
+        for element in value.elts
+        if isinstance(element, ast.Constant) and isinstance(element.value, str)
+    )
+
+
+def _special_assignment_values(
+    node: ast.Assign | ast.AnnAssign,
+    target_name: str,
+) -> tuple[str, ...]:
+    targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+    if not any(isinstance(target, ast.Name) and target.id == target_name for target in targets):
+        return ()
+    return _literal_strings(node.value)
+
+
+def _public_surface_exposures(path: Path) -> tuple[str, ...]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    names: list[str] = []
+    exposures: list[str] = []
     for node in tree.body:
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and not node.name.startswith("_"):
-            names.append(node.name)
-        elif isinstance(node, ast.Assign):
-            names.extend(
-                target.id
-                for target in node.targets
-                if isinstance(target, ast.Name) and not target.id.startswith("_")
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                exposed_name = alias.asname or alias.name.split(".", 1)[0]
+                if not exposed_name.startswith("_"):
+                    exposures.append(exposed_name)
+        elif isinstance(node, ast.ImportFrom):
+            exposures.extend(
+                alias.asname or alias.name
+                for alias in node.names
+                if (alias.asname or alias.name) != "*"
+                and not (alias.asname or alias.name).startswith("_")
             )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not node.name.startswith("_"):
+                exposures.append(node.name)
+                exposures.extend(_argument_surface(node.args))
+                exposures.extend(_annotation_text(node.returns))
+        elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
+            exposures.append(node.name)
+            exposures.extend(ast.unparse(base) for base in node.bases)
+            for member in node.body:
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if not member.name.startswith("_"):
+                        exposures.append(member.name)
+                    if not member.name.startswith("_") or member.name == "__init__":
+                        exposures.extend(_argument_surface(member.args))
+                        exposures.extend(_annotation_text(member.returns))
+                    for descendant in ast.walk(member):
+                        if isinstance(descendant, ast.Assign):
+                            exposures.extend(
+                                name
+                                for target in descendant.targets
+                                for name in _instance_field_names(target)
+                            )
+                        elif isinstance(descendant, ast.AnnAssign):
+                            field_names = _instance_field_names(descendant.target)
+                            exposures.extend(field_names)
+                            if field_names:
+                                exposures.extend(_annotation_text(descendant.annotation))
+                elif isinstance(member, ast.Assign):
+                    exposures.extend(_special_assignment_values(member, "__slots__"))
+                    exposures.extend(
+                        name for target in member.targets for name in _assignment_names(target)
+                    )
+                elif isinstance(member, ast.AnnAssign):
+                    exposures.extend(_special_assignment_values(member, "__slots__"))
+                    field_names = _assignment_names(member.target)
+                    exposures.extend(field_names)
+                    if field_names:
+                        exposures.extend(_annotation_text(member.annotation))
+                elif isinstance(member, ast.TypeAlias) and isinstance(member.name, ast.Name):
+                    if not member.name.id.startswith("_"):
+                        exposures.append(member.name.id)
+                        exposures.append(ast.unparse(member.value))
+        elif isinstance(node, ast.Assign):
+            exposures.extend(_special_assignment_values(node, "__all__"))
+            exposures.extend(name for target in node.targets for name in _assignment_names(target))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            exposures.extend(_special_assignment_values(node, "__all__"))
             if not node.target.id.startswith("_"):
-                names.append(node.target.id)
+                exposures.append(node.target.id)
+                exposures.extend(_annotation_text(node.annotation))
         elif isinstance(node, ast.TypeAlias) and isinstance(node.name, ast.Name):
             if not node.name.id.startswith("_"):
-                names.append(node.name.id)
-    return tuple(names)
+                exposures.append(node.name.id)
+                exposures.append(ast.unparse(node.value))
+    return tuple(exposures)
 
 
 def _name_tokens(name: str) -> frozenset[str]:
-    snake_case = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
-    return frozenset(snake_case.split("_"))
+    tokens: set[str] = set()
+    for identifier in re.findall(r"[A-Za-z][A-Za-z0-9_]*", name):
+        snake_case = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", identifier).lower()
+        tokens.update(part for part in snake_case.split("_") if part)
+    return frozenset(tokens)
+
+
+def _forbidden_capability_exposures(path: Path) -> tuple[str, ...]:
+    return tuple(
+        exposure
+        for exposure in _public_surface_exposures(path)
+        if _name_tokens(exposure) & FORBIDDEN_MARKET_CAPABILITY_TOKENS
+    )
 
 
 @pytest.mark.parametrize("layer", PRODUCT_A_LAYERS)
@@ -116,22 +258,82 @@ def test_domain_and_application_depend_only_on_provider_neutral_layers(layer: st
 def test_product_a_public_surface_has_no_brokerage_or_execution_capability() -> None:
     for layer in ("domain", "market_data", "application"):
         for path in (PACKAGE_ROOT / layer).rglob("*.py"):
-            for name in _public_names(path):
-                assert not _name_tokens(name) & FORBIDDEN_MARKET_CAPABILITY_TOKENS, (
-                    path,
-                    name,
-                )
+            forbidden_exposures = _forbidden_capability_exposures(path)
+            assert not forbidden_exposures, (path, forbidden_exposures)
 
 
-def test_architecture_guard_detects_absolute_and_relative_forbidden_imports(
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        pytest.param(
+            "from finance_research_agent.agent import AgentRuntime\n",
+            id="absolute-agent-import",
+        ),
+        pytest.param(
+            "from ..adapters import alpaca\n",
+            id="relative-adapter-import",
+        ),
+    ],
+)
+def test_dependency_guard_detects_each_forbidden_import_form_independently(
     tmp_path: Path,
+    source_text: str,
 ) -> None:
     source = tmp_path / "violation.py"
-    source.write_text(
-        "from finance_research_agent.agent import AgentRuntime\nfrom ..adapters import alpaca\n",
-        encoding="utf-8",
-    )
+    source.write_text(source_text, encoding="utf-8")
 
     imported = _imports(source)
 
     assert any(_uses_forbidden_dependency(module) for module in imported)
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        pytest.param("class OrderGateway:\n    pass\n", id="declaration"),
+        pytest.param(
+            "class MarketData:\n    def stream_quotes(self):\n        pass\n",
+            id="public-method",
+        ),
+        pytest.param(
+            "class Snapshot:\n    positions: tuple[str, ...]\n",
+            id="public-class-field",
+        ),
+        pytest.param(
+            "class Snapshot:\n    __slots__ = ('orders',)\n",
+            id="public-slotted-field",
+        ),
+        pytest.param(
+            "class Snapshot:\n    def __init__(self):\n        self.buying_power = 1\n",
+            id="public-instance-field",
+        ),
+        pytest.param(
+            "def fetch_quotes() -> StreamingFeed:\n    pass\n",
+            id="annotation",
+        ),
+        pytest.param(
+            "def submit(order):\n    pass\n",
+            id="public-parameter",
+        ),
+        pytest.param(
+            "from provider import PositionClient\n",
+            id="public-import",
+        ),
+        pytest.param(
+            "from provider import Client as TradingClient\n",
+            id="aliased-public-import",
+        ),
+        pytest.param(
+            "from provider import Client as _client\n__all__: list[str] = ['AccountClient']\n",
+            id="explicit-re-export",
+        ),
+    ],
+)
+def test_capability_guard_detects_each_public_exposure_form(
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    source = tmp_path / "capability.py"
+    source.write_text(source_text, encoding="utf-8")
+
+    assert _forbidden_capability_exposures(source)
