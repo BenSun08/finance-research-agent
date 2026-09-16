@@ -299,12 +299,23 @@ def _name_tokens(name: str) -> frozenset[str]:
     return frozenset(tokens)
 
 
+def _is_prohibited_import_operation_origin(exposure: str) -> bool:
+    import_origin = exposure.removeprefix("import:")
+    return any(
+        bool(_name_tokens(segment) & AMBIGUOUS_MARKET_CAPABILITY_TOKENS)
+        and _name_tokens(segment) <= AMBIGUOUS_MARKET_CAPABILITY_TOKENS
+        for segment in import_origin.split(".")
+    )
+
+
 def _is_forbidden_market_capability(exposure: str) -> bool:
     tokens = _name_tokens(exposure)
     if tokens & UNAMBIGUOUS_FORBIDDEN_MARKET_CAPABILITY_TOKENS:
         return True
-    if exposure.startswith("import:") and tokens & AMBIGUOUS_MARKET_CAPABILITY_TOKENS:
-        return True
+    if exposure.startswith("import:"):
+        return _is_prohibited_import_operation_origin(exposure) or bool(
+            tokens & AMBIGUOUS_MARKET_CAPABILITY_TOKENS and tokens & BROKER_OPERATION_CONTEXT_TOKENS
+        )
     return bool(
         tokens & AMBIGUOUS_MARKET_CAPABILITY_TOKENS and tokens & BROKER_OPERATION_CONTEXT_TOKENS
     )
@@ -407,8 +418,8 @@ def test_dependency_guard_detects_each_forbidden_import_form_independently(
             id="annotation",
         ),
         pytest.param(
-            "def submit_order(order):\n    pass\n",
-            ("submit_order",),
+            "def configure(position_client):\n    pass\n",
+            ("position_client",),
             id="public-parameter",
         ),
         pytest.param(
@@ -470,6 +481,14 @@ def test_capability_guard_detects_each_public_exposure_form(
         pytest.param(
             "def sort_candidates(order: str):\n    pass\n",
             id="ordering-parameter-vocabulary",
+        ),
+        pytest.param(
+            "from finance_research_agent.domain import TradePlanDraft\n",
+            id="research-contract-import",
+        ),
+        pytest.param(
+            "from finance_research_agent.domain import PositionSizing\n",
+            id="research-sizing-import",
         ),
     ],
 )
