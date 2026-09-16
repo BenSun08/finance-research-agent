@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "Coverage": {
+      "enum": [
+        "single_exchange",
+        "consolidated",
+        "unknown"
+      ],
+      "title": "Coverage",
+      "type": "string"
+    },
+    "Session": {
+      "enum": [
+        "PRE_MARKET",
+        "REGULAR",
+        "POST_MARKET",
+        "COMPLETED_SESSION"
+      ],
+      "title": "Session",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Positive Decimal price paired with its original market-data provenance.",
+  "properties": {
+    "coverage": {
+      "$ref": "#/$defs/Coverage"
+    },
+    "currency": {
+      "pattern": "^[A-Z]{3}$",
+      "title": "Currency",
+      "type": "string"
+    },
+    "evidence_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Evidence Id",
+      "type": "string"
+    },
+    "feed": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Feed",
+      "type": "string"
+    },
+    "instrument_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Instrument Id",
+      "type": "string"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "provider": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Provider",
+      "type": "string"
+    },
+    "quality_flags": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Quality Flags",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "retrieved_at": {
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
+      "title": "Retrieved At",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session": {
+      "$ref": "#/$defs/Session"
+    },
+    "value": {
+      "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+      "title": "Value",
+      "type": "string"
+    }
+  },
+  "required": [
+    "instrument_id",
+    "value",
+    "currency",
+    "session",
+    "provider",
+    "feed",
+    "coverage",
+    "observed_at",
+    "retrieved_at",
+    "evidence_id",
+    "quality_flags"
+  ],
+  "title": "PriceObservation",
+  "type": "object"
+}

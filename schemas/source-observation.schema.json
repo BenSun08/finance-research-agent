@@ -1,0 +1,98 @@
+{
+  "additionalProperties": false,
+  "description": "Source provenance with separately retained observation and retrieval times.",
+  "properties": {
+    "content_type": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Content Type",
+      "type": "string"
+    },
+    "excerpt": {
+      "maxLength": 8192,
+      "title": "Excerpt",
+      "type": "string"
+    },
+    "observation_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Observation Id",
+      "type": "string"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "persistence_allowed": {
+      "title": "Persistence Allowed",
+      "type": "boolean"
+    },
+    "provider": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Provider",
+      "type": "string"
+    },
+    "quality_flags": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Quality Flags",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "retrieved_at": {
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
+      "title": "Retrieved At",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_hash_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Source Hash Sha256",
+      "type": "string"
+    },
+    "source_url": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "minLength": 1,
+          "pattern": "^https://",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source Url"
+    }
+  },
+  "required": [
+    "observation_id",
+    "provider",
+    "source_url",
+    "source_hash_sha256",
+    "observed_at",
+    "retrieved_at",
+    "content_type",
+    "excerpt",
+    "persistence_allowed",
+    "quality_flags"
+  ],
+  "title": "SourceObservation",
+  "type": "object"
+}

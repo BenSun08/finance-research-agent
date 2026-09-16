@@ -1,0 +1,133 @@
+{
+  "additionalProperties": false,
+  "description": "Normalized research metadata; unknown classification stays explicit.",
+  "properties": {
+    "currency": {
+      "pattern": "^[A-Z]{3}$",
+      "title": "Currency",
+      "type": "string"
+    },
+    "instrument_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Instrument Id",
+      "type": "string"
+    },
+    "instrument_type": {
+      "enum": [
+        "COMMON_STOCK",
+        "ETF",
+        "OTHER",
+        "UNKNOWN"
+      ],
+      "title": "Instrument Type",
+      "type": "string"
+    },
+    "is_active": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Is Active"
+    },
+    "is_inverse": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Is Inverse"
+    },
+    "is_leveraged": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Is Leveraged"
+    },
+    "is_otc": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Is Otc"
+    },
+    "listing_country": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Z]{2}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Listing Country"
+    },
+    "name": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Name",
+      "type": "string"
+    },
+    "primary_exchange": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Primary Exchange"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "symbol": {
+      "maxLength": 16,
+      "minLength": 1,
+      "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+      "title": "Symbol",
+      "type": "string"
+    }
+  },
+  "required": [
+    "instrument_id",
+    "symbol",
+    "name",
+    "instrument_type",
+    "primary_exchange",
+    "listing_country",
+    "currency",
+    "is_active",
+    "is_leveraged",
+    "is_inverse",
+    "is_otc"
+  ],
+  "title": "InstrumentIdentity",
+  "type": "object"
+}

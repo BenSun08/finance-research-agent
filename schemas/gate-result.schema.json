@@ -1,0 +1,94 @@
+{
+  "$defs": {
+    "Capability": {
+      "enum": [
+        "MARKET_SUMMARY_AVAILABLE",
+        "REGIME_CLASSIFICATION_AVAILABLE",
+        "WATCHLIST_METRICS_AVAILABLE",
+        "EVENT_RISK_CHECK_AVAILABLE",
+        "SETUP_DETECTION_AVAILABLE",
+        "PLAN_DRAFT_AVAILABLE",
+        "POSITION_SIZING_AVAILABLE",
+        "PORTFOLIO_HEAT_CHECK_AVAILABLE"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
+    "GateStatus": {
+      "enum": [
+        "PASS",
+        "WARNING",
+        "BLOCK"
+      ],
+      "title": "GateStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A recorded gate decision; constructing it performs no policy evaluation.",
+  "properties": {
+    "capability": {
+      "$ref": "#/$defs/Capability"
+    },
+    "evidence_ids": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 256,
+      "title": "Evidence Ids",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "gate_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Gate Id",
+      "type": "string"
+    },
+    "message": {
+      "maxLength": 500,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Message",
+      "type": "string"
+    },
+    "reason_code": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Reason Code",
+      "type": "string"
+    },
+    "rule_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Rule Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/GateStatus"
+    }
+  },
+  "required": [
+    "gate_id",
+    "status",
+    "reason_code",
+    "message",
+    "evidence_ids",
+    "capability",
+    "rule_version"
+  ],
+  "title": "GateResult",
+  "type": "object"
+}

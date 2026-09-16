@@ -1,0 +1,79 @@
+{
+  "additionalProperties": false,
+  "description": "Immutable configuration identity only; policy contents are a later slice.",
+  "properties": {
+    "content_hash_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Hash Sha256",
+      "type": "string"
+    },
+    "file_hashes": {
+      "additionalProperties": false,
+      "maxProperties": 128,
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_.:-]*$": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "propertyNames": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "title": "File Hashes",
+      "type": "object"
+    },
+    "regime_policy_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Regime Policy Version",
+      "type": "string"
+    },
+    "risk_policy_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Risk Policy Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "setup_policy_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Setup Policy Version",
+      "type": "string"
+    },
+    "source_policy_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Source Policy Version",
+      "type": "string"
+    },
+    "watchlist_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Watchlist Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "content_hash_sha256",
+    "file_hashes",
+    "watchlist_version",
+    "regime_policy_version",
+    "setup_policy_version",
+    "risk_policy_version",
+    "source_policy_version"
+  ],
+  "title": "ConfigurationSnapshot",
+  "type": "object"
+}
