@@ -14,7 +14,7 @@ FORBIDDEN_PRODUCT_A_DEPENDENCIES = (
     "finance_research_agent.adapters",
     "finance_research_agent.agent",
 )
-FORBIDDEN_MARKET_CAPABILITY_TOKENS = frozenset(
+UNAMBIGUOUS_FORBIDDEN_MARKET_CAPABILITY_TOKENS = frozenset(
     {
         "account",
         "accounts",
@@ -23,24 +23,37 @@ FORBIDDEN_MARKET_CAPABILITY_TOKENS = frozenset(
         "buying",
         "cancel",
         "cancellation",
-        "execution",
         "holding",
         "holdings",
-        "order",
-        "orders",
-        "position",
-        "positions",
         "route",
+        "router",
         "routing",
         "stream",
         "streaming",
         "subscribe",
         "subscription",
         "subscriptions",
-        "trade",
-        "trading",
         "websocket",
         "websockets",
+    }
+)
+AMBIGUOUS_MARKET_CAPABILITY_TOKENS = frozenset(
+    {"execution", "order", "orders", "position", "positions", "trade", "trading"}
+)
+BROKER_OPERATION_CONTEXT_TOKENS = frozenset(
+    {
+        "cancel",
+        "cancellation",
+        "client",
+        "endpoint",
+        "execute",
+        "fill",
+        "fills",
+        "gateway",
+        "place",
+        "port",
+        "service",
+        "submit",
     }
 )
 
@@ -177,11 +190,11 @@ def _import_binding_origins(tree: ast.Module) -> dict[str, str]:
     for node in tree.body:
         if isinstance(node, ast.Import):
             for alias in node.names:
-                origins[alias.asname or alias.name.split(".", 1)[0]] = alias.name
+                origins[alias.asname or alias.name.split(".", 1)[0]] = f"import:{alias.name}"
         elif isinstance(node, ast.ImportFrom) and node.module is not None:
             for alias in node.names:
                 if alias.name != "*":
-                    origins[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                    origins[alias.asname or alias.name] = f"import:{node.module}.{alias.name}"
     return origins
 
 
@@ -209,14 +222,14 @@ def _public_surface_exposures(path: Path) -> tuple[str, ...]:
                 exposed_name = alias.asname or alias.name.split(".", 1)[0]
                 if not exposed_name.startswith("_"):
                     exposures.append(exposed_name)
-                    exposures.append(alias.name)
+                    exposures.append(f"import:{alias.name}")
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 exposed_name = alias.asname or alias.name
                 if exposed_name != "*" and not exposed_name.startswith("_"):
                     exposures.append(exposed_name)
                     if node.module is not None:
-                        exposures.append(f"{node.module}.{alias.name}")
+                        exposures.append(f"import:{node.module}.{alias.name}")
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if not node.name.startswith("_"):
                 exposures.append(node.name)
@@ -286,11 +299,22 @@ def _name_tokens(name: str) -> frozenset[str]:
     return frozenset(tokens)
 
 
+def _is_forbidden_market_capability(exposure: str) -> bool:
+    tokens = _name_tokens(exposure)
+    if tokens & UNAMBIGUOUS_FORBIDDEN_MARKET_CAPABILITY_TOKENS:
+        return True
+    if exposure.startswith("import:") and tokens & AMBIGUOUS_MARKET_CAPABILITY_TOKENS:
+        return True
+    return bool(
+        tokens & AMBIGUOUS_MARKET_CAPABILITY_TOKENS and tokens & BROKER_OPERATION_CONTEXT_TOKENS
+    )
+
+
 def _forbidden_capability_exposures(path: Path) -> tuple[str, ...]:
     return tuple(
         exposure
         for exposure in _public_surface_exposures(path)
-        if _name_tokens(exposure) & FORBIDDEN_MARKET_CAPABILITY_TOKENS
+        if _is_forbidden_market_capability(exposure)
     )
 
 
@@ -363,13 +387,13 @@ def test_dependency_guard_detects_each_forbidden_import_form_independently(
             id="public-method",
         ),
         pytest.param(
-            "class Snapshot:\n    positions: tuple[str, ...]\n",
-            ("positions",),
+            "class Snapshot:\n    position_client: object\n",
+            ("position_client",),
             id="public-class-field",
         ),
         pytest.param(
-            "class Snapshot:\n    __slots__ = ('orders',)\n",
-            ("orders",),
+            "class Snapshot:\n    __slots__ = ('order_gateway',)\n",
+            ("order_gateway",),
             id="public-slotted-field",
         ),
         pytest.param(
@@ -383,13 +407,13 @@ def test_dependency_guard_detects_each_forbidden_import_form_independently(
             id="annotation",
         ),
         pytest.param(
-            "def submit(order):\n    pass\n",
-            ("order",),
+            "def submit_order(order):\n    pass\n",
+            ("submit_order",),
             id="public-parameter",
         ),
         pytest.param(
             "from provider import PositionClient\n",
-            ("PositionClient", "provider.PositionClient"),
+            ("PositionClient", "import:provider.PositionClient"),
             id="public-import",
         ),
         pytest.param(
@@ -399,19 +423,24 @@ def test_dependency_guard_detects_each_forbidden_import_form_independently(
         ),
         pytest.param(
             "from provider import PositionClient as client\n",
-            ("provider.PositionClient",),
+            ("import:provider.PositionClient",),
             id="neutral-alias-from-import",
         ),
         pytest.param(
             "import provider.brokerage as market_api\n",
-            ("provider.brokerage",),
+            ("import:provider.brokerage",),
             id="neutral-alias-module-import",
+        ),
+        pytest.param(
+            "import provider.trading as market_api\n",
+            ("import:provider.trading",),
+            id="neutral-alias-trading-module-import",
         ),
         pytest.param(
             "from provider import AccountClient as _account_client\n"
             "AccountClient = _account_client\n"
             "__all__ = ['AccountClient']\n",
-            ("AccountClient", "provider.AccountClient", "export:AccountClient"),
+            ("AccountClient", "import:provider.AccountClient", "export:AccountClient"),
             id="private-import-public-re-export",
         ),
     ],
@@ -425,3 +454,30 @@ def test_capability_guard_detects_each_public_exposure_form(
     source.write_text(source_text, encoding="utf-8")
 
     assert _forbidden_capability_exposures(source) == expected_exposures
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        pytest.param(
+            "class TradePlanDraft:\n    position_sizing: PositionSizing\n",
+            id="research-contract-vocabulary",
+        ),
+        pytest.param(
+            "class RunContext:\n    execution_status: str\n",
+            id="workflow-state-vocabulary",
+        ),
+        pytest.param(
+            "def sort_candidates(order: str):\n    pass\n",
+            id="ordering-parameter-vocabulary",
+        ),
+    ],
+)
+def test_capability_guard_allows_legitimate_research_and_workflow_vocabulary(
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    source = tmp_path / "legitimate.py"
+    source.write_text(source_text, encoding="utf-8")
+
+    assert _forbidden_capability_exposures(source) == ()
