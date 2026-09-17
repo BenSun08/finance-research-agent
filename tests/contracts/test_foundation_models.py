@@ -248,6 +248,54 @@ def test_source_preserves_original_url_and_equal_observation_retrieval_times() -
     assert value.retrieved_at is NOW
 
 
+@pytest.mark.parametrize("character", ["\u200b", "\u202e", "\x7f", "\u2066"])
+@pytest.mark.parametrize("suffix", ["/filing{}", "/filing?q={}", "/filing#{}"])
+def test_source_url_rejects_unicode_control_and_format_characters(
+    character: str, suffix: str
+) -> None:
+    with pytest.raises(ValidationError):
+        source(source_url="https://example.test" + suffix.format(character))
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../filing",
+        "section/../filing",
+        "./filing",
+        "section/.",
+        "section/..",
+        "section/%2e%2e/filing",
+        "section/.%2E/filing",
+        "section/%2e./filing",
+        "section/%2E/filing",
+        "section/%2e",
+        "section/%2e%2e",
+        "%2e%2e%2ffiling",
+        "section%2F..%2ffiling",
+        "section%5c..%5cfiling",
+        r"section\..\filing",
+        "section/%252e%252e/filing",
+        "section/%252E%252e%252Ffiling",
+    ],
+)
+def test_source_url_rejects_literal_and_percent_encoded_dot_segments(path: str) -> None:
+    with pytest.raises(ValidationError):
+        source(source_url="https://example.test/" + path)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://reports.example.test/v1.2/company.name/filing.html"
+        "?period=2026.09&redirect=../archive#section.1",
+        "https://example.test/v1%2E2/company%2ename/filing.json?q=./notes",
+    ],
+)
+def test_source_url_preserves_ordinary_dots_paths_and_query_text(url: str) -> None:
+    assert source(source_url=url).source_url == url
+
+
 def test_evidence_has_explicit_source_and_does_not_invent_event_or_publication_times() -> None:
     value = evidence()
     assert value.source.observation_id == "obs_official_1"

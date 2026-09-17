@@ -1,5 +1,7 @@
 """Strict, schema-versioned Product A foundation values."""
 
+import re
+import unicodedata
 from datetime import date
 from typing import Annotated, Literal, Self
 
@@ -55,15 +57,39 @@ ReasonCodes = Annotated[
 
 
 def _source_url(value: str) -> str:
+    if any(
+        character.isspace() or unicodedata.category(character) in {"Cc", "Cf"}
+        for character in value
+    ):
+        raise ValueError(
+            "source_url must not contain whitespace or Unicode control/format characters"
+        )
     parsed = HttpUrl(value)
     if (
         parsed.scheme != "https"
         or not parsed.host
         or parsed.username is not None
         or parsed.password is not None
-        or any(character.isspace() or ord(character) < 32 for character in value)
     ):
-        raise ValueError("source_url must be an HTTPS URL without credentials or whitespace")
+        raise ValueError("source_url must be an HTTPS URL without credentials")
+
+    # Inspect the original path: URL parsers may already remove dot segments.
+    # Query and fragment text are not path segments. This inspection never
+    # replaces the caller's accepted URL with a decoded or normalized value.
+    authority_and_path = re.split(r"[?#]", value.removeprefix("https://"), maxsplit=1)[0]
+    path = authority_and_path.replace("\\", "/").partition("/")[2]
+    while True:
+        decoded = re.sub(
+            r"%(?:25|2e|2f|5c)",
+            lambda match: chr(int(match[0][1:], 16)),
+            path,
+            flags=re.IGNORECASE,
+        )
+        if decoded == path:
+            break
+        path = decoded  # Each replacement shortens the bounded input.
+    if any(segment in {".", ".."} for segment in path.replace("\\", "/").split("/")):
+        raise ValueError("source_url must not contain traversal path segments")
     return value
 
 
