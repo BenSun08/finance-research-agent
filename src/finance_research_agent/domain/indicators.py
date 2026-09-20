@@ -9,7 +9,7 @@ from json import dumps
 from finance_research_agent.domain.market import (
     DailyBar,
     InvalidMarketDataError,
-    MarketSnapshot,
+    RegimeMarketSnapshot,
 )
 from finance_research_agent.domain.metrics import (
     MetricDirection,
@@ -42,10 +42,18 @@ def _require_utc(value: datetime) -> None:
 
 
 def _require_snapshots_at_or_before_cutoff(
-    snapshots: Sequence[MarketSnapshot], cutoff_at: datetime
+    snapshots: Sequence[RegimeMarketSnapshot], cutoff_at: datetime
 ) -> None:
     if any(snapshot.as_of > cutoff_at for snapshot in snapshots):
         raise InvalidMarketDataError("snapshot as_of cannot be later than cutoff_at")
+
+
+def _input_evidence_ids(snapshots: Sequence[RegimeMarketSnapshot]) -> tuple[str, ...]:
+    return tuple(
+        evidence_id
+        for snapshot in snapshots
+        for evidence_id in snapshot.input_evidence_ids
+    )
 
 
 def _metric_id(
@@ -81,6 +89,7 @@ def _result(
     period_start: date | None,
     period_end: date | None,
     input_snapshot_ids: tuple[str, ...],
+    input_evidence_ids: tuple[str, ...],
     calculated_at: datetime,
     unavailable_reason: MetricUnavailableReason | None,
     quality_flags: tuple[str, ...],
@@ -105,6 +114,7 @@ def _result(
         period_end=period_end,
         formula_version=FORMULA_VERSION,
         input_snapshot_ids=sorted_snapshot_ids,
+        input_evidence_ids=input_evidence_ids,
         calculated_at=calculated_at,
         unavailable_reason=unavailable_reason,
         quality_flags=tuple(sorted(set(quality_flags))),
@@ -116,7 +126,7 @@ def _unavailable(
     name: MetricName,
     unit: MetricUnit,
     parameters: tuple[tuple[str, str], ...],
-    snapshots: tuple[MarketSnapshot, ...],
+    snapshots: tuple[RegimeMarketSnapshot, ...],
     cutoff_at: datetime,
     reason: MetricUnavailableReason,
 ) -> MetricResult:
@@ -130,6 +140,7 @@ def _unavailable(
         period_start=None,
         period_end=None,
         input_snapshot_ids=tuple(snapshot.snapshot_id for snapshot in snapshots),
+        input_evidence_ids=_input_evidence_ids(snapshots),
         calculated_at=cutoff_at,
         unavailable_reason=reason,
         quality_flags=tuple(flag for snapshot in snapshots for flag in snapshot.quality_flags),
@@ -167,7 +178,9 @@ def _realized_volatility_value(bars: Sequence[DailyBar], window: int) -> Decimal
         return variance.sqrt() * Decimal(252).sqrt()
 
 
-def sma(snapshot: MarketSnapshot, *, window: int, cutoff_at: datetime) -> MetricResult:
+def sma(
+    snapshot: RegimeMarketSnapshot, *, window: int, cutoff_at: datetime
+) -> MetricResult:
     """Return the arithmetic mean of the final completed closes."""
 
     _require_positive_window(window)
@@ -197,6 +210,7 @@ def sma(snapshot: MarketSnapshot, *, window: int, cutoff_at: datetime) -> Metric
         period_start=bars[0].session_date,
         period_end=bars[-1].session_date,
         input_snapshot_ids=(snapshot.snapshot_id,),
+        input_evidence_ids=_input_evidence_ids((snapshot,)),
         calculated_at=cutoff_at,
         unavailable_reason=None,
         quality_flags=snapshot.quality_flags,
@@ -204,7 +218,7 @@ def sma(snapshot: MarketSnapshot, *, window: int, cutoff_at: datetime) -> Metric
 
 
 def sma_slope(
-    snapshot: MarketSnapshot,
+    snapshot: RegimeMarketSnapshot,
     *,
     window: int,
     lookback: int,
@@ -247,6 +261,7 @@ def sma_slope(
         period_start=previous[0].session_date,
         period_end=current[-1].session_date,
         input_snapshot_ids=(snapshot.snapshot_id,),
+        input_evidence_ids=_input_evidence_ids((snapshot,)),
         calculated_at=cutoff_at,
         unavailable_reason=None,
         quality_flags=snapshot.quality_flags,
@@ -254,8 +269,8 @@ def sma_slope(
 
 
 def relative_return(
-    asset: MarketSnapshot,
-    benchmark: MarketSnapshot,
+    asset: RegimeMarketSnapshot,
+    benchmark: RegimeMarketSnapshot,
     *,
     window: int,
     cutoff_at: datetime,
@@ -310,6 +325,7 @@ def relative_return(
         period_start=asset_bars[0].session_date,
         period_end=asset_bars[-1].session_date,
         input_snapshot_ids=tuple(sorted((asset.snapshot_id, benchmark.snapshot_id))),
+        input_evidence_ids=_input_evidence_ids(snapshots),
         calculated_at=cutoff_at,
         unavailable_reason=None,
         quality_flags=tuple(sorted(set(asset.quality_flags + benchmark.quality_flags))),
@@ -317,7 +333,7 @@ def relative_return(
 
 
 def atr_percent(
-    snapshot: MarketSnapshot,
+    snapshot: RegimeMarketSnapshot,
     *,
     window: int,
     cutoff_at: datetime,
@@ -351,6 +367,7 @@ def atr_percent(
         period_start=bars[1].session_date,
         period_end=bars[-1].session_date,
         input_snapshot_ids=(snapshot.snapshot_id,),
+        input_evidence_ids=_input_evidence_ids((snapshot,)),
         calculated_at=cutoff_at,
         unavailable_reason=None,
         quality_flags=snapshot.quality_flags,
@@ -358,7 +375,7 @@ def atr_percent(
 
 
 def realized_volatility(
-    snapshot: MarketSnapshot,
+    snapshot: RegimeMarketSnapshot,
     *,
     window: int,
     cutoff_at: datetime,
@@ -392,6 +409,7 @@ def realized_volatility(
         period_start=bars[0].session_date,
         period_end=bars[-1].session_date,
         input_snapshot_ids=(snapshot.snapshot_id,),
+        input_evidence_ids=_input_evidence_ids((snapshot,)),
         calculated_at=cutoff_at,
         unavailable_reason=None,
         quality_flags=snapshot.quality_flags,
@@ -418,7 +436,7 @@ def percentile_rank(current: Decimal, history: Sequence[Decimal]) -> Decimal:
 
 
 def atr_percentile(
-    snapshot: MarketSnapshot,
+    snapshot: RegimeMarketSnapshot,
     *,
     window: int,
     history_window: int,
@@ -458,6 +476,7 @@ def atr_percentile(
         period_start=bars[0].session_date,
         period_end=bars[-1].session_date,
         input_snapshot_ids=(snapshot.snapshot_id,),
+        input_evidence_ids=_input_evidence_ids((snapshot,)),
         calculated_at=cutoff_at,
         unavailable_reason=None,
         quality_flags=snapshot.quality_flags,
@@ -465,7 +484,7 @@ def atr_percentile(
 
 
 def realized_volatility_percentile(
-    snapshot: MarketSnapshot,
+    snapshot: RegimeMarketSnapshot,
     *,
     window: int,
     history_window: int,
@@ -509,6 +528,7 @@ def realized_volatility_percentile(
         period_start=bars[0].session_date,
         period_end=bars[-1].session_date,
         input_snapshot_ids=(snapshot.snapshot_id,),
+        input_evidence_ids=_input_evidence_ids((snapshot,)),
         calculated_at=cutoff_at,
         unavailable_reason=None,
         quality_flags=snapshot.quality_flags,
@@ -516,8 +536,8 @@ def realized_volatility_percentile(
 
 
 def equal_weight_relative_return(
-    assets: Sequence[MarketSnapshot],
-    benchmarks: Sequence[MarketSnapshot],
+    assets: Sequence[RegimeMarketSnapshot],
+    benchmarks: Sequence[RegimeMarketSnapshot],
     *,
     window: int,
     cutoff_at: datetime,
@@ -527,7 +547,9 @@ def equal_weight_relative_return(
     _require_positive_window(window)
     _require_utc(cutoff_at)
 
-    def canonicalize(items: Sequence[MarketSnapshot]) -> tuple[MarketSnapshot, ...]:
+    def canonicalize(
+        items: Sequence[RegimeMarketSnapshot],
+    ) -> tuple[RegimeMarketSnapshot, ...]:
         snapshots = tuple(items)
         identities = tuple((snapshot.symbol, snapshot.snapshot_id) for snapshot in snapshots)
         if len(set(identities)) != len(identities):
@@ -586,7 +608,7 @@ def equal_weight_relative_return(
         context.prec = 28
         context.rounding = ROUND_HALF_EVEN
 
-        def basket_return(items: Sequence[MarketSnapshot]) -> Decimal:
+        def basket_return(items: Sequence[RegimeMarketSnapshot]) -> Decimal:
             returns = tuple(
                 snapshot.completed_daily_bars[-1].close
                 / snapshot.completed_daily_bars[-required].close
@@ -606,6 +628,7 @@ def equal_weight_relative_return(
         period_start=dates[0],
         period_end=dates[-1],
         input_snapshot_ids=tuple(snapshot.snapshot_id for snapshot in snapshots),
+        input_evidence_ids=_input_evidence_ids(snapshots),
         calculated_at=cutoff_at,
         unavailable_reason=None,
         quality_flags=tuple(flag for snapshot in snapshots for flag in snapshot.quality_flags),

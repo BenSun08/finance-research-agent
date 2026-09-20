@@ -1,0 +1,36 @@
+version: regime-policy-v1
+broad_symbols: [SPY, QQQ]
+dia_symbol: DIA
+small_cap_symbol: IWM
+credit_asset_symbol: HYG
+credit_benchmark_symbol: LQD
+treasury_symbol: TLT
+dollar_symbol: UUP
+gold_symbol: GLD
+oil_symbol: USO
+volatility_symbol: VIX
+sector_symbols: [XLC, XLY, XLP, XLE, XLF, XLV, XLI, XLB, XLRE, XLK, XLU]
+cyclical_symbols: [XLY, XLE, XLF, XLI, XLB, XLK]
+defensive_symbols: [XLP, XLV, XLU]
+short_sma_window: 50
+long_sma_window: 200
+slope_lookback: 20
+relative_return_window: 20
+atr_window: 14
+realized_volatility_window: 20
+percentile_history: 252
+participation_positive_minimum: 7
+participation_negative_maximum: 4
+participation_minimum_valid: 9
+leadership_vote_threshold: 2
+leadership_minimum_valid: 2
+volatility_positive_maximum: "60"
+volatility_negative_minimum: "80"
+permissive_threshold: "35"
+defensive_threshold: "-35"
+component_weights:
+  - [BROAD_TREND, "30"]
+  - [PARTICIPATION, "25"]
+  - [LEADERSHIP, "20"]
+  - [VOLATILITY_STRESS, "15"]
+  - [CREDIT_CROSS_ASSET, "10"]

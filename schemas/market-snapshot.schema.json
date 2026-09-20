@@ -1,0 +1,683 @@
+{
+  "$defs": {
+    "CompletedDailyBar": {
+      "additionalProperties": false,
+      "description": "One completed daily bar with its evidence and provider provenance.",
+      "properties": {
+        "adjustment": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Adjustment",
+          "type": "string"
+        },
+        "close": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Close",
+          "type": "string"
+        },
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "evidence_cutoff_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Evidence Cutoff At",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "feed": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Feed",
+          "type": "string"
+        },
+        "high": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "High",
+          "type": "string"
+        },
+        "instrument_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Instrument Id",
+          "type": "string"
+        },
+        "low": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Low",
+          "type": "string"
+        },
+        "open": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Open",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "session_date": {
+          "format": "date",
+          "title": "Session Date",
+          "type": "string"
+        },
+        "source_timestamp": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Source Timestamp",
+          "type": "string"
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Volume"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "session_date",
+        "source_timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "session",
+        "provider",
+        "feed",
+        "coverage",
+        "adjustment",
+        "retrieved_at",
+        "evidence_cutoff_at",
+        "evidence_id",
+        "quality_flags"
+      ],
+      "title": "CompletedDailyBar",
+      "type": "object"
+    },
+    "Coverage": {
+      "enum": [
+        "single_exchange",
+        "consolidated",
+        "unknown"
+      ],
+      "title": "Coverage",
+      "type": "string"
+    },
+    "CurrentSessionBar": {
+      "additionalProperties": false,
+      "description": "Typed current-session bar contract; R2 does not collect these values.",
+      "properties": {
+        "close": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Close",
+          "type": "string"
+        },
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "end_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "End At",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "feed": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Feed",
+          "type": "string"
+        },
+        "high": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "High",
+          "type": "string"
+        },
+        "instrument_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Instrument Id",
+          "type": "string"
+        },
+        "low": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Low",
+          "type": "string"
+        },
+        "open": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Open",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "start_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Start At",
+          "type": "string"
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Volume"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "session",
+        "start_at",
+        "end_at",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "provider",
+        "feed",
+        "coverage",
+        "retrieved_at",
+        "evidence_id",
+        "quality_flags"
+      ],
+      "title": "CurrentSessionBar",
+      "type": "object"
+    },
+    "InstrumentIdentity": {
+      "additionalProperties": false,
+      "description": "Normalized research metadata; unknown classification stays explicit.",
+      "properties": {
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "instrument_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Instrument Id",
+          "type": "string"
+        },
+        "instrument_type": {
+          "enum": [
+            "COMMON_STOCK",
+            "ETF",
+            "OTHER",
+            "UNKNOWN"
+          ],
+          "title": "Instrument Type",
+          "type": "string"
+        },
+        "is_active": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Active"
+        },
+        "is_inverse": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Inverse"
+        },
+        "is_leveraged": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Leveraged"
+        },
+        "is_otc": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Otc"
+        },
+        "listing_country": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z]{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Listing Country"
+        },
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "primary_exchange": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Primary Exchange"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "symbol": {
+          "maxLength": 16,
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "symbol",
+        "name",
+        "instrument_type",
+        "primary_exchange",
+        "listing_country",
+        "currency",
+        "is_active",
+        "is_leveraged",
+        "is_inverse",
+        "is_otc"
+      ],
+      "title": "InstrumentIdentity",
+      "type": "object"
+    },
+    "PriceObservation": {
+      "additionalProperties": false,
+      "description": "Positive Decimal price paired with its original market-data provenance.",
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "feed": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Feed",
+          "type": "string"
+        },
+        "instrument_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Instrument Id",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "value": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "value",
+        "currency",
+        "session",
+        "provider",
+        "feed",
+        "coverage",
+        "observed_at",
+        "retrieved_at",
+        "evidence_id",
+        "quality_flags"
+      ],
+      "title": "PriceObservation",
+      "type": "object"
+    },
+    "Session": {
+      "enum": [
+        "PRE_MARKET",
+        "REGULAR",
+        "POST_MARKET",
+        "COMPLETED_SESSION"
+      ],
+      "title": "Session",
+      "type": "string"
+    },
+    "SourceObservation": {
+      "additionalProperties": false,
+      "description": "Source provenance with separately retained observation and retrieval times.",
+      "properties": {
+        "content_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Content Type",
+          "type": "string"
+        },
+        "excerpt": {
+          "maxLength": 8192,
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "observation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "persistence_allowed": {
+          "title": "Persistence Allowed",
+          "type": "boolean"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_hash_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Hash Sha256",
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^https://",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Url"
+        }
+      },
+      "required": [
+        "observation_id",
+        "provider",
+        "source_url",
+        "source_hash_sha256",
+        "observed_at",
+        "retrieved_at",
+        "content_type",
+        "excerpt",
+        "persistence_allowed",
+        "quality_flags"
+      ],
+      "title": "SourceObservation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Canonical Product A market facts for one normalized instrument.",
+  "properties": {
+    "completed_daily_bars": {
+      "items": {
+        "$ref": "#/$defs/CompletedDailyBar"
+      },
+      "title": "Completed Daily Bars",
+      "type": "array"
+    },
+    "current_session_bars": {
+      "items": {
+        "$ref": "#/$defs/CurrentSessionBar"
+      },
+      "title": "Current Session Bars",
+      "type": "array"
+    },
+    "instrument": {
+      "$ref": "#/$defs/InstrumentIdentity"
+    },
+    "latest_price": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PriceObservation"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "quality_flags": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Quality Flags",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_observations": {
+      "items": {
+        "$ref": "#/$defs/SourceObservation"
+      },
+      "title": "Source Observations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "instrument",
+    "latest_price",
+    "completed_daily_bars",
+    "current_session_bars",
+    "source_observations",
+    "quality_flags"
+  ],
+  "title": "MarketSnapshot",
+  "type": "object"
+}

@@ -1,0 +1,87 @@
+{
+  "$defs": {
+    "Capability": {
+      "enum": [
+        "MARKET_SUMMARY_AVAILABLE",
+        "REGIME_CLASSIFICATION_AVAILABLE",
+        "WATCHLIST_METRICS_AVAILABLE",
+        "EVENT_RISK_CHECK_AVAILABLE",
+        "SETUP_DETECTION_AVAILABLE",
+        "PLAN_DRAFT_AVAILABLE",
+        "POSITION_SIZING_AVAILABLE",
+        "PORTFOLIO_HEAT_CHECK_AVAILABLE"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
+    "ErrorCode": {
+      "enum": [
+        "CONFIGURATION_INVALID",
+        "CREDENTIALS_MISSING",
+        "MARKET_CALENDAR_UNAVAILABLE",
+        "PROVIDER_UNAVAILABLE",
+        "PROVIDER_SCHEMA_DRIFT",
+        "EVIDENCE_CUTOFF_VIOLATION",
+        "SOURCE_CONFLICT",
+        "STALE_DATA",
+        "UNSUPPORTED_INSTRUMENT",
+        "SIZING_UNAVAILABLE",
+        "PORTFOLIO_HEAT_UNAVAILABLE",
+        "INVALID_RUN_STATE",
+        "INTERNAL_ERROR",
+        "VALIDATION_FAILED",
+        "PUBLICATION_FAILED",
+        "PATH_NOT_ALLOWED",
+        "DEADLINE_EXCEEDED"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Explicit availability with mandatory reasons for disabled capabilities.",
+  "properties": {
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "capability": {
+      "$ref": "#/$defs/Capability"
+    },
+    "evidence_ids": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 256,
+      "title": "Evidence Ids",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "reason_codes": {
+      "items": {
+        "$ref": "#/$defs/ErrorCode"
+      },
+      "maxItems": 64,
+      "title": "Reason Codes",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "capability",
+    "available",
+    "reason_codes",
+    "evidence_ids"
+  ],
+  "title": "CapabilityState",
+  "type": "object"
+}

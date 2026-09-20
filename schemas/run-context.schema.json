@@ -1,0 +1,336 @@
+{
+  "$defs": {
+    "ConfigurationSnapshot": {
+      "additionalProperties": false,
+      "description": "Immutable configuration identity and optional frozen policy copies.",
+      "properties": {
+        "content_hash_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Content Hash Sha256",
+          "type": "string"
+        },
+        "file_hashes": {
+          "additionalProperties": false,
+          "maxProperties": 128,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.:-]*$": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "title": "File Hashes",
+          "type": "object"
+        },
+        "policies": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "maxProperties": 128,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policies"
+        },
+        "policy_hashes": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "maxProperties": 128,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Hashes"
+        },
+        "radar_universe": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Radar Universe",
+          "type": "array"
+        },
+        "regime_policy_version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+          "title": "Regime Policy Version",
+          "type": "string"
+        },
+        "risk_policy_version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+          "title": "Risk Policy Version",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "setup_policy_version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+          "title": "Setup Policy Version",
+          "type": "string"
+        },
+        "source_policy_version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+          "title": "Source Policy Version",
+          "type": "string"
+        },
+        "watchlist_version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+          "title": "Watchlist Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content_hash_sha256",
+        "file_hashes",
+        "watchlist_version",
+        "regime_policy_version",
+        "setup_policy_version",
+        "risk_policy_version",
+        "source_policy_version"
+      ],
+      "title": "ConfigurationSnapshot",
+      "type": "object"
+    },
+    "DataQualityStatus": {
+      "enum": [
+        "PASS",
+        "DEGRADED",
+        "FAIL"
+      ],
+      "title": "DataQualityStatus",
+      "type": "string"
+    },
+    "DeliveryStatus": {
+      "enum": [
+        "ON_TIME",
+        "DELAYED",
+        "MANUAL",
+        "MISSED_WINDOW"
+      ],
+      "title": "DeliveryStatus",
+      "type": "string"
+    },
+    "ExecutionStatus": {
+      "enum": [
+        "CREATED",
+        "COLLECTING",
+        "NORMALIZING",
+        "ANALYZING",
+        "AWAITING_SYNTHESIS",
+        "VALIDATING",
+        "PUBLISHED",
+        "FAILED",
+        "SKIPPED"
+      ],
+      "title": "ExecutionStatus",
+      "type": "string"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "maxLength": 8192,
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "maxProperties": 128,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "RunType": {
+      "enum": [
+        "PREMARKET"
+      ],
+      "title": "RunType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Immutable identity and orthogonal status snapshot, not a state machine.",
+  "properties": {
+    "configuration_snapshot": {
+      "$ref": "#/$defs/ConfigurationSnapshot"
+    },
+    "core_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Core Version",
+      "type": "string"
+    },
+    "data_quality_status": {
+      "$ref": "#/$defs/DataQualityStatus"
+    },
+    "delivery_status": {
+      "$ref": "#/$defs/DeliveryStatus"
+    },
+    "evidence_cutoff_at": {
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
+      "title": "Evidence Cutoff At",
+      "type": "string"
+    },
+    "execution_status": {
+      "$ref": "#/$defs/ExecutionStatus"
+    },
+    "invoked_at": {
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
+      "title": "Invoked At",
+      "type": "string"
+    },
+    "market_date": {
+      "format": "date",
+      "title": "Market Date",
+      "type": "string"
+    },
+    "mcp_contract_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Mcp Contract Version",
+      "type": "string"
+    },
+    "plugin_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Plugin Version",
+      "type": "string"
+    },
+    "prompt_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "report_template_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Report Template Version",
+      "type": "string"
+    },
+    "revision": {
+      "exclusiveMinimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "run_id": {
+      "maxLength": 128,
+      "pattern": "^premarket-\\d{4}-\\d{2}-\\d{2}-r[1-9]\\d*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "run_type": {
+      "$ref": "#/$defs/RunType"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "schema_versions": {
+      "additionalProperties": false,
+      "maxProperties": 128,
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9_.:-]*$": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+          "type": "string"
+        }
+      },
+      "propertyNames": {
+        "maxLength": 128,
+        "minLength": 1
+      },
+      "title": "Schema Versions",
+      "type": "object"
+    },
+    "skill_version": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+      "title": "Skill Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "run_type",
+    "market_date",
+    "revision",
+    "invoked_at",
+    "evidence_cutoff_at",
+    "execution_status",
+    "data_quality_status",
+    "delivery_status",
+    "configuration_snapshot",
+    "core_version",
+    "mcp_contract_version",
+    "plugin_version",
+    "skill_version",
+    "prompt_version",
+    "report_template_version",
+    "schema_versions"
+  ],
+  "title": "RunContext",
+  "type": "object"
+}

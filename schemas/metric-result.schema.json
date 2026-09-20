@@ -1,0 +1,223 @@
+{
+  "$defs": {
+    "MetricDirection": {
+      "description": "Direction implied by a metric value when applicable.",
+      "enum": [
+        "up",
+        "flat",
+        "down",
+        "not_applicable"
+      ],
+      "title": "MetricDirection",
+      "type": "string"
+    },
+    "MetricName": {
+      "description": "Indicator names produced by the bounded deterministic core.",
+      "enum": [
+        "sma",
+        "sma_slope",
+        "relative_return",
+        "atr_percent",
+        "atr_percentile",
+        "realized_volatility",
+        "realized_volatility_percentile",
+        "percentile_rank",
+        "equal_weight_relative_return"
+      ],
+      "title": "MetricName",
+      "type": "string"
+    },
+    "MetricStatus": {
+      "description": "Availability of a deterministic metric.",
+      "enum": [
+        "available",
+        "unavailable"
+      ],
+      "title": "MetricStatus",
+      "type": "string"
+    },
+    "MetricUnavailableReason": {
+      "description": "Typed reasons why an indicator could not be calculated.",
+      "enum": [
+        "insufficient_history",
+        "missing_input",
+        "misaligned_dates"
+      ],
+      "title": "MetricUnavailableReason",
+      "type": "string"
+    },
+    "MetricUnit": {
+      "description": "Units used by deterministic metrics.",
+      "enum": [
+        "price",
+        "decimal",
+        "percentile_0_to_100"
+      ],
+      "title": "MetricUnit",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One versioned deterministic calculation or structured unavailability.",
+  "properties": {
+    "calculated_at": {
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
+      "title": "Calculated At",
+      "type": "string"
+    },
+    "direction": {
+      "$ref": "#/$defs/MetricDirection"
+    },
+    "formula_version": {
+      "title": "Formula Version",
+      "type": "string"
+    },
+    "input_evidence_ids": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 256,
+      "maxLength": 256,
+      "title": "Input Evidence Ids",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "input_snapshot_ids": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 256,
+      "maxLength": 256,
+      "title": "Input Snapshot Ids",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "metric_id": {
+      "title": "Metric Id",
+      "type": "string"
+    },
+    "name": {
+      "$ref": "#/$defs/MetricName"
+    },
+    "parameters": {
+      "items": {
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
+          {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        ],
+        "type": "array"
+      },
+      "maxItems": 64,
+      "maxLength": 64,
+      "title": "Parameters",
+      "type": "array"
+    },
+    "period_end": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Period End"
+    },
+    "period_start": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Period Start"
+    },
+    "quality_flags": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "maxLength": 64,
+      "title": "Quality Flags",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/MetricStatus"
+    },
+    "unavailable_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MetricUnavailableReason"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "unit": {
+      "$ref": "#/$defs/MetricUnit"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Value"
+    }
+  },
+  "required": [
+    "metric_id",
+    "name",
+    "status",
+    "value",
+    "unit",
+    "direction",
+    "parameters",
+    "period_start",
+    "period_end",
+    "formula_version",
+    "input_snapshot_ids",
+    "calculated_at",
+    "unavailable_reason",
+    "quality_flags",
+    "input_evidence_ids"
+  ],
+  "title": "MetricResult",
+  "type": "object"
+}

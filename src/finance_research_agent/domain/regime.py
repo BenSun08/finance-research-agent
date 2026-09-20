@@ -19,7 +19,10 @@ from finance_research_agent.domain.indicators import (
     sma,
     sma_slope,
 )
-from finance_research_agent.domain.market import InvalidMarketDataError, MarketSnapshot
+from finance_research_agent.domain.market import (
+    InvalidMarketDataError,
+    RegimeMarketSnapshot,
+)
 from finance_research_agent.domain.metrics import MetricResult, MetricStatus
 
 
@@ -109,6 +112,12 @@ class RegimePolicy:
         (RegimeComponent.VOLATILITY_STRESS, Decimal("15")),
         (RegimeComponent.CREDIT_CROSS_ASSET, Decimal("10")),
     )
+    dia_symbol: str = "DIA"
+    treasury_symbol: str | None = "TLT"
+    dollar_symbol: str | None = "UUP"
+    gold_symbol: str | None = "GLD"
+    oil_symbol: str | None = "USO"
+    volatility_symbol: str | None = "VIX"
 
     def __post_init__(self) -> None:
         if not self.version:
@@ -145,6 +154,14 @@ class RegimePolicy:
             self.credit_asset_symbol,
             self.credit_benchmark_symbol,
             *self.sector_symbols,
+            self.dia_symbol,
+            *(symbol for symbol in (
+                self.treasury_symbol,
+                self.dollar_symbol,
+                self.gold_symbol,
+                self.oil_symbol,
+                self.volatility_symbol,
+            ) if symbol is not None),
         )
         if any(
             not isinstance(symbol, str)
@@ -240,6 +257,26 @@ class RegimePolicy:
                     *self.sector_symbols,
                     *self.cyclical_symbols,
                     *self.defensive_symbols,
+                }
+            )
+        )
+
+    @property
+    def radar_universe(self) -> tuple[str, ...]:
+        """Return the full configurable radar without changing calculation inputs."""
+
+        return tuple(
+            sorted(
+                {
+                    *self.required_symbols,
+                    self.dia_symbol,
+                    *(symbol for symbol in (
+                        self.treasury_symbol,
+                        self.dollar_symbol,
+                        self.gold_symbol,
+                        self.oil_symbol,
+                        self.volatility_symbol,
+                    ) if symbol is not None),
                 }
             )
         )
@@ -483,7 +520,7 @@ def _volatility_state(
 
 
 def _broad_trend(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -500,7 +537,9 @@ def _broad_trend(
         return result, ()
 
     metrics: list[MetricResult] = []
-    observations: list[tuple[MarketSnapshot, MetricResult, MetricResult, MetricResult]] = []
+    observations: list[
+        tuple[RegimeMarketSnapshot, MetricResult, MetricResult, MetricResult]
+    ] = []
     for snapshot in broad:
         short_average = sma(snapshot, window=policy.short_sma_window, cutoff_at=cutoff_at)
         long_average = sma(snapshot, window=policy.long_sma_window, cutoff_at=cutoff_at)
@@ -554,7 +593,7 @@ def _broad_trend(
 
 
 def _participation(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -599,7 +638,7 @@ def _participation(
 
 
 def _leadership(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -657,7 +696,7 @@ def _leadership(
 
 
 def _volatility_stress(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -709,7 +748,7 @@ def _volatility_stress(
 
 
 def _credit_cross_asset(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -762,7 +801,9 @@ def _credit_cross_asset(
 
 
 def _validate_inputs(
-    snapshots: Mapping[str, MarketSnapshot], policy: RegimePolicy, cutoff_at: datetime
+    snapshots: Mapping[str, RegimeMarketSnapshot],
+    policy: RegimePolicy,
+    cutoff_at: datetime,
 ) -> None:
     if cutoff_at.tzinfo is None or cutoff_at.utcoffset() != timedelta(0):
         raise InvalidMarketDataError("cutoff_at must be timezone-aware UTC")
@@ -867,7 +908,7 @@ def _result_id(
 
 
 def calculate_regime(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> RegimeResult:

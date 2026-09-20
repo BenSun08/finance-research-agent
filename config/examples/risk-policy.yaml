@@ -1,0 +1,16 @@
+version: "1"
+sizing_enabled: false
+planning_capital_usd: null
+max_risk_per_trade_pct: null
+max_position_pct: null
+minimum_reward_risk_ratio: null
+max_total_portfolio_heat_pct: null
+existing_portfolio_heat_pct: null
+max_concurrent_plan_drafts: 5
+allow_fractional_units: false
+quantity_increment: "0.001"
+regime_risk_multipliers:
+  PERMISSIVE: "1.00"
+  NEUTRAL: "0.50"
+  DEFENSIVE: "0.00"
+  UNKNOWN: "0.00"

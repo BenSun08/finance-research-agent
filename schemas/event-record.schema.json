@@ -1,0 +1,96 @@
+{
+  "additionalProperties": false,
+  "description": "Known or scheduled event with ordered supporting and conflicting evidence.",
+  "properties": {
+    "conflict_evidence_ids": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 256,
+      "title": "Conflict Evidence Ids",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "event_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_time": {
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
+      "title": "Event Time",
+      "type": "string"
+    },
+    "event_type": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Event Type",
+      "type": "string"
+    },
+    "materiality": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "UNKNOWN"
+      ],
+      "title": "Materiality",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "subject_symbol": {
+      "anyOf": [
+        {
+          "maxLength": 16,
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Subject Symbol"
+    },
+    "supporting_evidence_ids": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 256,
+      "title": "Supporting Evidence Ids",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "verified": {
+      "title": "Verified",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "event_id",
+    "event_type",
+    "subject_symbol",
+    "event_time",
+    "verified",
+    "materiality",
+    "supporting_evidence_ids",
+    "conflict_evidence_ids"
+  ],
+  "title": "EventRecord",
+  "type": "object"
+}

@@ -403,6 +403,7 @@ def test_metric_result_enforces_available_and_unavailable_invariants() -> None:
         "period_end": date(2026, 1, 2),
         "formula_version": "indicators-v1",
         "input_snapshot_ids": ("snapshot",),
+        "input_evidence_ids": (),
         "calculated_at": CUTOFF,
         "quality_flags": (),
     }
