@@ -2,7 +2,7 @@
 
 import re
 import unicodedata
-from datetime import date
+from datetime import date, timedelta
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -195,6 +195,86 @@ class RunKey(StrictModel):
 
     run_type: RunType
     market_date: date
+
+
+class RunLease(StrictModel):
+    """Short-lived ownership record for one logical run family."""
+
+    key: RunKey
+    token: Annotated[str, Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")]
+    acquired_at: UtcDatetime
+    heartbeat_at: UtcDatetime
+    expires_at: UtcDatetime
+    process_id: Annotated[int, Field(gt=0)]
+    host: Annotated[str, Field(min_length=1, max_length=255, pattern=r"^[^\x00-\x1f\x7f]+$")]
+
+    @model_validator(mode="after")
+    def _valid_times(self) -> Self:
+        if self.heartbeat_at < self.acquired_at:
+            raise ValueError("heartbeat_at must not precede acquired_at")
+        if self.expires_at <= self.heartbeat_at:
+            raise ValueError("expires_at must follow heartbeat_at")
+        return self
+
+    @property
+    def duration(self) -> timedelta:
+        return self.expires_at - self.acquired_at
+
+
+class RunCheckpoint(StrictModel):
+    """Immutable serialized progress marker retained below run staging."""
+
+    run_id: Annotated[
+        str, Field(max_length=128, pattern=r"^premarket-\d{4}-\d{2}-\d{2}-r[1-9]\d*$")
+    ]
+    stage: Identifier
+    execution_status: ExecutionStatus
+    written_at: UtcDatetime
+    evidence_cutoff_at: UtcDatetime | None
+    artifact_hashes: FrozenMap[Identifier, Sha256]
+    resumable: bool
+
+
+class StoredRun(StrictModel):
+    """Persisted run context and ordered checkpoint history."""
+
+    run: "RunContext"
+    checkpoints: tuple[RunCheckpoint, ...] = ()
+    evidence_cutoff_at: UtcDatetime | None = None
+    published: bool = False
+
+    @property
+    def context(self) -> "RunContext":
+        """Compatibility spelling for callers that call the value a context."""
+        return self.run
+
+    @property
+    def run_context(self) -> "RunContext":
+        return self.run
+
+    @property
+    def run_id(self) -> str:
+        return self.run.run_id
+
+
+class PublishedRunBundle(StrictModel):
+    """Small storage-facing bundle envelope; later tasks own its contents."""
+
+    run: "RunContext"
+    bundle: FrozenMap[str, JsonValue] = Field(default_factory=lambda: FrozenMap({}))
+    report_markdown: str = ""
+    markdown_sha256: Sha256 | None = None
+
+
+class PublishedArtifact(StrictModel):
+    """Hashes and identity returned only after a complete publication."""
+
+    run_id: Annotated[
+        str, Field(max_length=128, pattern=r"^premarket-\d{4}-\d{2}-\d{2}-r[1-9]\d*$")
+    ]
+    bundle_sha256: Sha256
+    markdown_sha256: Sha256
+    published_at: UtcDatetime
 
 
 class RunContext(StrictModel):
