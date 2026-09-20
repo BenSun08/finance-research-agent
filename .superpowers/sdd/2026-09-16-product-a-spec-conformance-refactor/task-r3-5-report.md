@@ -252,3 +252,68 @@ evidence for this fix.
 The final concern is limited to the pre-existing `websockets.legacy`
 deprecation warning. The full suite is green, the fix is committed locally,
 and the work stops at the R3 Task 5 review gate.
+
+## R3 Task 5 fallback review-fix round 2
+
+The second scoped review round fixed the two remaining Important findings in
+local commit `768aeea` (`fix: bind frozen packet checkpoints`), on top of
+`4ef9a7f` and `c1609c8`. No existing commit or clean-state change was reset or
+discarded, and no push, merge, subagent dispatch, R4+ work, provider, MCP,
+skill, scheduling, brokerage, execution, or other capability work was started.
+
+### Findings fixed
+
+- Post-cutoff checkpoint validation now requires `resumable=False`, limits
+  later checkpoints to `AWAITING_SYNTHESIS` or `VALIDATING` with matching
+  execution status, and requires exactly one `research_packet` hash equal to
+  the most recently stored packet hash from the same run. Collection/resume,
+  replacement packet hashes, and resumable later-validation checkpoints are
+  rejected with the new-revision cutoff error.
+- Publication now reads an existing report index through `_read_confined`
+  instead of raw `is_file()`/`read_bytes()` calls. A symlink escape raises
+  `PathNotAllowedError`; if the final directory has already been renamed, it
+  is quarantined as a diagnostic orphan before the typed error is propagated.
+
+### Exact TDD evidence
+
+After adding the round-2 regression tests and correcting one test-fixture
+directory setup error, the RED focused run was:
+
+```text
+../../.venv/bin/pytest -q tests/unit/test_filesystem_store.py tests/integration/test_run_identity.py --disable-warnings --tb=short
+2 failed, 28 passed in 0.90s
+```
+
+The two expected RED failures were the still-accepted resumable/hash-replaced
+post-cutoff validation and the publication-time index symlink escape. The
+earlier setup-only `FileNotFoundError` was corrected before recording this RED
+result and was not treated as feature evidence.
+
+The focused GREEN run after the implementation was:
+
+```text
+../../.venv/bin/pytest -q tests/unit/test_filesystem_store.py tests/integration/test_run_identity.py --disable-warnings --tb=short
+30 passed in 0.75s
+```
+
+### Final verification evidence
+
+The final full verification after the round-2 implementation was:
+
+```text
+../../.venv/bin/pytest -q --tb=short
+1201 passed, 1 warning in 20.92s
+
+../../.venv/bin/ruff check .
+All checks passed!
+
+../../.venv/bin/mypy src
+Success: no issues found in 44 source files
+
+git diff --check
+<no output; exit 0>
+```
+
+The one warning remains the pre-existing `websockets.legacy` deprecation
+warning from the environment. `git diff --cached --check` also returned no
+output immediately before commit `768aeea`.
