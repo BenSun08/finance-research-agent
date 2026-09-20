@@ -278,6 +278,17 @@ def test_source_url_rejects_representative_default_ignorable_range_boundaries(
 
 
 @pytest.mark.parametrize(
+    "character", ["\U000e0080", "\U000e00ff", "\U000e01f0", "\U000e0fff"]
+)
+@pytest.mark.parametrize("suffix", ["/filing{}", "/filing?q={}", "/filing#{}"])
+def test_source_url_rejects_reserved_default_ignorable_range_boundaries(
+    character: str, suffix: str
+) -> None:
+    with pytest.raises(ValidationError):
+        source(source_url="https://example.test" + suffix.format(character))
+
+
+@pytest.mark.parametrize(
     "url",
     [
         "https://example.test/cafe\u0301/filing",

@@ -32,9 +32,10 @@ Symbol = Annotated[
 ]
 Currency = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
 
-# Unicode Default_Ignorable_Code_Point ranges. Keep this explicit rather than
-# rejecting broad Unicode categories: visible international text and ordinary
-# combining marks are valid source URL content.
+# Unicode 15.1.0 Default_Ignorable_Code_Point ranges, merging adjacent entries:
+# https://www.unicode.org/Public/15.1.0/ucd/DerivedCoreProperties.txt
+# Keep this explicit rather than rejecting broad Unicode categories: visible
+# international text and ordinary combining marks are valid source URL content.
 _DEFAULT_IGNORABLE_CODE_POINT_RANGES = (
     (0x00AD, 0x00AD),
     (0x034F, 0x034F),
@@ -52,10 +53,7 @@ _DEFAULT_IGNORABLE_CODE_POINT_RANGES = (
     (0xFFF0, 0xFFF8),
     (0x1BCA0, 0x1BCA3),
     (0x1D173, 0x1D17A),
-    (0xE0000, 0xE0001),
-    (0xE0002, 0xE001F),
-    (0xE0020, 0xE007F),
-    (0xE0100, 0xE01EF),
+    (0xE0000, 0xE0FFF),
 )
 
 
