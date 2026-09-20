@@ -377,3 +377,107 @@ git diff --check
 The one warning remains the pre-existing `websockets.legacy` deprecation
 warning from the environment. `git diff --cached --check` also returned no
 output immediately before commit `dbff717`.
+
+## R3 final-fix wave — six whole-branch review findings
+
+This final-fix wave was implemented directly on the existing
+`spec-plan-refactor` worktree, based on the prior clean R3 Task 5 tip
+`616a478`. The code and regression tests are committed locally in
+`5501d6a` (`fix: close final R3 storage and policy races`). The change is
+limited to the six requested findings and their existing R3 tests. No reset,
+discard, push, merge, subagent dispatch, R4+ work, provider, evidence
+collection, analysis, publication service, MCP, skill, scheduling,
+brokerage/trading, or production-model work occurred.
+
+### Findings fixed
+
+- Lease heartbeat ownership is now serialized under the same per-market-date
+  `_lease_lock` as acquisition. Read, token/expiry validation, renewal
+  construction, and atomic replacement share one critical section, so a stale
+  heartbeat cannot write its old token after a replacement. The controlled
+  interleaving regression test holds the heartbeat write and proves the
+  replacement token remains current.
+- Revision allocation and run creation now share a per-market-date local
+  filesystem lock. Manual concurrent allocations receive distinct revisions;
+  concurrent creation of one immutable revision has exactly one winner and
+  cannot overwrite the winner's `run.json`.
+- Checkpoint sequence selection and atomic write now share the per-run lock.
+  A controlled concurrent-write regression test proves the second checkpoint
+  cannot enter the write path while the first sequence is pending, preserving
+  both history files.
+- `RiskPolicy.regime_risk_multipliers` and all three `SourcePolicy` maps now
+  use copied, deeply immutable `FrozenMap` values. Mutation attempts raise
+  `TypeError`, canonical policy hashes remain stable, and JSON serialization
+  continues to emit objects.
+- Official-source URL traversal detection now percent-decodes to a fixed point
+  rather than stopping at four passes. Five-layer encoded `..` traversal is
+  rejected without rewriting accepted caller URLs.
+- `ExchangeCalendarAdapter` now rejects provider timestamps with no timezone
+  before calling `astimezone(UTC)`, while aware timestamps retain the existing
+  UTC conversion and public error redaction.
+
+### Exact TDD evidence
+
+The six requested RED/GREEN cycles were observed in order:
+
+```text
+Lease RED:       1 failed
+Lease GREEN:     1 passed
+Revision RED:    2 failed
+Checkpoint RED:  1 failed
+Policy RED:      1 failed
+URL RED:         1 failed, 8 passed
+Calendar RED:    1 failed
+```
+
+The combined final-fix regression run after the minimal production changes
+was:
+
+```text
+../../.venv/bin/pytest -q \
+  tests/unit/test_filesystem_store.py::test_stale_heartbeat_cannot_resurrect_replaced_lease \
+  tests/unit/test_filesystem_store.py::test_concurrent_manual_revision_allocations_are_unique \
+  tests/unit/test_filesystem_store.py::test_concurrent_create_cannot_overwrite_an_immutable_revision \
+  tests/unit/test_filesystem_store.py::test_concurrent_checkpoints_preserve_append_only_history \
+  tests/contracts/test_r3_task3_fixes.py::test_policy_maps_are_deeply_immutable_without_changing_json_serialization \
+  tests/contracts/test_r3_task3_fixes.py::test_official_source_url_security_grammar \
+  tests/unit/test_exchange_calendar.py \
+  --tb=short
+19 passed in 2.13s
+```
+
+The focused R3 suite was:
+
+```text
+../../.venv/bin/pytest -q \
+  tests/contracts/test_r3_configuration.py \
+  tests/contracts/test_r3_task3_fixes.py \
+  tests/integration/test_run_identity.py \
+  tests/unit/test_exchange_calendar.py \
+  tests/unit/test_filesystem_store.py \
+  tests/unit/test_market_calendar.py \
+  tests/unit/test_run_state.py \
+  --tb=short
+100 passed in 3.16s
+```
+
+### Final verification evidence
+
+```text
+../../.venv/bin/pytest -q --tb=short
+1209 passed, 1 warning in 18.86s
+
+../../.venv/bin/ruff check .
+All checks passed!
+
+../../.venv/bin/mypy src
+Success: no issues found in 44 source files
+
+git diff --check
+<no output; exit 0>
+```
+
+The one warning is the pre-existing `websockets.legacy` deprecation warning
+from the environment. The final-fix code/test commit is local only; the
+report update remains the only post-commit documentation change and is also
+limited to this final R3 review evidence.
