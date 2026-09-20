@@ -32,6 +32,40 @@ Symbol = Annotated[
 ]
 Currency = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
 
+# Unicode Default_Ignorable_Code_Point ranges. Keep this explicit rather than
+# rejecting broad Unicode categories: visible international text and ordinary
+# combining marks are valid source URL content.
+_DEFAULT_IGNORABLE_CODE_POINT_RANGES = (
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFF8),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0001),
+    (0xE0002, 0xE001F),
+    (0xE0020, 0xE007F),
+    (0xE0100, 0xE01EF),
+)
+
+
+def _is_default_ignorable(character: str) -> bool:
+    code_point = ord(character)
+    return any(
+        first <= code_point <= last
+        for first, last in _DEFAULT_IGNORABLE_CODE_POINT_RANGES
+    )
+
 
 def _unique[T](values: tuple[T, ...]) -> tuple[T, ...]:
     if len(set(values)) != len(values):
@@ -58,11 +92,14 @@ ReasonCodes = Annotated[
 
 def _source_url(value: str) -> str:
     if any(
-        character.isspace() or unicodedata.category(character) in {"Cc", "Cf"}
+        character.isspace()
+        or unicodedata.category(character) in {"Cc", "Cf"}
+        or _is_default_ignorable(character)
         for character in value
     ):
         raise ValueError(
-            "source_url must not contain whitespace or Unicode control/format characters"
+            "source_url must not contain whitespace, Unicode control/format, or "
+            "default-ignorable characters"
         )
     parsed = HttpUrl(value)
     if (

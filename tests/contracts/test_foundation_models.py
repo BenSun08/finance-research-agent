@@ -257,6 +257,37 @@ def test_source_url_rejects_unicode_control_and_format_characters(
         source(source_url="https://example.test" + suffix.format(character))
 
 
+@pytest.mark.parametrize("character", ["\u034f", "\ufe0f", "\u3164"])
+@pytest.mark.parametrize("suffix", ["/filing{}", "/filing?q={}", "/filing#{}"])
+def test_source_url_rejects_default_ignorable_characters(
+    character: str, suffix: str
+) -> None:
+    with pytest.raises(ValidationError):
+        source(source_url="https://example.test" + suffix.format(character))
+
+
+@pytest.mark.parametrize(
+    "character",
+    ["\u00ad", "\u115f", "\u1160", "\u180b", "\u180f", "\U000e0100", "\U000e01ef"],
+)
+def test_source_url_rejects_representative_default_ignorable_range_boundaries(
+    character: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        source(source_url=f"https://example.test/filing{character}")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.test/cafe\u0301/filing",
+        "https://example.test/caf\u00e9/\u6771\u4eac/\u0645\u0644\u0641",
+    ],
+)
+def test_source_url_preserves_visible_unicode(url: str) -> None:
+    assert source(source_url=url).source_url == url
+
+
 @pytest.mark.parametrize(
     "path",
     [
