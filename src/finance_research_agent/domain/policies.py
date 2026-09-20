@@ -169,7 +169,7 @@ class WatchlistItem(PolicyModel):
             authority_and_path = source.removeprefix("https://").split("?", 1)[0]
             path = authority_and_path.partition("/")[2].replace("\\", "/")
             for _ in range(4):
-                decoded = _percent_decode(path)
+                decoded = _percent_decode(path).replace("\\", "/")
                 if decoded == path:
                     break
                 path = decoded

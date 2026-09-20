@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import concurrent.futures
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +63,32 @@ def test_config_service_from_directories_projects_all_fixed_files_and_radar(tmp_
         set(snapshot.radar_universe)
     )
     assert {"TLT", "UUP", "GLD", "USO", "VIX"}.issubset(set(snapshot.radar_universe))
+
+
+def test_application_only_public_import_bootstraps_directory_service() -> None:
+    source = str(EXAMPLES)
+    package_root = str(EXAMPLES.parents[1] / "src")
+    script = f"""
+import sys
+from pathlib import Path
+from finance_research_agent.application.config_service import ConfigService
+
+assert not any(name.startswith('finance_research_agent.adapters') for name in sys.modules)
+service = ConfigService.from_directories(Path({source!r}), Path('/tmp/r3-application-only'))
+assert service.validate_and_snapshot().watchlist_version == '1'
+"""
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = package_root
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=EXAMPLES.parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_yaml_formatting_does_not_change_canonical_policy_hash(tmp_path: Path) -> None:
@@ -140,6 +169,7 @@ def test_stored_prose_requires_printable_english(value: str) -> None:
         "https://example.test:bad/ir",
         "https://example.test/%2e%2e/private",
         "https://example.test/%252e%252e/private",
+        "https://example.test/%5c..%5cprivate",
         "https://example.test/ir\u200b",
     ],
 )
