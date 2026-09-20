@@ -6,10 +6,16 @@ from finance_research_agent.domain.enums import ExecutionStatus
 from finance_research_agent.domain.market_calendar import format_run_id, transition_execution
 
 
-def test_run_id_is_date_and_revision_stable() -> None:
+@pytest.mark.parametrize("revision", [True, 1.5, -1])
+def test_run_id_rejects_non_positive_integer_revisions(revision: object) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        format_run_id(date(2026, 8, 19), revision)  # type: ignore[arg-type]
+
+
+def test_run_id_is_date_and_positive_integer_revision_stable() -> None:
     assert format_run_id(date(2026, 8, 19), 1) == "premarket-2026-08-19-r1"
     assert format_run_id(date(2026, 8, 19), 12) == "premarket-2026-08-19-r12"
-    with pytest.raises(ValueError, match="positive"):
+    with pytest.raises(ValueError, match="positive integer"):
         format_run_id(date(2026, 8, 19), 0)
 
 

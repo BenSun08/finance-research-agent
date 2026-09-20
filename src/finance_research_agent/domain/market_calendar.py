@@ -122,8 +122,8 @@ def resolve_run_window(
 
 
 def format_run_id(market_date: date, revision: int) -> str:
-    if revision <= 0:
-        raise ValueError("revision must be positive")
+    if type(revision) is not int or revision <= 0:
+        raise ValueError("revision must be a positive integer")
     return f"premarket-{market_date.isoformat()}-r{revision}"
 
 
