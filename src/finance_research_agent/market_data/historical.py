@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo
 from finance_research_agent.domain.market import (
     DailyBar,
     InvalidMarketDataError,
-    MarketDataSource,
     MarketSnapshot,
 )
 
@@ -509,20 +508,18 @@ type HistoricalBarsFetchResult = (
 
 
 def to_market_snapshot(history: HistoricalDailyBars) -> MarketSnapshot:
-    """Project complete provider-neutral history into the unchanged numeric core."""
+    """Compatibility wrapper over the explicit canonical/regime bridge."""
 
     if not isinstance(history, HistoricalDailyBars):
         raise InvalidMarketDataError("only available historical bars can form a snapshot")
-    digest = history.history_id.removeprefix("history-")
-    return MarketSnapshot(
-        schema_version="market-snapshot-v1",
-        snapshot_id=f"normalized-{digest}",
-        symbol=history.symbol,
-        as_of=history.provenance.evidence_cutoff_at,
-        currency=history.currency,
-        source=MarketDataSource.NORMALIZED_PROVIDER,
-        completed_daily_bars=tuple(
-            observation.bar for observation in history.observations
-        ),
-        quality_flags=history.quality_flags,
+    from finance_research_agent.application.market_bridge import (
+        canonical_to_regime_input,
+        historical_instrument_identity,
+        historical_to_canonical_snapshot,
     )
+
+    canonical = historical_to_canonical_snapshot(
+        history,
+        instrument=historical_instrument_identity(history),
+    )
+    return canonical_to_regime_input(canonical)

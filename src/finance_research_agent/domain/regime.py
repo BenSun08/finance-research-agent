@@ -19,7 +19,10 @@ from finance_research_agent.domain.indicators import (
     sma,
     sma_slope,
 )
-from finance_research_agent.domain.market import InvalidMarketDataError, MarketSnapshot
+from finance_research_agent.domain.market import (
+    InvalidMarketDataError,
+    RegimeMarketSnapshot,
+)
 from finance_research_agent.domain.metrics import MetricResult, MetricStatus
 
 
@@ -483,7 +486,7 @@ def _volatility_state(
 
 
 def _broad_trend(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -500,7 +503,9 @@ def _broad_trend(
         return result, ()
 
     metrics: list[MetricResult] = []
-    observations: list[tuple[MarketSnapshot, MetricResult, MetricResult, MetricResult]] = []
+    observations: list[
+        tuple[RegimeMarketSnapshot, MetricResult, MetricResult, MetricResult]
+    ] = []
     for snapshot in broad:
         short_average = sma(snapshot, window=policy.short_sma_window, cutoff_at=cutoff_at)
         long_average = sma(snapshot, window=policy.long_sma_window, cutoff_at=cutoff_at)
@@ -554,7 +559,7 @@ def _broad_trend(
 
 
 def _participation(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -599,7 +604,7 @@ def _participation(
 
 
 def _leadership(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -657,7 +662,7 @@ def _leadership(
 
 
 def _volatility_stress(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -709,7 +714,7 @@ def _volatility_stress(
 
 
 def _credit_cross_asset(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> tuple[RegimeComponentResult, tuple[MetricResult, ...]]:
@@ -762,7 +767,9 @@ def _credit_cross_asset(
 
 
 def _validate_inputs(
-    snapshots: Mapping[str, MarketSnapshot], policy: RegimePolicy, cutoff_at: datetime
+    snapshots: Mapping[str, RegimeMarketSnapshot],
+    policy: RegimePolicy,
+    cutoff_at: datetime,
 ) -> None:
     if cutoff_at.tzinfo is None or cutoff_at.utcoffset() != timedelta(0):
         raise InvalidMarketDataError("cutoff_at must be timezone-aware UTC")
@@ -867,7 +874,7 @@ def _result_id(
 
 
 def calculate_regime(
-    snapshots: Mapping[str, MarketSnapshot],
+    snapshots: Mapping[str, RegimeMarketSnapshot],
     policy: RegimePolicy,
     cutoff_at: datetime,
 ) -> RegimeResult:

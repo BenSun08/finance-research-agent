@@ -7,7 +7,11 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
+from pydantic import TypeAdapter
+
+from finance_research_agent.domain.metrics import MetricResult
 from finance_research_agent.domain.models import (
     CapabilityState,
     ComponentVersions,
@@ -16,13 +20,13 @@ from finance_research_agent.domain.models import (
     EvidenceItem,
     GateResult,
     InstrumentIdentity,
+    MarketSnapshot,
     PriceObservation,
     RunContext,
     SourceObservation,
-    StrictModel,
 )
 
-SCHEMA_MODELS: Mapping[str, type[StrictModel]] = MappingProxyType(
+SCHEMA_MODELS: Mapping[str, type[Any]] = MappingProxyType(
     {
         "capability-state.schema.json": CapabilityState,
         "component-versions.schema.json": ComponentVersions,
@@ -31,6 +35,8 @@ SCHEMA_MODELS: Mapping[str, type[StrictModel]] = MappingProxyType(
         "evidence-item.schema.json": EvidenceItem,
         "gate-result.schema.json": GateResult,
         "instrument-identity.schema.json": InstrumentIdentity,
+        "market-snapshot.schema.json": MarketSnapshot,
+        "metric-result.schema.json": MetricResult,
         "price-observation.schema.json": PriceObservation,
         "run-context.schema.json": RunContext,
         "source-observation.schema.json": SourceObservation,
@@ -38,9 +44,9 @@ SCHEMA_MODELS: Mapping[str, type[StrictModel]] = MappingProxyType(
 )
 
 
-def _schema_bytes(model: type[StrictModel]) -> bytes:
+def _schema_bytes(model: type[Any]) -> bytes:
     payload = json.dumps(
-        model.model_json_schema(mode="serialization"),
+        TypeAdapter(model).json_schema(mode="serialization"),
         indent=2,
         sort_keys=True,
         ensure_ascii=True,

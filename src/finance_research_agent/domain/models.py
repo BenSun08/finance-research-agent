@@ -290,6 +290,112 @@ class PriceObservation(StrictModel):
         return self
 
 
+class CompletedDailyBar(StrictModel):
+    """One completed daily bar with its evidence and provider provenance."""
+
+    instrument_id: Identifier
+    session_date: date
+    source_timestamp: UtcDatetime
+    open: PositiveDecimal
+    high: PositiveDecimal
+    low: PositiveDecimal
+    close: PositiveDecimal
+    volume: Annotated[int, Field(ge=0)] | None
+    session: Session
+    provider: Identifier
+    feed: Identifier
+    coverage: Coverage
+    adjustment: Identifier
+    retrieved_at: UtcDatetime
+    evidence_cutoff_at: UtcDatetime
+    evidence_id: Identifier
+    quality_flags: QualityFlags
+
+    @model_validator(mode="after")
+    def _valid_completed_bar(self) -> Self:
+        if self.session is not Session.COMPLETED_SESSION:
+            raise ValueError("completed daily bars require COMPLETED_SESSION")
+        if not self.low <= self.open <= self.high:
+            raise ValueError("completed daily-bar open must be within low and high")
+        if not self.low <= self.close <= self.high:
+            raise ValueError("completed daily-bar close must be within low and high")
+        if self.source_timestamp > self.retrieved_at:
+            raise ValueError("source_timestamp must not be after retrieved_at")
+        if self.source_timestamp > self.evidence_cutoff_at:
+            raise ValueError("source_timestamp must not be after evidence_cutoff_at")
+        return self
+
+
+class CurrentSessionBar(StrictModel):
+    """Typed current-session bar contract; R2 does not collect these values."""
+
+    instrument_id: Identifier
+    session: Session
+    start_at: UtcDatetime
+    end_at: UtcDatetime
+    open: PositiveDecimal
+    high: PositiveDecimal
+    low: PositiveDecimal
+    close: PositiveDecimal
+    volume: Annotated[int, Field(ge=0)] | None
+    provider: Identifier
+    feed: Identifier
+    coverage: Coverage
+    retrieved_at: UtcDatetime
+    evidence_id: Identifier
+    quality_flags: QualityFlags
+
+    @model_validator(mode="after")
+    def _valid_current_bar(self) -> Self:
+        if self.session is Session.COMPLETED_SESSION:
+            raise ValueError("current-session bars cannot use COMPLETED_SESSION")
+        if self.start_at > self.end_at:
+            raise ValueError("current-session bar start_at must not follow end_at")
+        if self.end_at > self.retrieved_at:
+            raise ValueError("current-session bar end_at must not follow retrieved_at")
+        if not self.low <= self.open <= self.high:
+            raise ValueError("current-session bar open must be within low and high")
+        if not self.low <= self.close <= self.high:
+            raise ValueError("current-session bar close must be within low and high")
+        return self
+
+
+class MarketSnapshot(StrictModel):
+    """Canonical Product A market facts for one normalized instrument."""
+
+    instrument: InstrumentIdentity
+    latest_price: PriceObservation | None
+    completed_daily_bars: tuple[CompletedDailyBar, ...]
+    current_session_bars: tuple[CurrentSessionBar, ...]
+    source_observations: tuple[SourceObservation, ...]
+    quality_flags: QualityFlags
+
+    @model_validator(mode="after")
+    def _consistent_instrument_and_history(self) -> Self:
+        instrument_id = self.instrument.instrument_id
+        if self.latest_price is not None and self.latest_price.instrument_id != instrument_id:
+            raise ValueError("latest price must match instrument")
+        if any(bar.instrument_id != instrument_id for bar in self.completed_daily_bars):
+            raise ValueError("completed bars must match instrument")
+        if any(bar.instrument_id != instrument_id for bar in self.current_session_bars):
+            raise ValueError("current-session bars must match instrument")
+        dates = tuple(bar.session_date for bar in self.completed_daily_bars)
+        if any(current >= following for current, following in zip(dates, dates[1:])):
+            raise ValueError("completed daily bars must have unique increasing dates")
+        observation_ids = tuple(
+            observation.observation_id for observation in self.source_observations
+        )
+        if len(set(observation_ids)) != len(observation_ids):
+            raise ValueError("source observation IDs must be unique")
+        if (
+            self.latest_price is not None
+            or self.completed_daily_bars
+            or self.current_session_bars
+        ) and not self.source_observations:
+            raise ValueError("market values require source observations")
+        return self
+
+
 class EventRecord(StrictModel):
     """Known or scheduled event with ordered supporting and conflicting evidence."""
 

@@ -17,6 +17,8 @@ SCHEMA_NAMES = {
     "evidence-item.schema.json",
     "gate-result.schema.json",
     "instrument-identity.schema.json",
+    "market-snapshot.schema.json",
+    "metric-result.schema.json",
     "price-observation.schema.json",
     "run-context.schema.json",
     "source-observation.schema.json",
@@ -24,7 +26,7 @@ SCHEMA_NAMES = {
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_registry_is_immutable_and_contains_only_the_ten_r1_records() -> None:
+def test_registry_is_immutable_and_contains_only_implemented_contracts() -> None:
     assert set(SCHEMA_MODELS) == SCHEMA_NAMES
     with pytest.raises(TypeError):
         SCHEMA_MODELS["invented.schema.json"] = object
@@ -82,6 +84,13 @@ def test_schema_preserves_wire_decimal_and_provenance_constraints(tmp_path: Path
     evidence_schema = json.loads((tmp_path / "evidence-item.schema.json").read_bytes())
     assert evidence_schema["properties"]["structured_fields"]["type"] == "object"
     assert evidence_schema["properties"]["source"] == {"$ref": "#/$defs/SourceObservation"}
+    metric_schema = json.loads((tmp_path / "metric-result.schema.json").read_bytes())
+    assert metric_schema["properties"]["value"]["anyOf"][0]["type"] == "string"
+    assert metric_schema["properties"]["input_evidence_ids"]["type"] == "array"
+    assert "input_evidence_ids" in metric_schema["required"]
+    market_schema = json.loads((tmp_path / "market-snapshot.schema.json").read_bytes())
+    assert market_schema["properties"]["completed_daily_bars"]["type"] == "array"
+    assert market_schema["properties"]["source_observations"]["type"] == "array"
 
 
 def test_schema_command_checks_without_rewriting_and_fails_on_drift(tmp_path: Path) -> None:

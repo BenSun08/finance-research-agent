@@ -42,8 +42,8 @@ class DailyBar:
 
 
 @dataclass(frozen=True, slots=True)
-class MarketSnapshot:
-    """Validated immutable completed history for one symbol."""
+class RegimeMarketSnapshot:
+    """Validated completed-history input for the deterministic regime core."""
 
     schema_version: str
     snapshot_id: str
@@ -53,12 +53,17 @@ class MarketSnapshot:
     source: MarketDataSource
     completed_daily_bars: tuple[DailyBar, ...]
     quality_flags: tuple[str, ...]
+    input_evidence_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.completed_daily_bars, tuple) or not isinstance(
-            self.quality_flags, tuple
+        if (
+            not isinstance(self.completed_daily_bars, tuple)
+            or not isinstance(self.quality_flags, tuple)
+            or not isinstance(self.input_evidence_ids, tuple)
         ):
-            raise InvalidMarketDataError("snapshot bars and quality flags must be immutable tuples")
+            raise InvalidMarketDataError(
+                "snapshot bars, evidence IDs, and quality flags must be immutable tuples"
+            )
         if self.schema_version != "market-snapshot-v1":
             raise InvalidMarketDataError("unsupported market snapshot schema version")
         if (
@@ -83,3 +88,11 @@ class MarketSnapshot:
             raise InvalidMarketDataError("daily bars must have unique, increasing session dates")
         if dates and dates[-1] > self.as_of.date():
             raise InvalidMarketDataError("completed daily bars cannot be later than as_of")
+        if len(set(self.input_evidence_ids)) != len(self.input_evidence_ids):
+            raise InvalidMarketDataError("snapshot input evidence IDs must be unique")
+
+
+# Compatibility alias retained through the migration. Product A's canonical
+# MarketSnapshot lives in domain.models; existing numeric callers keep this
+# completed-history contract without runtime deprecation warnings.
+MarketSnapshot = RegimeMarketSnapshot
