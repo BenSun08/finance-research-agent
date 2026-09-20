@@ -5,7 +5,15 @@ import unicodedata
 from datetime import date
 from typing import Annotated, Literal, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    TypeAdapter,
+    model_validator,
+)
 
 from finance_research_agent.domain.enums import (
     Capability,
@@ -31,6 +39,8 @@ Symbol = Annotated[
     str, Field(min_length=1, max_length=16, pattern=r"^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$")
 ]
 Currency = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
+
+_HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
 
 # Unicode 15.1.0 Default_Ignorable_Code_Point ranges, merging adjacent entries:
 # https://www.unicode.org/Public/15.1.0/ucd/DerivedCoreProperties.txt
@@ -99,7 +109,7 @@ def _source_url(value: str) -> str:
             "source_url must not contain whitespace, Unicode control/format, or "
             "default-ignorable characters"
         )
-    parsed = HttpUrl(value)
+    parsed = _HTTP_URL_ADAPTER.validate_python(value, strict=True)
     if (
         parsed.scheme != "https"
         or not parsed.host

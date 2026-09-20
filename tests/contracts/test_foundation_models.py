@@ -248,6 +248,30 @@ def test_source_preserves_original_url_and_equal_observation_retrieval_times() -
     assert value.retrieved_at is NOW
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https:///example.test/filing",
+        "https:////example.test/filing",
+    ],
+)
+def test_source_url_rejects_malformed_authority(url: str) -> None:
+    with pytest.raises(ValidationError):
+        source(source_url=url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.test/%",
+        "https://example.test/%GG",
+    ],
+)
+def test_source_url_rejects_malformed_percent_syntax(url: str) -> None:
+    with pytest.raises(ValidationError):
+        source(source_url=url)
+
+
 @pytest.mark.parametrize("character", ["\u200b", "\u202e", "\x7f", "\u2066"])
 @pytest.mark.parametrize("suffix", ["/filing{}", "/filing?q={}", "/filing#{}"])
 def test_source_url_rejects_unicode_control_and_format_characters(
