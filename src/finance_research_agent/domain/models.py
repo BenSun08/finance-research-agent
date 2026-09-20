@@ -80,14 +80,15 @@ def _source_url(value: str) -> str:
     path = authority_and_path.replace("\\", "/").partition("/")[2]
     while True:
         decoded = re.sub(
-            r"%(?:25|2e|2f|5c)",
+            r"%[0-9A-Fa-f]{2}",
             lambda match: chr(int(match[0][1:], 16)),
             path,
-            flags=re.IGNORECASE,
         )
         if decoded == path:
             break
-        path = decoded  # Each replacement shortens the bounded input.
+        # Each replacement shortens the bounded input, so nested percent
+        # encodings terminate within the 2,048-character source URL limit.
+        path = decoded
     if any(segment in {".", ".."} for segment in path.replace("\\", "/").split("/")):
         raise ValueError("source_url must not contain traversal path segments")
     return value

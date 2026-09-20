@@ -277,6 +277,9 @@ def test_source_url_rejects_unicode_control_and_format_characters(
         r"section\..\filing",
         "section/%252e%252e/filing",
         "section/%252E%252e%252Ffiling",
+        "a/%25%32%65%25%32%65/filing",
+        "a%25%32%66..%25%32%66filing",
+        "a%25%35%63..%25%35%63filing",
     ],
 )
 def test_source_url_rejects_literal_and_percent_encoded_dot_segments(path: str) -> None:
@@ -290,6 +293,7 @@ def test_source_url_rejects_literal_and_percent_encoded_dot_segments(path: str) 
         "https://reports.example.test/v1.2/company.name/filing.html"
         "?period=2026.09&redirect=../archive#section.1",
         "https://example.test/v1%2E2/company%2ename/filing.json?q=./notes",
+        "https://example.test/%66iling%20name/%2541/report%2Ejson?redirect=%2e%2e%2farchive",
     ],
 )
 def test_source_url_preserves_ordinary_dots_paths_and_query_text(url: str) -> None:
