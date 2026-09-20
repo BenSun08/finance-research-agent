@@ -1,14 +1,15 @@
 """Strict serialized results for deterministic indicator calculations."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BeforeValidator, ConfigDict, PlainSerializer
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, PlainSerializer
 from pydantic.dataclasses import dataclass
 
-from finance_research_agent.domain.types import decimal_json
+from finance_research_agent.domain.models import Identifier
+from finance_research_agent.domain.types import UtcDatetime, decimal_json
 
 
 class MetricName(StrEnum):
@@ -69,11 +70,43 @@ def _immutable_tuple(value: Any) -> Any:
     return value
 
 
+def _unique[T](values: tuple[T, ...]) -> tuple[T, ...]:
+    if len(set(values)) != len(values):
+        raise ValueError("metric input evidence IDs must be unique")
+    return values
+
+
+MetricParameterValue = Annotated[str, Field(min_length=1, max_length=256)]
+MetricParameter = tuple[Identifier, MetricParameterValue]
 MetricParameters = Annotated[
-    tuple[tuple[str, str], ...],
+    tuple[MetricParameter, ...],
     BeforeValidator(_immutable_tuple),
+    Field(max_length=64, json_schema_extra={"maxItems": 64}),
 ]
-MetricIds = Annotated[tuple[str, ...], BeforeValidator(_immutable_tuple)]
+MetricSnapshotIds = Annotated[
+    tuple[Identifier, ...],
+    BeforeValidator(_immutable_tuple),
+    Field(
+        max_length=256,
+        json_schema_extra={"maxItems": 256, "uniqueItems": True},
+    ),
+    AfterValidator(_unique),
+]
+MetricEvidenceIds = Annotated[
+    tuple[Identifier, ...],
+    BeforeValidator(_immutable_tuple),
+    Field(
+        max_length=256,
+        json_schema_extra={"maxItems": 256, "uniqueItems": True},
+    ),
+    AfterValidator(_unique),
+]
+MetricQualityFlags = Annotated[
+    tuple[Identifier, ...],
+    BeforeValidator(_immutable_tuple),
+    Field(max_length=64, json_schema_extra={"maxItems": 64, "uniqueItems": True}),
+    AfterValidator(_unique),
+]
 
 
 @dataclass(
@@ -100,11 +133,11 @@ class MetricResult:
     period_start: date | None
     period_end: date | None
     formula_version: str
-    input_snapshot_ids: MetricIds
-    calculated_at: datetime
+    input_snapshot_ids: MetricSnapshotIds
+    calculated_at: UtcDatetime
     unavailable_reason: MetricUnavailableReason | None
-    quality_flags: MetricIds
-    input_evidence_ids: MetricIds
+    quality_flags: MetricQualityFlags
+    input_evidence_ids: MetricEvidenceIds
     schema_version: Literal["0.1"] = "0.1"
 
     def __post_init__(self) -> None:

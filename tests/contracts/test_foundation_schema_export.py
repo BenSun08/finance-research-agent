@@ -86,7 +86,38 @@ def test_schema_preserves_wire_decimal_and_provenance_constraints(tmp_path: Path
     assert evidence_schema["properties"]["source"] == {"$ref": "#/$defs/SourceObservation"}
     metric_schema = json.loads((tmp_path / "metric-result.schema.json").read_bytes())
     assert metric_schema["properties"]["value"]["anyOf"][0]["type"] == "string"
-    assert metric_schema["properties"]["input_evidence_ids"]["type"] == "array"
+    metric_properties = metric_schema["properties"]
+    identifier_pattern = r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    for field, max_items in (
+        ("input_snapshot_ids", 256),
+        ("input_evidence_ids", 256),
+        ("quality_flags", 64),
+    ):
+        assert metric_properties[field]["type"] == "array"
+        assert metric_properties[field]["maxItems"] == max_items
+        assert metric_properties[field]["uniqueItems"] is True
+        assert metric_properties[field]["items"] == {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": identifier_pattern,
+            "type": "string",
+        }
+    parameters = metric_properties["parameters"]
+    assert parameters["maxItems"] == 64
+    assert parameters["items"]["minItems"] == parameters["items"]["maxItems"] == 2
+    assert parameters["items"]["prefixItems"][0] == {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": identifier_pattern,
+        "type": "string",
+    }
+    assert parameters["items"]["prefixItems"][1] == {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string",
+    }
+    assert metric_properties["calculated_at"]["format"] == "date-time"
+    assert metric_properties["calculated_at"]["pattern"] == r"(?:Z|\+00:00)$"
     assert "input_evidence_ids" in metric_schema["required"]
     market_schema = json.loads((tmp_path / "market-snapshot.schema.json").read_bytes())
     assert market_schema["properties"]["completed_daily_bars"]["type"] == "array"

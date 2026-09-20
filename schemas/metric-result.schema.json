@@ -62,6 +62,7 @@
   "properties": {
     "calculated_at": {
       "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
       "title": "Calculated At",
       "type": "string"
     },
@@ -74,17 +75,29 @@
     },
     "input_evidence_ids": {
       "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
         "type": "string"
       },
+      "maxItems": 256,
+      "maxLength": 256,
       "title": "Input Evidence Ids",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     },
     "input_snapshot_ids": {
       "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
         "type": "string"
       },
+      "maxItems": 256,
+      "maxLength": 256,
       "title": "Input Snapshot Ids",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     },
     "metric_id": {
       "title": "Metric Id",
@@ -99,14 +112,21 @@
         "minItems": 2,
         "prefixItems": [
           {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
             "type": "string"
           },
           {
+            "maxLength": 256,
+            "minLength": 1,
             "type": "string"
           }
         ],
         "type": "array"
       },
+      "maxItems": 64,
+      "maxLength": 64,
       "title": "Parameters",
       "type": "array"
     },
@@ -136,10 +156,16 @@
     },
     "quality_flags": {
       "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
         "type": "string"
       },
+      "maxItems": 64,
+      "maxLength": 64,
       "title": "Quality Flags",
-      "type": "array"
+      "type": "array",
+      "uniqueItems": true
     },
     "schema_version": {
       "const": "0.1",
