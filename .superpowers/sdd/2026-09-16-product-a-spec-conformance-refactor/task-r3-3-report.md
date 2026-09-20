@@ -17,7 +17,7 @@ place.
 
 The commit is recorded after this report is staged:
 
-`PENDING_COMMIT_SHA`
+`673c65e` — focused implementation commit for R3 Task 3.
 
 ## Changed files
 
