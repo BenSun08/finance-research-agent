@@ -84,3 +84,30 @@ def test_session_values_are_converted_to_timezone_aware_utc() -> None:
     assert closed == datetime(2026, 3, 9, 20, 0, tzinfo=UTC)
     assert opened.tzinfo is UTC
     assert closed.tzinfo is UTC
+
+
+def test_session_values_reject_naive_provider_timestamps() -> None:
+    class ProviderTimestamp:
+        def __init__(self, value: datetime) -> None:
+            self.value = value
+
+        def to_pydatetime(self) -> datetime:
+            return self.value
+
+    class Schedule:
+        loc = {
+            "2026-03-09": {
+                "open": ProviderTimestamp(datetime(2026, 3, 9, 9, 30)),
+                "close": ProviderTimestamp(
+                    datetime(2026, 3, 9, 16, 0, tzinfo=ZoneInfo("America/New_York"))
+                ),
+            }
+        }
+
+    adapter = object.__new__(ExchangeCalendarAdapter)
+    adapter._calendar = SimpleNamespace(schedule=Schedule())
+
+    with pytest.raises(RuntimeError) as caught:
+        adapter.session_open_close(date(2026, 3, 9))
+
+    assert str(caught.value) == PUBLIC_ERROR

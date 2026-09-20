@@ -23,6 +23,7 @@ from pydantic import (
 )
 
 from finance_research_agent.domain.regime import Regime, RegimePolicy
+from finance_research_agent.domain.types import FrozenMap
 
 _ASCII_TICKER = re.compile(r"^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$")
 _SLUG = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
@@ -168,7 +169,7 @@ class WatchlistItem(PolicyModel):
                 raise ValueError("official sources must be safe HTTPS URLs")
             authority_and_path = source.removeprefix("https://").split("?", 1)[0]
             path = authority_and_path.partition("/")[2].replace("\\", "/")
-            for _ in range(4):
+            while True:
                 decoded = _percent_decode(path).replace("\\", "/")
                 if decoded == path:
                     break
@@ -211,7 +212,7 @@ class RiskPolicy(PolicyModel):
     max_concurrent_plan_drafts: int = Field(default=5, ge=0, le=5)
     allow_fractional_units: bool = False
     quantity_increment: Decimal
-    regime_risk_multipliers: dict[str, Decimal]
+    regime_risk_multipliers: FrozenMap[str, Decimal]
 
     @field_validator("version")
     @classmethod
@@ -325,17 +326,17 @@ class SourcePolicy(PolicyModel):
     version: str
     allowed_adapters: tuple[str, ...]
     allowed_https_domains: tuple[str, ...]
-    freshness_by_data_type: dict[str, int]
+    freshness_by_data_type: FrozenMap[str, int]
     cache_retention_seconds: int = Field(ge=0)
     request_deadline_seconds: Decimal
     retry_attempts: int = Field(ge=0)
     retry_backoff_seconds: Decimal
     retry_jitter_seconds: Decimal
-    per_run_request_budgets: dict[str, int]
+    per_run_request_budgets: FrozenMap[str, int]
     allow_redirects: bool = False
     maximum_response_bytes: int = Field(ge=1)
     allowed_content_types: tuple[str, ...]
-    excerpt_limits: dict[str, int]
+    excerpt_limits: FrozenMap[str, int]
     licensed_content_persistence: Literal["NONE", "METADATA_ONLY", "ALLOWED"] = "NONE"
 
     @field_validator("version")
@@ -386,7 +387,7 @@ class SourcePolicy(PolicyModel):
 
     @field_validator("freshness_by_data_type", "per_run_request_budgets", "excerpt_limits")
     @classmethod
-    def valid_non_negative_maps(cls, value: dict[str, int]) -> dict[str, int]:
+    def valid_non_negative_maps(cls, value: FrozenMap[str, int]) -> FrozenMap[str, int]:
         if not 1 <= len(value) <= 64:
             raise ValueError("source policy maps must be bounded and non-empty")
         if any(

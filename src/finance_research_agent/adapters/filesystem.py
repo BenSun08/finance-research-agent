@@ -39,6 +39,7 @@ from finance_research_agent.domain.types import FrozenMap, canonical_bytes, utc_
 _RUN_ID = re.compile(r"^premarket-(\d{4}-\d{2}-\d{2})-r([1-9]\d*)$")
 _LEASE_DURATION = timedelta(minutes=15)
 _LEASE_PROCESS_LOCK = RLock()
+_RUN_PROCESS_LOCK = RLock()
 
 
 class PathNotAllowedError(ValueError):
@@ -120,11 +121,27 @@ class FileSystemRunRepository:
             "runs", f"{market_date.year:04d}", market_date.isoformat(), ".lease.lock"
         )
 
+    def _run_lock_path(self, market_date: date) -> Path:
+        return self._safe_path(
+            "runs", f"{market_date.year:04d}", market_date.isoformat(), ".run.lock"
+        )
+
     @contextmanager
     def _lease_lock(self, market_date: date) -> Iterator[None]:
         lock_path = self._lease_lock_path(market_date)
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with _LEASE_PROCESS_LOCK, lock_path.open("a+b") as handle:
+            flock(handle.fileno(), LOCK_EX)
+            try:
+                yield
+            finally:
+                flock(handle.fileno(), LOCK_UN)
+
+    @contextmanager
+    def _run_lock(self, market_date: date) -> Iterator[None]:
+        lock_path = self._run_lock_path(market_date)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with _RUN_PROCESS_LOCK, lock_path.open("a+b") as handle:
             flock(handle.fileno(), LOCK_EX)
             try:
                 yield
@@ -253,23 +270,28 @@ class FileSystemRunRepository:
         now = self._require_utc(now)
         if not isinstance(invocation, InvocationType):
             raise ValueError("invocation must be a declared InvocationType")
-        existing = self._existing_revision_ids(market_date)
-        if invocation is InvocationType.SCHEDULED:
-            revision = 1
-            run_id = format_run_id(market_date, revision)
-            if run_id in existing:
-                loaded = self.load(run_id)
-                if loaded is not None:
-                    return loaded.run
-        else:
-            revision = max(
-                (self._validated_run_id(run_id)[1] for run_id in existing), default=0
-            ) + 1
-        context = self._default_context(market_date, revision, now)
-        self.create(context)
-        return context
+        with self._run_lock(market_date):
+            existing = self._existing_revision_ids(market_date)
+            if invocation is InvocationType.SCHEDULED:
+                revision = 1
+                run_id = format_run_id(market_date, revision)
+                if run_id in existing:
+                    loaded = self.load(run_id)
+                    if loaded is not None:
+                        return loaded.run
+            else:
+                revision = max(
+                    (self._validated_run_id(run_id)[1] for run_id in existing), default=0
+                ) + 1
+            context = self._default_context(market_date, revision, now)
+            self._create_unlocked(context)
+            return context
 
     def create(self, context: RunContext) -> None:
+        with self._run_lock(context.market_date):
+            self._create_unlocked(context)
+
+    def _create_unlocked(self, context: RunContext) -> None:
         staging, final, _ = self._paths(context.run_id)
         if final.exists():
             raise PublicationError("immutable run revision is already published")
@@ -325,6 +347,11 @@ class FileSystemRunRepository:
         return None
 
     def checkpoint(self, run_id: str, checkpoint: RunCheckpoint) -> None:
+        market_date, _ = self._validated_run_id(run_id)
+        with self._run_lock(market_date):
+            self._checkpoint_unlocked(run_id, checkpoint)
+
+    def _checkpoint_unlocked(self, run_id: str, checkpoint: RunCheckpoint) -> None:
         staging, _, _ = self._paths(run_id)
         if checkpoint.run_id != run_id:
             raise ValueError("checkpoint run_id must match the stored run")
@@ -428,22 +455,23 @@ class FileSystemRunRepository:
     def heartbeat(self, lease: RunLease, now: datetime) -> RunLease:
         now = self._require_utc(now)
         _, _, lease_path = self._paths(format_run_id(lease.key.market_date, 1))
-        if not lease_path.is_file():
-            raise LeaseHeldError("run lease is not present")
-        current = RunLease.model_validate_json(lease_path.read_bytes())
-        if current.token != lease.token or current.expires_at <= now:
-            raise LeaseHeldError("run lease is no longer owned")
-        renewed = RunLease(
-            key=current.key,
-            token=current.token,
-            acquired_at=current.acquired_at,
-            heartbeat_at=now,
-            expires_at=now + current.duration,
-            process_id=current.process_id,
-            host=current.host,
-        )
-        self._atomic_write(lease_path, canonical_bytes(renewed))
-        return renewed
+        with self._lease_lock(lease.key.market_date):
+            if not lease_path.is_file():
+                raise LeaseHeldError("run lease is not present")
+            current = RunLease.model_validate_json(lease_path.read_bytes())
+            if current.token != lease.token or current.expires_at <= now:
+                raise LeaseHeldError("run lease is no longer owned")
+            renewed = RunLease(
+                key=current.key,
+                token=current.token,
+                acquired_at=current.acquired_at,
+                heartbeat_at=now,
+                expires_at=now + current.duration,
+                process_id=current.process_id,
+                host=current.host,
+            )
+            self._atomic_write(lease_path, canonical_bytes(renewed))
+            return renewed
 
     def _publication_paths(self, run_id: str) -> tuple[Path, Path, Path, Path]:
         staging, final, _ = self._paths(run_id)

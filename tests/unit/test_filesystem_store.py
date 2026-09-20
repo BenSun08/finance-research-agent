@@ -2,7 +2,7 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event, Thread
 
 import pytest
 
@@ -16,6 +16,7 @@ from finance_research_agent.domain.enums import (
     DataQualityStatus,
     DeliveryStatus,
     ExecutionStatus,
+    InvocationType,
     RunType,
 )
 from finance_research_agent.domain.models import (
@@ -25,6 +26,7 @@ from finance_research_agent.domain.models import (
     RunCheckpoint,
     RunContext,
     RunKey,
+    RunLease,
 )
 from finance_research_agent.domain.types import FrozenMap
 
@@ -123,6 +125,171 @@ def test_concurrent_live_lease_claim_has_exactly_one_winner(
         outcomes = tuple(executor.map(attempt, (repository, contender)))
 
     assert sorted(outcomes) == ["acquired", "held"]
+
+
+def test_stale_heartbeat_cannot_resurrect_replaced_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    key = RunKey(run_type=RunType.PREMARKET, market_date=date(2026, 8, 19))
+    original = repository.acquire_lease(key, NOW)
+    lease_path = tmp_path / "runs/2026/2026-08-19/.lease.json"
+    heartbeat_write_started = Event()
+    release_heartbeat_write = Event()
+    original_atomic_write = repository._atomic_write
+
+    def gated_atomic_write(target: Path, payload: bytes) -> None:
+        candidate = RunLease.model_validate_json(payload)
+        if target == lease_path and candidate.token == original.token:
+            heartbeat_write_started.set()
+            assert release_heartbeat_write.wait(2)
+        original_atomic_write(target, payload)
+
+    monkeypatch.setattr(repository, "_atomic_write", gated_atomic_write)
+
+    heartbeat_error: list[BaseException] = []
+
+    def heartbeat() -> None:
+        try:
+            repository.heartbeat(original, NOW + timedelta(seconds=1))
+        except BaseException as error:  # pragma: no cover - assertion below reports it
+            heartbeat_error.append(error)
+
+    heartbeat_thread = Thread(target=heartbeat)
+    heartbeat_thread.start()
+    assert heartbeat_write_started.wait(2)
+
+    replacement: list[RunLease] = []
+    replacement_done = Event()
+
+    def replace() -> None:
+        replacement.append(
+            repository.acquire_lease(key, original.expires_at + timedelta(seconds=1))
+        )
+        replacement_done.set()
+
+    replacement_thread = Thread(target=replace)
+    replacement_thread.start()
+    assert not replacement_done.wait(0.5)
+
+    release_heartbeat_write.set()
+    heartbeat_thread.join(2)
+    replacement_thread.join(2)
+
+    assert not heartbeat_error
+    assert len(replacement) == 1
+    current = RunLease.model_validate_json(lease_path.read_bytes())
+    assert current.token == replacement[0].token
+    assert current.token != original.token
+
+
+def test_concurrent_manual_revision_allocations_are_unique(tmp_path: Path) -> None:
+    repositories = tuple(FileSystemRunRepository(tmp_path) for _ in range(4))
+    market_date = date(2026, 8, 19)
+
+    def allocate(repository: FileSystemRunRepository) -> str:
+        return repository.allocate_revision(market_date, InvocationType.MANUAL, NOW).run_id
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        run_ids = tuple(executor.map(allocate, repositories))
+
+    assert sorted(run_ids) == [
+        "premarket-2026-08-19-r1",
+        "premarket-2026-08-19-r2",
+        "premarket-2026-08-19-r3",
+        "premarket-2026-08-19-r4",
+    ]
+
+
+def test_concurrent_create_cannot_overwrite_an_immutable_revision(tmp_path: Path) -> None:
+    repositories = tuple(FileSystemRunRepository(tmp_path) for _ in range(2))
+    first = _context()
+    second = first.model_copy(update={"execution_status": ExecutionStatus.COLLECTING})
+
+    def create(args: tuple[FileSystemRunRepository, RunContext]) -> str:
+        repository, context = args
+        try:
+            repository.create(context)
+        except PublicationError:
+            return "rejected"
+        return "created"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(create, zip(repositories, (first, second))))
+
+    assert sorted(outcomes) == ["created", "rejected"]
+    stored = repositories[0].load(first.run_id)
+    assert stored is not None
+    assert stored.run.execution_status in {
+        first.execution_status,
+        second.execution_status,
+    }
+
+
+def test_concurrent_checkpoints_preserve_append_only_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    checkpoints = (
+        RunCheckpoint(
+            run_id=context.run_id,
+            stage="COLLECTING",
+            execution_status=ExecutionStatus.COLLECTING,
+            written_at=NOW,
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({"config": "c" * 64}),
+            resumable=True,
+        ),
+        RunCheckpoint(
+            run_id=context.run_id,
+            stage="ANALYZING",
+            execution_status=ExecutionStatus.ANALYZING,
+            written_at=NOW + timedelta(seconds=1),
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({"config": "d" * 64}),
+            resumable=True,
+        ),
+    )
+
+    first_write_started = Event()
+    second_write_started = Event()
+    release_first_write = Event()
+    write_count = 0
+    original_atomic_write = repository._atomic_write
+
+    def gated_atomic_write(target: Path, payload: bytes) -> None:
+        nonlocal write_count
+        if target.parent.name == "checkpoints":
+            write_count += 1
+            if write_count == 1:
+                first_write_started.set()
+                assert release_first_write.wait(2)
+            else:
+                second_write_started.set()
+        original_atomic_write(target, payload)
+
+    monkeypatch.setattr(repository, "_atomic_write", gated_atomic_write)
+
+    def write(checkpoint: RunCheckpoint) -> None:
+        repository.checkpoint(context.run_id, checkpoint)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(executor.submit(write, checkpoint) for checkpoint in checkpoints)
+        assert first_write_started.wait(2)
+        reached_second_write = second_write_started.wait(0.5)
+        release_first_write.set()
+        assert not reached_second_write
+        tuple(future.result() for future in futures)
+
+    stored = repository.load(context.run_id)
+    assert stored is not None
+    assert {checkpoint.stage for checkpoint in stored.checkpoints} == {
+        "COLLECTING",
+        "ANALYZING",
+    }
+    assert len(futures) == 2
 
 
 def test_checkpoint_and_cutoff_are_persisted_and_cutoff_is_immutable(tmp_path: Path) -> None:

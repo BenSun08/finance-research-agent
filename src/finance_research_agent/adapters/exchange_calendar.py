@@ -5,6 +5,12 @@ from datetime import UTC, date, datetime
 from finance_research_agent.domain.errors import ErrorCode
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("provider timestamp must be timezone-aware")
+    return value.astimezone(UTC)
+
+
 class ExchangeCalendarAdapter:
     """Expose XNYS sessions through the provider-neutral calendar protocol."""
 
@@ -30,8 +36,8 @@ class ExchangeCalendarAdapter:
         try:
             session = self._calendar.schedule.loc[market_date.isoformat()]
             return (
-                session["open"].to_pydatetime().astimezone(UTC),
-                session["close"].to_pydatetime().astimezone(UTC),
+                _as_utc(session["open"].to_pydatetime()),
+                _as_utc(session["close"].to_pydatetime()),
             )
         except Exception as error:
             raise RuntimeError(

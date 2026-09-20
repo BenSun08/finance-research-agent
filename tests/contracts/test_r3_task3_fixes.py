@@ -120,6 +120,28 @@ def test_snapshot_nested_policy_values_are_immutable() -> None:
         snapshot.policies["risk"]["sizing_enabled"] = True  # type: ignore[index]
 
 
+def test_policy_maps_are_deeply_immutable_without_changing_json_serialization() -> None:
+    configuration = load_configuration(EXAMPLES)
+    risk = configuration.risk
+    source = configuration.source
+    risk_hash = canonical_model_hash(risk)
+    source_hash = canonical_model_hash(source)
+
+    with pytest.raises(TypeError):
+        risk.regime_risk_multipliers["PERMISSIVE"] = 0  # type: ignore[index]
+    with pytest.raises(TypeError):
+        source.freshness_by_data_type["market_daily_bars"] = 0  # type: ignore[index]
+    with pytest.raises(TypeError):
+        source.per_run_request_budgets["official_sources"] = 0  # type: ignore[index]
+    with pytest.raises(TypeError):
+        source.excerpt_limits["official_sources"] = 0  # type: ignore[index]
+
+    assert canonical_model_hash(risk) == risk_hash
+    assert canonical_model_hash(source) == source_hash
+    assert isinstance(risk.model_dump(mode="json")["regime_risk_multipliers"], dict)
+    assert isinstance(source.model_dump(mode="json")["freshness_by_data_type"], dict)
+
+
 def test_configuration_rejects_unknown_fields_duplicate_symbols_and_caller_paths(
     tmp_path: Path,
 ) -> None:
@@ -169,6 +191,7 @@ def test_stored_prose_requires_printable_english(value: str) -> None:
         "https://example.test:bad/ir",
         "https://example.test/%2e%2e/private",
         "https://example.test/%252e%252e/private",
+        "https://example.test/%252525252e%252525252e/private",
         "https://example.test/%5c..%5cprivate",
         "https://example.test/ir\u200b",
     ],
