@@ -1,6 +1,8 @@
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -101,6 +103,28 @@ def test_lease_uses_expiry_and_heartbeat_not_file_existence(tmp_path: Path) -> N
     assert len(tuple((tmp_path / "diagnostics").rglob("*.json"))) >= 1
 
 
+def test_concurrent_live_lease_claim_has_exactly_one_winner(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    contender = FileSystemRunRepository(tmp_path)
+    key = RunKey(run_type=RunType.PREMARKET, market_date=date(2026, 8, 19))
+    both_callers_ready = Barrier(2)
+
+    def attempt(repository_instance: FileSystemRunRepository) -> str:
+        both_callers_ready.wait()
+        try:
+            repository_instance.acquire_lease(key, NOW)
+        except LeaseHeldError:
+            return "held"
+        return "acquired"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(attempt, (repository, contender)))
+
+    assert sorted(outcomes) == ["acquired", "held"]
+
+
 def test_checkpoint_and_cutoff_are_persisted_and_cutoff_is_immutable(tmp_path: Path) -> None:
     repository = FileSystemRunRepository(tmp_path)
     context = _context()
@@ -125,6 +149,60 @@ def test_checkpoint_and_cutoff_are_persisted_and_cutoff_is_immutable(tmp_path: P
         repository.freeze_evidence(context.run_id, NOW + timedelta(minutes=14))
 
 
+def test_post_cutoff_collection_resume_is_rejected_but_packet_hash_checkpoint_is_allowed(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    cutoff = NOW + timedelta(minutes=13)
+    repository.freeze_evidence(context.run_id, cutoff)
+
+    with pytest.raises(ValueError, match="new revision"):
+        repository.checkpoint(
+            context.run_id,
+            RunCheckpoint(
+                run_id=context.run_id,
+                stage="COLLECTING",
+                execution_status=ExecutionStatus.COLLECTING,
+                written_at=cutoff + timedelta(seconds=1),
+                evidence_cutoff_at=cutoff,
+                artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
+                resumable=True,
+            ),
+        )
+
+    repository.checkpoint(
+        context.run_id,
+        RunCheckpoint(
+            run_id=context.run_id,
+            stage="VALIDATING",
+            execution_status=ExecutionStatus.VALIDATING,
+            written_at=cutoff + timedelta(seconds=2),
+            evidence_cutoff_at=cutoff,
+            artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
+            resumable=True,
+        ),
+    )
+    stored = repository.load(context.run_id)
+    assert stored is not None
+    assert stored.checkpoints[-1].stage == "VALIDATING"
+
+    with pytest.raises(ValueError, match="new revision"):
+        repository.checkpoint(
+            context.run_id,
+            RunCheckpoint(
+                run_id=context.run_id,
+                stage="ANALYZING",
+                execution_status=ExecutionStatus.ANALYZING,
+                written_at=cutoff + timedelta(seconds=3),
+                evidence_cutoff_at=cutoff,
+                artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
+                resumable=True,
+            ),
+        )
+
+
 def test_publication_failure_keeps_staging_and_does_not_update_latest(tmp_path: Path) -> None:
     repository = FileSystemRunRepository(tmp_path)
     context = _context()
@@ -137,6 +215,21 @@ def test_publication_failure_keeps_staging_and_does_not_update_latest(tmp_path: 
     assert repository.get_latest(context.market_date) is None
     assert repository.diagnostic_staging_exists(context.run_id)
     assert (tmp_path / "runs/2026/2026-08-19/premarket-2026-08-19-r1").exists() is False
+
+
+def test_publication_rejects_same_id_bundle_with_different_complete_context(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    different_context = context.model_copy(update={"delivery_status": DeliveryStatus.DELAYED})
+
+    with pytest.raises(PublicationError, match="RunContext"):
+        repository.publish_atomically(_bundle(different_context))
+
+    assert repository.get_latest(context.market_date) is None
+    assert repository.diagnostic_staging_exists(context.run_id)
 
 
 def test_publication_hashes_and_visibility_are_atomic(tmp_path: Path) -> None:
@@ -177,6 +270,52 @@ def test_publication_rejects_report_hash_mismatch_without_exposing_output(tmp_pa
     assert repository.get_latest(context.market_date) is None
     assert repository.get_report(context.run_id) is None
     assert repository.diagnostic_staging_exists(context.run_id)
+
+
+def test_publication_requires_declared_markdown_hash(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    bundle = PublishedRunBundle(
+        run=context,
+        bundle=FrozenMap({"kind": "minimal-frozen-run"}),
+        report_markdown="# missing hash\n",
+    )
+
+    with pytest.raises(PublicationError, match="declared markdown SHA-256"):
+        repository.publish_atomically(bundle)
+
+    assert repository.get_latest(context.market_date) is None
+    assert repository.diagnostic_staging_exists(context.run_id)
+
+
+def test_index_failure_quarantines_complete_final_as_unindexed_orphan(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    repository.inject_failure_during_index_update = True
+
+    with pytest.raises(PublicationError, match="quarantined"):
+        repository.publish_atomically(_bundle(context))
+
+    assert repository.get_latest(context.market_date) is None
+    assert repository.get_report(context.run_id) is None
+    assert repository.load(context.run_id) is None
+    assert repository.load_published_bundle(context.run_id) is None
+    assert repository.diagnostic_orphan_exists(context.run_id)
+
+
+def test_unindexed_final_run_is_not_exposed_by_load_or_bundle_lookup(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    repository.publish_atomically(_bundle(context))
+
+    index = tmp_path / "reports/2026/2026-08-19/index.json"
+    index.unlink()
+
+    assert repository.load(context.run_id) is None
+    assert repository.load_published_bundle(context.run_id) is None
 
 
 def test_latest_remains_highest_published_revision_when_publication_order_differs(
@@ -232,6 +371,71 @@ def test_symlinked_storage_parent_cannot_escape_data_root(tmp_path: Path) -> Non
         repository.create(_context())
 
     assert sentinel.read_text(encoding="utf-8") == "unchanged"
+
+
+@pytest.mark.parametrize("read_target", ["run", "checkpoints", "frozen", "report", "bundle"])
+def test_read_paths_reject_symlinked_files_and_nested_directories(
+    tmp_path: Path, read_target: str
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "sentinel.txt").write_text("unchanged", encoding="utf-8")
+    repository = FileSystemRunRepository(tmp_path / "data")
+    context = _context()
+    repository.create(context)
+    staging = tmp_path / "data/runs/2026/2026-08-19/.staging/premarket-2026-08-19-r1"
+
+    if read_target == "run":
+        (staging / "run.json").unlink()
+        (staging / "run.json").symlink_to(outside / "sentinel.txt")
+        with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+            repository.load(context.run_id)
+    elif read_target == "checkpoints":
+        checkpoints = staging / "checkpoints"
+        checkpoints.mkdir()
+        (checkpoints / "0001-COLLECTING.json").symlink_to(outside / "sentinel.txt")
+        with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+            repository.load(context.run_id)
+    elif read_target == "frozen":
+        repository.freeze_evidence(context.run_id, NOW + timedelta(minutes=13))
+        (staging / "frozen-evidence.json").unlink()
+        (staging / "frozen-evidence.json").symlink_to(outside / "sentinel.txt")
+        with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+            repository.load(context.run_id)
+    else:
+        repository.publish_atomically(_bundle(context))
+        final = tmp_path / "data/runs/2026/2026-08-19/premarket-2026-08-19-r1"
+        if read_target == "report":
+            filename = "report.md"
+            (final / filename).unlink()
+            (final / filename).symlink_to(outside / "sentinel.txt")
+        else:
+            filename = "bundle.json"
+            (final / filename).unlink()
+            (final / filename).symlink_to(outside / "sentinel.txt")
+        with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+            if read_target == "report":
+                repository.get_report(context.run_id)
+            else:
+                repository.load_published_bundle(context.run_id)
+
+    assert (outside / "sentinel.txt").read_text(encoding="utf-8") == "unchanged"
+
+
+def test_report_index_symlink_cannot_escape_data_root(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "index.json").write_text("{}", encoding="utf-8")
+    repository = FileSystemRunRepository(tmp_path / "data")
+    context = _context()
+    repository.create(context)
+    repository.publish_atomically(_bundle(context))
+    index = tmp_path / "data/reports/2026/2026-08-19/index.json"
+    index.unlink()
+    index.symlink_to(outside / "index.json")
+
+    with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+        repository.get_report(context.run_id)
 
 
 def test_storage_layout_has_only_the_allowlisted_top_level_directories(tmp_path: Path) -> None:
