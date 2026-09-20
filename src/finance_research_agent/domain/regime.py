@@ -112,6 +112,12 @@ class RegimePolicy:
         (RegimeComponent.VOLATILITY_STRESS, Decimal("15")),
         (RegimeComponent.CREDIT_CROSS_ASSET, Decimal("10")),
     )
+    dia_symbol: str = "DIA"
+    treasury_symbol: str | None = "TLT"
+    dollar_symbol: str | None = "UUP"
+    gold_symbol: str | None = "GLD"
+    oil_symbol: str | None = "USO"
+    volatility_symbol: str | None = "VIX"
 
     def __post_init__(self) -> None:
         if not self.version:
@@ -148,6 +154,14 @@ class RegimePolicy:
             self.credit_asset_symbol,
             self.credit_benchmark_symbol,
             *self.sector_symbols,
+            self.dia_symbol,
+            *(symbol for symbol in (
+                self.treasury_symbol,
+                self.dollar_symbol,
+                self.gold_symbol,
+                self.oil_symbol,
+                self.volatility_symbol,
+            ) if symbol is not None),
         )
         if any(
             not isinstance(symbol, str)
@@ -243,6 +257,26 @@ class RegimePolicy:
                     *self.sector_symbols,
                     *self.cyclical_symbols,
                     *self.defensive_symbols,
+                }
+            )
+        )
+
+    @property
+    def radar_universe(self) -> tuple[str, ...]:
+        """Return the full configurable radar without changing calculation inputs."""
+
+        return tuple(
+            sorted(
+                {
+                    *self.required_symbols,
+                    self.dia_symbol,
+                    *(symbol for symbol in (
+                        self.treasury_symbol,
+                        self.dollar_symbol,
+                        self.gold_symbol,
+                        self.oil_symbol,
+                        self.volatility_symbol,
+                    ) if symbol is not None),
                 }
             )
         )

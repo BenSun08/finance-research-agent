@@ -39,7 +39,7 @@ def test_all_shipped_policy_examples_load_with_stable_hashes() -> None:
     first = load_configuration(EXAMPLES)
     second = load_configuration(EXAMPLES)
 
-    assert set(configuration_hashes(first)) == {"watchlist", "risk", "setup", "source"}
+    assert set(configuration_hashes(first)) == {"watchlist", "risk", "regime", "setup", "source"}
     assert configuration_hashes(first) == configuration_hashes(second)
     assert first.risk.sizing_enabled is False
     assert first.risk.planning_capital_usd is None

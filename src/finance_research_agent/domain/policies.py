@@ -17,6 +17,7 @@ from pydantic import (
     Field,
     HttpUrl,
     TypeAdapter,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -27,16 +28,43 @@ _ASCII_TICKER = re.compile(r"^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$")
 _SLUG = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
 _VERSION = re.compile(r"^[1-9][0-9]*$")
 _PRINTABLE = set(chr(i) for i in range(32, 127))
+_DOMAIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
+_ADAPTER = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
+_SOURCE_MAP_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$")
 _HTTPS_URL_ADAPTER = TypeAdapter(HttpUrl)
+
+
+def _percent_decode(value: str) -> str:
+    return re.sub(
+        r"%([0-9A-Fa-f]{2})",
+        lambda match: chr(int(match.group(1), 16)),
+        value,
+    )
 
 
 class PolicyModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True, validate_default=True)
 
+    @model_validator(mode="before")
+    @classmethod
+    def copy_collection_inputs(cls, value: object) -> object:
+        """Copy YAML-style arrays into immutable tuple inputs without reordering."""
 
-def _english(value: str, field: str) -> str:
+        def copy(item: object) -> object:
+            if isinstance(item, list):
+                return tuple(copy(child) for child in item)
+            if isinstance(item, dict):
+                return {key: copy(child) for key, child in item.items()}
+            return item
+
+        return copy(value)
+
+
+def _english(value: str, field: str, *, max_length: int = 1000) -> str:
     if type(value) is not str or not value.strip():
         raise ValueError(f"{field} must not be blank")
+    if len(value) > max_length:
+        raise ValueError(f"{field} exceeds the maximum length of {max_length}")
     if any(character not in _PRINTABLE for character in value):
         raise ValueError(f"English normalization required for {field}")
     if any(unicodedata.category(character) in {"Cf", "Cc"} for character in value):
@@ -58,9 +86,20 @@ def _decimal(value: object, field: str, *, positive: bool = False) -> Decimal:
 
 
 def _ticker(value: str, field: str = "symbol") -> str:
-    if type(value) is not str or not value.isascii() or _ASCII_TICKER.fullmatch(value) is None:
+    if (
+        type(value) is not str
+        or len(value) > 16
+        or not value.isascii()
+        or _ASCII_TICKER.fullmatch(value) is None
+    ):
         raise ValueError(f"{field} must be uppercase ASCII ticker text")
     return value
+
+
+def validate_ticker(value: str, field: str = "symbol") -> str:
+    """Validate a caller-provided ticker before any mutation is attempted."""
+
+    return _ticker(value, field)
 
 
 DecimalString = Annotated[Decimal, Field(strict=False)]
@@ -92,24 +131,49 @@ class WatchlistItem(PolicyModel):
     @field_validator("tags")
     @classmethod
     def valid_tags(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if len(value) != len(set(value)) or any(_SLUG.fullmatch(tag) is None for tag in value):
+        if len(value) > 16 or len(value) != len(set(value)) or any(
+            type(tag) is not str or len(tag) > 32 or _SLUG.fullmatch(tag) is None
+            for tag in value
+        ):
             raise ValueError("tags must be unique bounded ASCII slugs")
         return value
 
     @field_validator("official_sources")
     @classmethod
     def valid_sources(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if len(value) != len(set(value)):
+        if len(value) > 8 or len(value) != len(set(value)):
             raise ValueError("official_sources must be unique")
         for source in value:
-            parsed = _HTTPS_URL_ADAPTER.validate_python(source, strict=True)
-            if parsed.scheme != "https" or not parsed.host or parsed.username or parsed.password:
-                raise ValueError("official sources must be safe HTTPS URLs")
-            authority_and_path = source.removeprefix("https://").split("?", 1)[0].split("#", 1)[0]
-            path = authority_and_path.partition("/")[2]
-            if "#" in source or any(
-                part in {".", ".."} for part in path.replace("\\", "/").split("/")
+            if (
+                type(source) is not str
+                or len(source) > 2048
+                or any(
+                    unicodedata.category(character) in {"Cc", "Cf"}
+                    or character.isspace()
+                    for character in source
+                )
             ):
+                raise ValueError("official sources must be safe HTTPS URLs")
+            try:
+                parsed = _HTTPS_URL_ADAPTER.validate_python(source, strict=True)
+            except ValueError as error:
+                raise ValueError("official sources must be safe HTTPS URLs") from error
+            if (
+                parsed.scheme != "https"
+                or not parsed.host
+                or parsed.username is not None
+                or parsed.password is not None
+                or "#" in source
+            ):
+                raise ValueError("official sources must be safe HTTPS URLs")
+            authority_and_path = source.removeprefix("https://").split("?", 1)[0]
+            path = authority_and_path.partition("/")[2].replace("\\", "/")
+            for _ in range(4):
+                decoded = _percent_decode(path)
+                if decoded == path:
+                    break
+                path = decoded
+            if any(part in {".", ".."} for part in path.split("/")):
                 raise ValueError("official sources contain an invalid URL")
         return value
 
@@ -174,6 +238,11 @@ class RiskPolicy(PolicyModel):
     def valid_risk_map(self) -> RiskPolicy:
         if set(self.regime_risk_multipliers) != {regime.name for regime in Regime}:
             raise ValueError("regime_risk_multipliers must define every regime")
+        if any(
+            value < Decimal("0") or value > Decimal("1")
+            for value in self.regime_risk_multipliers.values()
+        ):
+            raise ValueError("regime risk multipliers must be between zero and one")
         return self
 
 
@@ -194,7 +263,15 @@ class SetupPolicy(PolicyModel):
     plan_lifetime_sessions: int = Field(ge=1)
     earnings_blackout_sessions: int = Field(ge=0)
     score_weights: tuple[Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]
-    penalty_names: tuple[Literal["LOW_LIQUIDITY", "EXTENDED", "EVENT_RISK", "DATA_QUALITY"], ...]
+    penalty_names: tuple[
+        Literal[
+            "EXTENSION_PENALTY",
+            "EVENT_UNCERTAINTY_PENALTY",
+            "CORRELATION_CONCENTRATION_PENALTY",
+            "DATA_QUALITY_PENALTY",
+        ],
+        ...,
+    ]
 
     @field_validator("version")
     @classmethod
@@ -204,11 +281,44 @@ class SetupPolicy(PolicyModel):
         return value
 
     @field_validator(
-        "minimum_price", "minimum_median_dollar_volume", "minimum_reward_to_risk", mode="before"
+        "minimum_price",
+        "minimum_median_dollar_volume",
+        "minimum_reward_to_risk",
+        "entry_zone_atr_buffers",
+        "extension_limits",
+        "pullback_support_tolerances",
+        "score_weights",
+        mode="before",
     )
     @classmethod
-    def setup_decimals(cls, value: object, info: object) -> Decimal:
-        return _decimal(value, "setup value", positive=True)
+    def setup_decimals(cls, value: object, info: ValidationInfo) -> object:
+        field_name = info.field_name or "setup value"
+        if field_name in {
+            "entry_zone_atr_buffers",
+            "extension_limits",
+            "pullback_support_tolerances",
+            "score_weights",
+        }:
+            if not isinstance(value, tuple):
+                raise ValueError(f"{field_name} must be an immutable collection")
+            return tuple(_decimal(item, field_name, positive=True) for item in value)
+        return _decimal(value, field_name, positive=True)
+
+    @model_validator(mode="after")
+    def strict_setup_collections(self) -> SetupPolicy:
+        if len(self.score_weights) != 6 or any(
+            not value.is_finite() or value <= 0 for value in self.score_weights
+        ):
+            raise ValueError("score_weights must contain exactly six positive finite values")
+        required_penalties = {
+            "EXTENSION_PENALTY",
+            "EVENT_UNCERTAINTY_PENALTY",
+            "CORRELATION_CONCENTRATION_PENALTY",
+            "DATA_QUALITY_PENALTY",
+        }
+        if len(self.penalty_names) != 4 or set(self.penalty_names) != required_penalties:
+            raise ValueError("penalty_names must contain exactly the four required penalties")
+        return self
 
 
 class SourcePolicy(PolicyModel):
@@ -241,6 +351,54 @@ class SourcePolicy(PolicyModel):
     @classmethod
     def source_decimals(cls, value: object, info: object) -> Decimal:
         return _decimal(value, "source timing", positive=True)
+
+    @field_validator("allowed_adapters")
+    @classmethod
+    def valid_adapters(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not 1 <= len(value) <= 16 or len(value) != len(set(value)) or any(
+            type(item) is not str or len(item) > 64 or _ADAPTER.fullmatch(item) is None
+            for item in value
+        ):
+            raise ValueError("allowed_adapters must be a bounded non-empty unique collection")
+        return value
+
+    @field_validator("allowed_https_domains")
+    @classmethod
+    def valid_domains(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not 1 <= len(value) <= 64 or len(value) != len(set(value)) or any(
+            type(item) is not str
+            or len(item) > 253
+            or _DOMAIN.fullmatch(item) is None
+            or ".." in item
+            for item in value
+        ):
+            raise ValueError("allowed_https_domains must be bounded non-empty unique domains")
+        return value
+
+    @field_validator("allowed_content_types")
+    @classmethod
+    def valid_content_types(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not 1 <= len(value) <= 32 or len(value) != len(set(value)) or any(
+            type(item) is not str or not item.strip() or len(item) > 128 for item in value
+        ):
+            raise ValueError("allowed_content_types must be bounded non-empty unique values")
+        return value
+
+    @field_validator("freshness_by_data_type", "per_run_request_budgets", "excerpt_limits")
+    @classmethod
+    def valid_non_negative_maps(cls, value: dict[str, int]) -> dict[str, int]:
+        if not 1 <= len(value) <= 64:
+            raise ValueError("source policy maps must be bounded and non-empty")
+        if any(
+            type(key) is not str
+            or not 1 <= len(key) <= 64
+            or _SOURCE_MAP_KEY.fullmatch(key) is None
+            or type(item) is not int
+            or item < 0
+            for key, item in value.items()
+        ):
+            raise ValueError("source policy map entries must be bounded and non-negative")
+        return value
 
 
 class AppConfiguration(PolicyModel):

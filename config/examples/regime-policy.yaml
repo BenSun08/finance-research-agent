@@ -1,8 +1,14 @@
 version: regime-policy-v1
 broad_symbols: [SPY, QQQ]
+dia_symbol: DIA
 small_cap_symbol: IWM
 credit_asset_symbol: HYG
 credit_benchmark_symbol: LQD
+treasury_symbol: TLT
+dollar_symbol: UUP
+gold_symbol: GLD
+oil_symbol: USO
+volatility_symbol: VIX
 sector_symbols: [XLC, XLY, XLP, XLE, XLF, XLV, XLI, XLB, XLRE, XLK, XLU]
 cyclical_symbols: [XLY, XLE, XLF, XLI, XLB, XLK]
 defensive_symbols: [XLP, XLV, XLU]

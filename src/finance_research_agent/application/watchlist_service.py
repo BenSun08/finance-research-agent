@@ -9,6 +9,7 @@ from finance_research_agent.domain.policies import (
     WatchlistConfig,
     WatchlistItem,
     canonical_model_hash,
+    validate_ticker,
 )
 
 
@@ -46,12 +47,16 @@ class WatchlistService:
             existing for existing in current.items if existing.symbol != item.symbol
         ) + (item,)
         updated = WatchlistConfig(version=self._next(current.version), items=items)
-        self._repository.replace(updated)
+        if not self._repository.replace_if_version(expected_version, updated):
+            raise ConfigurationVersionConflict(
+                f"expected watchlist version {expected_version} was superseded"
+            )
         return WatchlistChange(
             current.version, updated.version, item, None, canonical_model_hash(updated)
         )
 
     def remove(self, expected_version: str, symbol: str) -> WatchlistChange:
+        validate_ticker(symbol)
         current = self.list()
         if current.version != expected_version:
             raise ConfigurationVersionConflict(
@@ -61,7 +66,10 @@ class WatchlistService:
             version=self._next(current.version),
             items=tuple(item for item in current.items if item.symbol != symbol),
         )
-        self._repository.replace(updated)
+        if not self._repository.replace_if_version(expected_version, updated):
+            raise ConfigurationVersionConflict(
+                f"expected watchlist version {expected_version} was superseded"
+            )
         return WatchlistChange(
             current.version, updated.version, None, symbol, canonical_model_hash(updated)
         )

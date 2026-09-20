@@ -13,5 +13,5 @@ restrengthening_conditions: [above_support, positive_relative_strength]
 minimum_reward_to_risk: "2"
 plan_lifetime_sessions: 10
 earnings_blackout_sessions: 5
-score_weights: ["0.25", "0.20", "0.20", "0.20", "0.10", "0.05"]
-penalty_names: [LOW_LIQUIDITY, EXTENDED, EVENT_RISK, DATA_QUALITY]
+score_weights: ["25", "20", "20", "15", "10", "10"]
+penalty_names: [EXTENSION_PENALTY, EVENT_UNCERTAINTY_PENALTY, CORRELATION_CONCENTRATION_PENALTY, DATA_QUALITY_PENALTY]
