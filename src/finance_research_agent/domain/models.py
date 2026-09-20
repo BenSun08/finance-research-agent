@@ -190,6 +190,13 @@ class ComponentVersions(StrictModel):
     source_policy_version: Version
 
 
+class RunKey(StrictModel):
+    """Stable logical identity used to locate one market-date run family."""
+
+    run_type: RunType
+    market_date: date
+
+
 class RunContext(StrictModel):
     """Immutable identity and orthogonal status snapshot, not a state machine."""
 

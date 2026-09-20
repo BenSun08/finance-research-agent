@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Protocol
 
+from finance_research_agent.domain.market_calendar import TradingCalendar
 from finance_research_agent.domain.policies import AppConfiguration, WatchlistConfig
 from finance_research_agent.market_data.historical import (
     HistoricalBarsFetchResult,
@@ -14,6 +15,7 @@ __all__ = [
     "ConfigurationRepositoryFactory",
     "HistoricalBarsFetcher",
     "WatchlistRepository",
+    "TradingCalendar",
 ]
 
 
