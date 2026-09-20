@@ -144,3 +144,132 @@ from the virtual environment.
   integration. Those remain explicitly deferred.
 - The existing virtual-environment warning is external to this change and does
   not affect test success.
+
+## R3 Task 3 fix round — reviewer findings
+
+### Status
+
+Complete. This bounded fix round remains strictly within R3 Task 3. It does
+not start R3 Task 4/5 or R4+, and it performed no push, merge, or subagent
+dispatch.
+
+### Fix commit
+
+`af19b7d` — `fix: harden R3 configuration transactions`
+
+### Changed files
+
+- `src/finance_research_agent/application/config_service.py`
+  - Added `ConfigService.from_directories(source, staging_root)` through an
+    adapter-side registered repository factory; the application module still
+    has no adapter import.
+  - Preserved complete immutable policy projections while mapping
+    `ConfigurationSnapshot.file_hashes` to all five fixed YAML filenames.
+  - Projected the full fixed/configurable radar universe independently from
+    the R1/R2 calculation-input universe.
+- `src/finance_research_agent/application/ports.py`
+  - Added the provider-neutral directory factory and repository-owned
+    `replace_if_version` compare-and-swap boundary.
+- `src/finance_research_agent/application/watchlist_service.py`
+  - Uses the CAS boundary for upsert/remove and validates removal symbols
+    before reading or mutating configuration.
+- `src/finance_research_agent/adapters/yaml_config.py`
+  - Added adapter-side service-factory registration, fixed-root validation,
+    all-five policy hashes, same-directory staging, reread/validate before
+    file fsync, atomic replace, parent-directory fsync, and per-target
+    repository locks.
+- `src/finance_research_agent/domain/policies.py`
+  - Added bounded ticker/tag/prose/source validation, percent-decoded URL
+    traversal rejection, source collection/range validation, safe risk
+    multiplier ranges, exact setup score/penalty validation, and immutable
+    collection input copying.
+- `src/finance_research_agent/domain/regime.py`
+  - Added DIA plus optional Treasury, dollar, gold, oil, and volatility radar
+    symbols without changing `required_symbols` or existing formulas.
+- `config/examples/regime-policy.yaml`
+  - Added the fixed-radar DIA and cross-asset/volatility symbols.
+- `config/examples/setup-policy.yaml`
+  - Updated to the six Product A score weights and exact four penalty names.
+- `tests/contracts/test_r3_configuration.py`
+  - Updated the existing hash expectation for all five policies.
+- `tests/contracts/test_r3_task3_fixes.py`
+  - Added regression coverage for factory/path boundaries, five filename
+    hashes, radar projection, YAML-format-independent hashes, immutable
+    nested snapshots, strict field/security grammars, staging/fsync order,
+    concurrent CAS behavior, and remove validation.
+
+### TDD evidence
+
+RED was observed before production fixes with:
+
+`../../.venv/bin/pytest -q tests/contracts/test_r3_task3_fixes.py`
+
+Result: `14 failed, 14 passed`.
+
+The failures were the expected missing/incomplete behaviors: absent
+`ConfigService.from_directories`, incomplete ticker/tag/source/policy
+validation, incomplete hashes/radar projection, non-sibling staging and
+incorrect durability order, non-atomic concurrent mutation, and missing
+remove-symbol validation.
+
+Focused GREEN:
+
+`../../.venv/bin/pytest -q tests/contracts/test_r3_task3_fixes.py`
+
+Result: `28 passed`.
+
+R3 compatibility plus fix regression suite:
+
+`../../.venv/bin/pytest -q tests/contracts/test_r3_configuration.py tests/contracts/test_r3_task3_fixes.py`
+
+Result: `32 passed`.
+
+### Final verification
+
+- `../../.venv/bin/pytest -q` — `1141 passed, 1 warning`.
+- `../../.venv/bin/ruff check .` — `All checks passed!`.
+- `../../.venv/bin/mypy src` — `Success: no issues found in 41 source files`.
+- `git diff --check` — passed with no output.
+
+The one pytest warning remains the pre-existing
+`websockets.legacy` deprecation warning from the virtual environment.
+
+### Compatibility and security review
+
+- The application-to-adapter dependency guard remains green. The application
+  receives a provider-neutral factory registration; only the adapter imports
+  and registers its YAML repository factory.
+- R1/R2 regime calculation inputs, constructor compatibility, `required_symbols`,
+  weights, thresholds, formulas, bridge behavior, replay behavior, and
+  security boundaries remain green. The new `radar_universe` is a separate
+  projection used only for configuration snapshots.
+- Snapshot `file_hashes` now contains exactly `watchlist.yaml`,
+  `risk-policy.yaml`, `regime-policy.yaml`, `setup-policy.yaml`, and
+  `source-policy.yaml`; hashes are canonical validated-model SHA-256 values,
+  independent of YAML formatting.
+- Nested snapshot mappings and arrays remain detached and immutable through
+  `FrozenMap`/tuple projections.
+- Strict validation rejects unknown fields, duplicate symbols, unbounded
+  tickers/tags/collections, non-English or non-printable stored prose,
+  controls/bidi/zero-width characters, ticker confusables, unsafe URL
+  credentials/fragments/ports/schemes, direct and encoded traversal, unsafe
+  multipliers, negative source limits/budgets, invalid setup scores, and
+  non-exact penalty sets.
+- Watchlist writes use a same-directory staging sibling, validate the staged
+  bytes before file fsync, atomically replace the target, and fsync the parent
+  directory. Repository-owned locking and version comparison ensure one
+  winner for concurrent callers using the same target.
+
+### Remaining risks and bounded limitations
+
+- The lock is process-local (`threading.RLock`) and protects concurrent
+  callers through repository instances in the running process. A future
+  cross-process transaction design would require a separately approved
+  filesystem-lock/lease boundary; no such R3 Task 3 capability was added.
+- `ConfigService.from_directories` requires the trusted adapter-side factory
+  registration or an explicitly injected factory; it does not discover
+  adapters dynamically.
+- R3 Task 4/5 and R4+ capabilities remain deferred, including market time,
+  run identity, leases/checkpoints, filesystem run storage, evidence
+  collection, current quotes, events, analysis, synthesis, publication, MCP,
+  skills, scheduling, and production model integration.
