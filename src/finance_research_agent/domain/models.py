@@ -159,7 +159,7 @@ class StrictModel(BaseModel):
 
 
 class ConfigurationSnapshot(StrictModel):
-    """Immutable configuration identity only; policy contents are a later slice."""
+    """Immutable configuration identity and optional frozen policy copies."""
 
     content_hash_sha256: Sha256
     file_hashes: FrozenMap[Identifier, Sha256]
@@ -168,6 +168,9 @@ class ConfigurationSnapshot(StrictModel):
     setup_policy_version: Version
     risk_policy_version: Version
     source_policy_version: Version
+    policies: FrozenMap[str, JsonValue] | None = None
+    policy_hashes: FrozenMap[str, Sha256] | None = None
+    radar_universe: tuple[Identifier, ...] = ()
 
 
 class ComponentVersions(StrictModel):

@@ -1,0 +1,13 @@
+version: "1"
+items:
+  - symbol: AAPL
+    role: SATELLITE_ELIGIBLE
+    research_rationale: Synthetic example for offline configuration validation.
+    tags: [technology, synthetic]
+    priority: 50
+    research_horizon: MEDIUM_TERM
+    expires_on: null
+    benchmark_symbol: SPY
+    sector_proxy_symbol: XLK
+    official_sources: [https://www.apple.com/newsroom/]
+    notes: Synthetic data only.

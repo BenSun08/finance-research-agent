@@ -2,12 +2,13 @@
 
 from typing import Protocol
 
+from finance_research_agent.domain.policies import AppConfiguration, WatchlistConfig
 from finance_research_agent.market_data.historical import (
     HistoricalBarsFetchResult,
     HistoricalDailyBarsRequest,
 )
 
-__all__ = ["HistoricalBarsFetcher"]
+__all__ = ["ConfigurationRepository", "HistoricalBarsFetcher", "WatchlistRepository"]
 
 
 class HistoricalBarsFetcher(Protocol):
@@ -17,3 +18,17 @@ class HistoricalBarsFetcher(Protocol):
         self,
         request: HistoricalDailyBarsRequest,
     ) -> HistoricalBarsFetchResult: ...
+
+
+class ConfigurationRepository(Protocol):
+    """Provider-neutral source of the five validated local policies."""
+
+    def load(self) -> AppConfiguration: ...
+
+
+class WatchlistRepository(Protocol):
+    """Provider-neutral read/replace boundary for the watchlist file."""
+
+    def load(self) -> WatchlistConfig: ...
+
+    def replace(self, configuration: WatchlistConfig) -> None: ...

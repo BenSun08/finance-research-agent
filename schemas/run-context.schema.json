@@ -2,7 +2,7 @@
   "$defs": {
     "ConfigurationSnapshot": {
       "additionalProperties": false,
-      "description": "Immutable configuration identity only; policy contents are a later slice.",
+      "description": "Immutable configuration identity and optional frozen policy copies.",
       "properties": {
         "content_hash_sha256": {
           "pattern": "^[0-9a-f]{64}$",
@@ -24,6 +24,50 @@
           },
           "title": "File Hashes",
           "type": "object"
+        },
+        "policies": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "maxProperties": 128,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policies"
+        },
+        "policy_hashes": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "maxProperties": 128,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Hashes"
+        },
+        "radar_universe": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Radar Universe",
+          "type": "array"
         },
         "regime_policy_version": {
           "maxLength": 64,
@@ -112,6 +156,40 @@
       ],
       "title": "ExecutionStatus",
       "type": "string"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "maxLength": 8192,
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "maxProperties": 128,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "RunType": {
       "enum": [

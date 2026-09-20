@@ -1,0 +1,21 @@
+version: "1"
+allowed_adapters: [alpaca_historical, official_https]
+allowed_https_domains: [example.test]
+freshness_by_data_type:
+  market_daily_bars: 86400
+  official_events: 86400
+cache_retention_seconds: 86400
+request_deadline_seconds: "10"
+retry_attempts: 2
+retry_backoff_seconds: "0.5"
+retry_jitter_seconds: "0.1"
+per_run_request_budgets:
+  market_daily_bars: 100
+  official_events: 20
+allow_redirects: false
+maximum_response_bytes: 1000000
+allowed_content_types: [application/json, text/html]
+excerpt_limits:
+  application/json: 8192
+  text/html: 4096
+licensed_content_persistence: NONE
