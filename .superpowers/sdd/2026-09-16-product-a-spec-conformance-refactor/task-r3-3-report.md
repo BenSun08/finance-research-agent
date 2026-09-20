@@ -273,3 +273,89 @@ The one pytest warning remains the pre-existing
   run identity, leases/checkpoints, filesystem run storage, evidence
   collection, current quotes, events, analysis, synthesis, publication, MCP,
   skills, scheduling, and production model integration.
+
+## R3 Task 3 fix round 2 — scoped re-review findings
+
+### Status
+
+Complete. This round addresses exactly the two new Important findings. It
+remains strictly within R3 Task 3 and performed no Task 4/5 or R4+ work, no
+subagent dispatch, no push, and no merge.
+
+### Fix commit
+
+`38b3562` — `fix: remove configuration bootstrap side effect`
+
+### Changes
+
+- `src/finance_research_agent/application/config_service.py`
+  - Added a trusted fixed-file `DirectoryConfigurationRepository` bootstrap
+    owned by the application boundary.
+  - `ConfigService.from_directories(source, staging_root)` now works when a
+    caller imports only `finance_research_agent.application.config_service`;
+    optional repository-factory injection remains available for composition.
+  - No adapter import, dynamic import, or registration side effect is used.
+- `src/finance_research_agent/adapters/yaml_config.py`
+  - Retained the adapter public `load_configuration` compatibility export and
+    `YamlConfigurationRepository` surface as thin wrappers over the trusted
+    bootstrap implementation.
+  - Removed adapter-side class registration.
+- `src/finance_research_agent/domain/policies.py`
+  - Normalized both `/` and `\\` separators after every percent-decoding pass
+    before checking `.`/`..` traversal segments.
+- `tests/contracts/test_r3_task3_fixes.py`
+  - Added a fresh-process exact application-only import/use regression.
+  - Added `https://example.test/%5c..%5cprivate` to URL traversal coverage.
+
+### TDD evidence
+
+RED command:
+
+`../../.venv/bin/pytest -q tests/contracts/test_r3_task3_fixes.py -k 'application_only or official_source_url_security'`
+
+Result: `2 failed, 7 passed, 21 deselected`.
+
+The two failures were the expected public-application bootstrap failure and
+the accepted percent-decoded backslash traversal URL.
+
+Focused GREEN command:
+
+`../../.venv/bin/pytest -q tests/contracts/test_r3_task3_fixes.py -k 'application_only or official_source_url_security'`
+
+Result: `9 passed, 21 deselected`.
+
+Combined focused R3 configuration/fix suite:
+
+`../../.venv/bin/pytest -q tests/contracts/test_r3_task3_fixes.py tests/contracts/test_r3_configuration.py`
+
+Result: `34 passed`.
+
+### Final verification
+
+- `../../.venv/bin/pytest -q` — `1143 passed, 1 warning`.
+- `../../.venv/bin/ruff check .` — `All checks passed!`.
+- `../../.venv/bin/mypy src` — `Success: no issues found in 41 source files`.
+- `git diff --check` — passed with no output.
+
+The one pytest warning remains the pre-existing
+`websockets.legacy` deprecation warning from the virtual environment.
+
+### Compatibility and security review
+
+- A subprocess test imported only the public application service and verified
+  that no `finance_research_agent.adapters` module was loaded before calling
+  `ConfigService.from_directories` successfully.
+- The application-to-adapter dependency guard and no-dynamic-import security
+  guard remain green.
+- Existing adapter imports and the public adapter `load_configuration` helper
+  remain compatible.
+- Official-source URL validation now rejects direct and nested percent-decoded
+  traversal using either slash separator, including encoded backslash forms.
+
+### Remaining risks and bounded limitations
+
+- The default application bootstrap intentionally supports only the five fixed
+  local YAML files; alternate repository implementations still require an
+  explicitly injected provider-neutral factory.
+- The process-local watchlist lock and all Task 4/5 and R4+ deferrals from the
+  prior fix round remain unchanged.
