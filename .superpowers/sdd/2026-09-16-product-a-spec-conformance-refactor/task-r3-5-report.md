@@ -153,3 +153,102 @@ from the environment; it is unrelated to this task.
   but unindexed orphan for recovery inspection. Hash-verified lookup methods
   do not expose it through `get_latest` or `get_report`, consistent with the
   required recovery boundary.
+
+## R3 Task 5 fallback review-fix round
+
+This round fixed the review findings without broadening the R3 Task 5 scope.
+The focused fix commit is `4ef9a7f` (`fix: harden R3 Task 5 storage
+boundaries`), based on the prior implementation/report commits
+`29ea648`/`d19bf5c`. No push, merge, subagent dispatch, R4+ work, provider,
+MCP, skill, scheduling, brokerage, execution, or other capability work was
+started.
+
+### Findings fixed
+
+- C1: `acquire_lease()` now claims the per-market-date lease under a local
+  process/file lock, so the live-lease check and replacement are one critical
+  section. A two-contender test asserts exactly one `acquired` result and one
+  `held` result.
+- I1: publication loads the staged `run.json` and rejects a bundle whose
+  complete `RunContext` differs, even when the run ID is the same.
+- I2: after the persisted evidence cutoff, only `AWAITING_SYNTHESIS` or
+  `VALIDATING` checkpoints with matching cutoff, matching execution status,
+  and exactly the `research_packet` artifact hash are accepted. Collection,
+  analysis, mismatched cutoff, and unrelated artifact checkpoints require a
+  new revision.
+- I3: run context, checkpoint files and nested directories, frozen evidence,
+  report, bundle, report index, and latest pointer reads now resolve through
+  the root-confinement helper. Symlinked-file, nested-checkpoint-file, report
+  index, and storage-parent escape tests verify `PATH_NOT_ALLOWED` and an
+  unchanged outside sentinel.
+- I4: an index/latest failure after the final rename quarantines the complete
+  directory under diagnostics as a recoverable orphan. Final loads and bundle
+  loads require an indexed, hash-verified publication, so unindexed finals and
+  quarantined orphans are not exposed.
+- I5: publication now requires a declared Markdown SHA-256 and compares it to
+  the canonical UTF-8 report bytes before rename; mismatch and missing-hash
+  tests leave staging unpublished.
+
+### Exact TDD evidence
+
+The first RED run after adding the fallback regression tests was:
+
+```text
+../../.venv/bin/pytest -q tests/unit/test_filesystem_store.py tests/integration/test_run_identity.py --disable-warnings --tb=short
+7 failed, 21 passed in 0.99s
+```
+
+The seven failures were the post-cutoff checkpoint constraint, the undeclared
+index-update failure hook exposed by normal publication, unindexed-final
+visibility, and the three symlink read-path checks (report, bundle, and
+report-index). The RED failures were all observed before the corresponding
+production fixes.
+
+The focused GREEN run after the fixes was:
+
+```text
+../../.venv/bin/pytest -q tests/unit/test_filesystem_store.py tests/integration/test_run_identity.py --disable-warnings --tb=short
+28 passed in 0.74s
+```
+
+### Final verification evidence
+
+The worktree does not contain a local `.venv`; `../../.venv/bin/...` is the
+repository environment from this worktree. The requested checks completed as
+follows:
+
+```text
+../../.venv/bin/pytest -q --tb=short
+1199 passed, 1 warning in 17.21s
+
+../../.venv/bin/ruff check .
+All checks passed!
+
+../../.venv/bin/mypy src
+Success: no issues found in 44 source files
+
+git diff --check
+<no output; exit 0>
+```
+
+The one pytest warning is the existing environment warning from
+`websockets.legacy`; it is unrelated to this storage fix.
+
+Correction to the earlier report: its statement that `git diff --check`
+validated the committed `29ea648` result was too broad. A clean post-commit
+`git diff --check` only proves that the current worktree has no unchecked
+unstaged diff; it does not independently validate a commit’s patch. In this
+round, `git diff --check` was run against the uncommitted fix changes and
+returned no output, and `git diff --cached --check` also returned no output
+immediately before commit `4ef9a7f`. Those are the relevant diff-check
+evidence for this fix.
+
+### Files changed in this round
+
+- `src/finance_research_agent/adapters/filesystem.py`
+- `tests/unit/test_filesystem_store.py`
+- this report
+
+The final concern is limited to the pre-existing `websockets.legacy`
+deprecation warning. The full suite is green, the fix is committed locally,
+and the work stops at the R3 Task 5 review gate.
