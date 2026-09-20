@@ -339,20 +339,26 @@ class FileSystemRunRepository:
         if stored.evidence_cutoff_at is not None:
             if checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at:
                 raise ValueError(f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required")
-            if checkpoint.stage != "EVIDENCE_FROZEN":
-                stored_packet_hash = self._stored_packet_hash(stored)
-                valid_retry = (
-                    checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
-                    and checkpoint.execution_status.value == checkpoint.stage
-                    and not checkpoint.resumable
-                    and tuple(checkpoint.artifact_hashes) == ("research_packet",)
-                    and stored_packet_hash is not None
-                    and checkpoint.artifact_hashes["research_packet"] == stored_packet_hash
+            stored_packet_hash = self._stored_packet_hash(stored)
+            valid_freeze = (
+                checkpoint.stage == "EVIDENCE_FROZEN"
+                and checkpoint.execution_status is stored.run.execution_status
+                and checkpoint.written_at == stored.evidence_cutoff_at
+                and not checkpoint.resumable
+                and not checkpoint.artifact_hashes
+            )
+            valid_retry = (
+                checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
+                and checkpoint.execution_status.value == checkpoint.stage
+                and not checkpoint.resumable
+                and tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                and stored_packet_hash is not None
+                and checkpoint.artifact_hashes["research_packet"] == stored_packet_hash
+            )
+            if not (valid_freeze or valid_retry):
+                raise ValueError(
+                    f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required"
                 )
-                if not valid_retry:
-                    raise ValueError(
-                        f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required"
-                    )
         checkpoint_dir = self._safe_path(
             "runs", f"{stored.run.market_date.year:04d}", stored.run.market_date.isoformat(),
             ".staging", run_id, "checkpoints"

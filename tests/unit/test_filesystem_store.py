@@ -267,6 +267,42 @@ def test_post_cutoff_validation_rejects_resumption_and_packet_hash_replacement(
         )
 
 
+def test_post_cutoff_evidence_frozen_checkpoint_cannot_replace_packet_or_resume(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    repository.checkpoint(
+        context.run_id,
+        RunCheckpoint(
+            run_id=context.run_id,
+            stage="PACKET_FROZEN",
+            execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+            written_at=NOW + timedelta(minutes=1),
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
+            resumable=False,
+        ),
+    )
+    cutoff = NOW + timedelta(minutes=13)
+    repository.freeze_evidence(context.run_id, cutoff)
+
+    with pytest.raises(ValueError, match="new revision"):
+        repository.checkpoint(
+            context.run_id,
+            RunCheckpoint(
+                run_id=context.run_id,
+                stage="EVIDENCE_FROZEN",
+                execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+                written_at=cutoff + timedelta(seconds=1),
+                evidence_cutoff_at=cutoff,
+                artifact_hashes=FrozenMap({"research_packet": "b" * 64}),
+                resumable=True,
+            ),
+        )
+
+
 def test_publication_failure_keeps_staging_and_does_not_update_latest(tmp_path: Path) -> None:
     repository = FileSystemRunRepository(tmp_path)
     context = _context()
