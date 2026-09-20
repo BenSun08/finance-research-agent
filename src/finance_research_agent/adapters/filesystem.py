@@ -309,6 +309,13 @@ class FileSystemRunRepository:
             published=published,
         )
 
+    @staticmethod
+    def _stored_packet_hash(stored: StoredRun) -> str | None:
+        for checkpoint in reversed(stored.checkpoints):
+            if "research_packet" in checkpoint.artifact_hashes:
+                return checkpoint.artifact_hashes["research_packet"]
+        return None
+
     def load(self, run_id: str) -> StoredRun | None:
         staging, final, _ = self._paths(run_id)
         if staging.is_dir():
@@ -333,10 +340,14 @@ class FileSystemRunRepository:
             if checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at:
                 raise ValueError(f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required")
             if checkpoint.stage != "EVIDENCE_FROZEN":
+                stored_packet_hash = self._stored_packet_hash(stored)
                 valid_retry = (
                     checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
                     and checkpoint.execution_status.value == checkpoint.stage
+                    and not checkpoint.resumable
                     and tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                    and stored_packet_hash is not None
+                    and checkpoint.artifact_hashes["research_packet"] == stored_packet_hash
                 )
                 if not valid_retry:
                     raise ValueError(
@@ -510,8 +521,12 @@ class FileSystemRunRepository:
             if self.inject_failure_during_index_update:
                 raise OSError("injected failure during publication index update")
             index_payload: dict[str, dict[str, str]] = {}
-            if index_path.is_file():
-                index_payload = json.loads(index_path.read_bytes())
+            try:
+                index_bytes = self._read_confined(index_path.parent, index_path.name)
+            except FileNotFoundError:
+                index_bytes = None
+            if index_bytes is not None:
+                index_payload = json.loads(index_bytes)
             index_payload[bundle.run.run_id] = {
                 "bundle_sha256": bundle_sha256,
                 "markdown_sha256": markdown_sha256,
@@ -536,9 +551,13 @@ class FileSystemRunRepository:
                     raise PublicationError(
                         "publication index update failed and orphan quarantine failed"
                     ) from quarantine_error
+                if isinstance(error, PathNotAllowedError):
+                    raise
                 raise PublicationError(
                     "publication index update failed; orphan quarantined"
                 ) from error
+            if isinstance(error, PathNotAllowedError):
+                raise
             raise PublicationError("publication index update failed") from error
         return PublishedArtifact(
             run_id=bundle.run.run_id,

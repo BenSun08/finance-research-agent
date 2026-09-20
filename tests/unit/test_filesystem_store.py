@@ -149,12 +149,25 @@ def test_checkpoint_and_cutoff_are_persisted_and_cutoff_is_immutable(tmp_path: P
         repository.freeze_evidence(context.run_id, NOW + timedelta(minutes=14))
 
 
-def test_post_cutoff_collection_resume_is_rejected_but_packet_hash_checkpoint_is_allowed(
+def test_post_cutoff_collection_resume_is_rejected_but_frozen_packet_validation_is_allowed(
     tmp_path: Path,
 ) -> None:
     repository = FileSystemRunRepository(tmp_path)
     context = _context()
     repository.create(context)
+    packet_hash = "a" * 64
+    repository.checkpoint(
+        context.run_id,
+        RunCheckpoint(
+            run_id=context.run_id,
+            stage="PACKET_FROZEN",
+            execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+            written_at=NOW + timedelta(minutes=1),
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({"research_packet": packet_hash}),
+            resumable=False,
+        ),
+    )
     cutoff = NOW + timedelta(minutes=13)
     repository.freeze_evidence(context.run_id, cutoff)
 
@@ -180,8 +193,8 @@ def test_post_cutoff_collection_resume_is_rejected_but_packet_hash_checkpoint_is
             execution_status=ExecutionStatus.VALIDATING,
             written_at=cutoff + timedelta(seconds=2),
             evidence_cutoff_at=cutoff,
-            artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
-            resumable=True,
+            artifact_hashes=FrozenMap({"research_packet": packet_hash}),
+            resumable=False,
         ),
     )
     stored = repository.load(context.run_id)
@@ -197,8 +210,59 @@ def test_post_cutoff_collection_resume_is_rejected_but_packet_hash_checkpoint_is
                 execution_status=ExecutionStatus.ANALYZING,
                 written_at=cutoff + timedelta(seconds=3),
                 evidence_cutoff_at=cutoff,
-                artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
+                artifact_hashes=FrozenMap({"research_packet": packet_hash}),
                 resumable=True,
+            ),
+        )
+
+
+def test_post_cutoff_validation_rejects_resumption_and_packet_hash_replacement(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    packet_hash = "a" * 64
+    repository.checkpoint(
+        context.run_id,
+        RunCheckpoint(
+            run_id=context.run_id,
+            stage="PACKET_FROZEN",
+            execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+            written_at=NOW + timedelta(minutes=1),
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({"research_packet": packet_hash}),
+            resumable=False,
+        ),
+    )
+    cutoff = NOW + timedelta(minutes=13)
+    repository.freeze_evidence(context.run_id, cutoff)
+
+    with pytest.raises(ValueError, match="new revision"):
+        repository.checkpoint(
+            context.run_id,
+            RunCheckpoint(
+                run_id=context.run_id,
+                stage="VALIDATING",
+                execution_status=ExecutionStatus.VALIDATING,
+                written_at=cutoff + timedelta(seconds=1),
+                evidence_cutoff_at=cutoff,
+                artifact_hashes=FrozenMap({"research_packet": packet_hash}),
+                resumable=True,
+            ),
+        )
+
+    with pytest.raises(ValueError, match="new revision"):
+        repository.checkpoint(
+            context.run_id,
+            RunCheckpoint(
+                run_id=context.run_id,
+                stage="VALIDATING",
+                execution_status=ExecutionStatus.VALIDATING,
+                written_at=cutoff + timedelta(seconds=2),
+                evidence_cutoff_at=cutoff,
+                artifact_hashes=FrozenMap({"research_packet": "b" * 64}),
+                resumable=False,
             ),
         )
 
@@ -436,6 +500,28 @@ def test_report_index_symlink_cannot_escape_data_root(tmp_path: Path) -> None:
 
     with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
         repository.get_report(context.run_id)
+
+
+def test_publication_index_read_rejects_symlink_escape(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_index = outside / "index.json"
+    outside_index.write_text("{}", encoding="utf-8")
+    repository = FileSystemRunRepository(tmp_path / "data")
+    context = _context()
+    repository.create(context)
+    index = tmp_path / "data/reports/2026/2026-08-19/index.json"
+    index.parent.mkdir(parents=True)
+    index.symlink_to(outside_index)
+
+    with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+        repository.publish_atomically(_bundle(context))
+
+    assert repository.get_latest(context.market_date) is None
+    assert repository.diagnostic_orphan_exists(context.run_id)
+    assert outside_index.read_text(encoding="utf-8") == "{}"
 
 
 def test_storage_layout_has_only_the_allowlisted_top_level_directories(tmp_path: Path) -> None:
