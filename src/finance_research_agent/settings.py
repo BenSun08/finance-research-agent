@@ -84,7 +84,7 @@ class Settings(BaseModel):
     ) -> Settings:
         env = dict(os.environ if environment is None else environment)
         path = Path(".env") if dotenv_path is None else dotenv_path
-        dotenv = _read_dotenv(path) if path.exists() else {}
+        dotenv = _read_dotenv(path) if path.is_symlink() or path.exists() else {}
         provider = secret_provider if secret_provider is not None else MacOSKeychainSecretProvider()
         provider_adapter: SecretProvider = (
             cast(SecretProvider, provider)
@@ -102,7 +102,11 @@ class Settings(BaseModel):
 
         return cls.model_validate(
             {
-                "data_dir": env.get("AI_MARKET_RESEARCH_DATA_DIR", "data"),
+                "data_dir": (
+                    env.get("AI_MARKET_RESEARCH_DATA_DIR")
+                    or dotenv.get("AI_MARKET_RESEARCH_DATA_DIR")
+                    or "data"
+                ),
                 "alpaca_api_key": lookup("ALPACA_API_KEY"),
                 "alpaca_api_secret": lookup("ALPACA_API_SECRET"),
             }
@@ -116,6 +120,8 @@ class Settings(BaseModel):
 
 
 def _read_dotenv(path: Path) -> dict[str, str]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(".env must be a regular non-symlink file")
     mode = stat.S_IMODE(path.stat().st_mode)
     if mode != 0o600:
         raise ValueError(".env must have mode 0600")
@@ -125,7 +131,11 @@ def _read_dotenv(path: Path) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         name, separator, value = line.partition("=")
-        if separator != "=" or name not in {"ALPACA_API_KEY", "ALPACA_API_SECRET"}:
+        if separator != "=" or name not in {
+            "AI_MARKET_RESEARCH_DATA_DIR",
+            "ALPACA_API_KEY",
+            "ALPACA_API_SECRET",
+        }:
             raise ValueError(f"invalid .env entry at line {line_number}")
         values[name] = value.strip().strip("\"'")
     return values

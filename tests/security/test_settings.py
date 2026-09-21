@@ -55,3 +55,30 @@ def test_settings_rejects_a_dotenv_file_without_owner_only_permissions(tmp_path:
 
     with pytest.raises(ValueError, match="0600"):
         Settings.from_sources(dotenv_path=dotenv, environment={})
+
+
+def test_settings_loads_data_directory_from_a_permission_restricted_dotenv(tmp_path: Path) -> None:
+    dotenv = tmp_path / ".env"
+    data_dir = tmp_path / "configured-data"
+    dotenv.write_text(
+        f"AI_MARKET_RESEARCH_DATA_DIR={data_dir}\nALPACA_API_KEY=file-key\n",
+        encoding="utf-8",
+    )
+    dotenv.chmod(0o600)
+
+    settings = Settings.from_sources(environment={}, dotenv_path=dotenv)
+
+    assert settings.data_dir == data_dir
+    assert settings.alpaca_api_key.get_secret_value() == "file-key"
+    assert "file-key" not in settings.model_dump_json()
+
+
+def test_settings_rejects_a_symlinked_dotenv_before_reading(tmp_path: Path) -> None:
+    target = tmp_path / "real.env"
+    target.write_text("ALPACA_API_KEY=file-key\n", encoding="utf-8")
+    target.chmod(0o600)
+    dotenv = tmp_path / ".env"
+    dotenv.symlink_to(target)
+
+    with pytest.raises(ValueError, match="regular non-symlink"):
+        Settings.from_sources(environment={}, dotenv_path=dotenv)

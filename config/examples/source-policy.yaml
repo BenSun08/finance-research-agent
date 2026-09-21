@@ -1,6 +1,10 @@
 version: "1"
 allowed_adapters: [alpaca_historical, official_https]
 allowed_https_domains: [example.test]
+allowed_hosts_by_adapter:
+  alpaca_historical: [example.test]
+  official_https: [example.test]
+allowed_ports_by_host: {}
 freshness_by_data_type:
   market_daily_bars: 86400
   official_events: 86400

@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import random
 import re
 import socket
 import unicodedata
 import urllib.parse
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
-from typing import Literal
+from typing import Literal, cast
 
+import httpcore
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -32,6 +35,9 @@ _IGNORED_HTML_TAGS = frozenset(
     {"embed", "frame", "iframe", "noscript", "object", "script", "style", "svg", "template"}
 )
 Clock = Callable[[], datetime]
+SocketOption = (
+    tuple[int, int, int] | tuple[int, int, bytes | bytearray] | tuple[int, int, None, int]
+)
 
 
 class RequestRejected(ValueError):
@@ -50,10 +56,18 @@ class AllowedRequest(BaseModel):
     adapter: str = Field(min_length=1, max_length=64)
     method: Literal["GET"]
     host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=443, ge=1, le=65535)
     path: str = Field(min_length=1, max_length=2048)
     query: FrozenMap[str, str] = FrozenMap({})
     accepted_content_types: tuple[str, ...] = Field(min_length=1, max_length=32)
     response_byte_limit: int = Field(default=1_000_000, gt=0, le=10_000_000)
+
+    @field_validator("path")
+    @classmethod
+    def path_has_no_embedded_query(cls, value: str) -> str:
+        if _contains_path_delimiter(value):
+            raise ValueError("path contains an ambiguous query or fragment delimiter")
+        return value
 
     @field_validator("query")
     @classmethod
@@ -74,7 +88,7 @@ class AllowedRequest(BaseModel):
     @field_validator("accepted_content_types")
     @classmethod
     def unique_content_types(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if len(value) != len(set(value)) or any(
+        if len(value) != len({item.casefold() for item in value}) or any(
             not item.strip() or len(item) > 128 or ";" in item for item in value
         ):
             raise ValueError("accepted content types must be unique media types")
@@ -87,6 +101,7 @@ class AllowedRequest(BaseModel):
         path: str,
         *,
         host: str = _DEFAULT_HOST,
+        port: int = 443,
         query: Mapping[str, str] | None = None,
         accepted_content_types: tuple[str, ...] = ("application/json", "text/html"),
         response_byte_limit: int = 1_000_000,
@@ -95,6 +110,7 @@ class AllowedRequest(BaseModel):
             adapter=adapter,
             method="GET",
             host=host,
+            port=port,
             path=path,
             query=FrozenMap({} if query is None else query),
             accepted_content_types=accepted_content_types,
@@ -111,6 +127,89 @@ class SafeResponse:
     content_type: str
     url: str
     attempts: int
+
+
+class _PinnedNetworkBackend(httpcore.NetworkBackend):
+    """Connect to validated addresses while retaining the request hostname."""
+
+    def __init__(
+        self,
+        addresses: tuple[str, ...],
+        *,
+        delegate: httpcore.NetworkBackend | None = None,
+    ) -> None:
+        if not addresses:
+            raise ValueError("at least one validated address is required")
+        self._addresses = addresses
+        self._delegate = delegate or httpcore.SyncBackend()
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[SocketOption] | None = None,
+    ) -> httpcore.NetworkStream:
+        return self._delegate.connect_tcp(
+            self._addresses[0], port, timeout, local_address, socket_options
+        )
+
+    def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Iterable[SocketOption] | None = None,
+    ) -> httpcore.NetworkStream:
+        return self._delegate.connect_unix_socket(path, timeout, socket_options)
+
+    def sleep(self, seconds: float) -> None:
+        self._delegate.sleep(seconds)
+
+
+class _PinnedResponseStream(httpx.SyncByteStream):
+    def __init__(self, stream: Iterable[bytes]) -> None:
+        self._stream = stream
+
+    def __iter__(self) -> Iterator[bytes]:
+        yield from self._stream
+
+    def close(self) -> None:
+        close = getattr(self._stream, "close", None)
+        if callable(close):
+            close()
+
+
+class _PinnedHTTPTransport(httpx.BaseTransport):
+    def __init__(self, addresses: tuple[str, ...]) -> None:
+        self._pool = httpcore.ConnectionPool(
+            network_backend=_PinnedNetworkBackend(addresses),
+        )
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        core_request = httpcore.Request(
+            method=request.method,
+            url=httpcore.URL(
+                scheme=request.url.raw_scheme,
+                host=request.url.raw_host,
+                port=request.url.port,
+                target=request.url.raw_path,
+            ),
+            headers=request.headers.raw,
+            content=request.stream,
+            extensions=request.extensions,
+        )
+        core_response = self._pool.handle_request(core_request)
+        return httpx.Response(
+            status_code=core_response.status,
+            headers=core_response.headers,
+            stream=_PinnedResponseStream(cast(Iterable[bytes], core_response.stream)),
+            extensions=core_response.extensions,
+            request=request,
+        )
+
+    def close(self) -> None:
+        self._pool.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,11 +352,24 @@ class SafeHttpClient:
         self._transport = transport
         self._resolver = resolver
         self._sleeper = sleeper or (lambda seconds: None)
-        self._jitter = jitter or (lambda attempt: Decimal("0"))
+        self._jitter: Callable[[int], Decimal]
+        if jitter is None:
+            source = random.SystemRandom()
+            self._jitter = lambda attempt: Decimal(
+                str(source.uniform(0.0, float(source_policy.retry_jitter_seconds)))
+            )
+        else:
+            self._jitter = jitter
         self._clock = clock
 
     def validate(self, request: AllowedRequest) -> str:
         """Validate a request and return its safe absolute URL."""
+
+        url, _addresses = self._validate_request(request)
+        return url
+
+    def _validate_request(self, request: AllowedRequest) -> tuple[str, tuple[str, ...]]:
+        """Validate a request and retain the addresses for the actual connection."""
 
         if not isinstance(request, AllowedRequest):
             raise RequestRejected("request is not an allowed request")
@@ -265,19 +377,28 @@ class SafeHttpClient:
             raise RequestRejected("adapter is not allowed")
         if request.response_byte_limit > self._policy.maximum_response_bytes:
             raise RequestRejected("response byte limit exceeds policy")
+        allowed_content_types = {item.casefold() for item in self._policy.allowed_content_types}
         if any(
-            item not in self._policy.allowed_content_types
-            for item in request.accepted_content_types
+            item.casefold() not in allowed_content_types for item in request.accepted_content_types
         ):
             raise RequestRejected("content type is not allowed")
         if "@" in request.host or any(character.isspace() for character in request.host):
             raise RequestRejected("host contains user info or whitespace")
 
         host = request.host.strip("[]").lower()
-        if host == "localhost" or not _host_matches_policy(
-            host, self._policy.allowed_https_domains
-        ):
+        if host == "localhost":
             raise RequestRejected("host is not allowlisted")
+        if self._policy.allowed_hosts_by_adapter is None:
+            allowed_hosts = self._policy.allowed_https_domains
+            host_error = "host is not allowlisted"
+        else:
+            allowed_hosts = self._policy.allowed_hosts_by_adapter[request.adapter]
+            host_error = "adapter host is not allowlisted"
+        if not _host_matches_policy(host, allowed_hosts):
+            raise RequestRejected(host_error)
+        if not _port_allowed(host, request.port, self._policy.allowed_ports_by_host):
+            raise RequestRejected("port is not allowed")
+        addresses: tuple[str, ...]
         try:
             parsed_host = ipaddress.ip_address(host)
         except ValueError:
@@ -285,9 +406,10 @@ class SafeHttpClient:
         if parsed_host is not None:
             if _unsafe_address(host):
                 raise RequestRejected("host resolves to a private or local address")
+            addresses = (host,)
         else:
             try:
-                addresses = self._resolver(host, 443)
+                addresses = self._resolver(host, request.port)
             except OSError as error:
                 raise RequestRejected("host could not be resolved") from error
             if not addresses or any(_unsafe_address(address) for address in addresses):
@@ -299,16 +421,18 @@ class SafeHttpClient:
             raise RequestRejected("path contains an invalid character")
         if _contains_traversal(request.path):
             raise RequestRejected("path contains traversal")
+        netloc = host if request.port == 443 else f"{host}:{request.port}"
         raw_url = urllib.parse.urlunsplit(
-            ("https", host, request.path, urllib.parse.urlencode(dict(request.query)), "")
+            ("https", netloc, request.path, urllib.parse.urlencode(dict(request.query)), "")
         )
         parsed = urllib.parse.urlsplit(raw_url)
-        if parsed.scheme != "https" or parsed.port not in (None, 443) or parsed.fragment:
-            raise RequestRejected("request must use HTTPS and the default port")
-        return raw_url
+        parsed_port = 443 if parsed.port is None else parsed.port
+        if parsed.scheme != "https" or parsed_port != request.port or parsed.fragment:
+            raise RequestRejected("request must use HTTPS and an allowed port")
+        return raw_url, addresses
 
     def request(self, request: AllowedRequest, deadline: datetime) -> SafeResponse:
-        url = self.validate(request)
+        url, addresses = self._validate_request(request)
         if deadline.tzinfo is None or deadline.utcoffset() is None:
             raise RequestRejected("deadline must be timezone-aware")
         if deadline <= self._clock():
@@ -317,7 +441,8 @@ class SafeHttpClient:
         max_attempts = max(1, self._policy.retry_attempts + 1)
         attempt = 1
         redirects = 0
-        with httpx.Client(transport=self._transport, follow_redirects=False) as client:
+        transport = self._transport or _PinnedHTTPTransport(addresses)
+        with httpx.Client(transport=transport, follow_redirects=False) as client:
             while attempt <= max_attempts:
                 remaining = (deadline - self._clock()).total_seconds()
                 if remaining <= 0:
@@ -339,10 +464,11 @@ class SafeHttpClient:
                             self._sleep_before_retry(delay, deadline)
                             attempt += 1
                             continue
-                        content_type = (
-                            response.headers.get("content-type", "").split(";", 1)[0].strip()
-                        )
-                        if content_type not in request.accepted_content_types:
+                        content_type = response.headers.get("content-type", "")
+                        content_type = content_type.split(";", 1)[0].strip().casefold()
+                        if content_type not in {
+                            item.casefold() for item in request.accepted_content_types
+                        }:
                             raise RequestRejected("response content type is not accepted")
                         content = _read_bounded(response.iter_bytes(), request.response_byte_limit)
                         return SafeResponse(
@@ -360,7 +486,7 @@ class SafeHttpClient:
                             attempt,
                             self._policy.retry_backoff_seconds,
                             _MAX_RETRY_DELAY,
-                            self._jitter(attempt),
+                            self._bounded_jitter(attempt),
                         ),
                         deadline,
                     )
@@ -373,14 +499,30 @@ class SafeHttpClient:
     def _retry_after(self, value: str | None, attempt: int) -> Decimal:
         if value is not None:
             try:
-                return max(Decimal("0"), Decimal(value))
+                delay = max(Decimal("0"), Decimal(value))
             except ArithmeticError:
-                pass
+                try:
+                    retry_at = parsedate_to_datetime(value)
+                    if retry_at.tzinfo is None:
+                        retry_at = retry_at.replace(tzinfo=UTC)
+                    delay = max(
+                        Decimal("0"),
+                        Decimal(str((retry_at - self._clock()).total_seconds())),
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    delay = Decimal("0")
+            return min(delay, _MAX_RETRY_DELAY)
         return retry_delay(
             attempt,
             self._policy.retry_backoff_seconds,
             _MAX_RETRY_DELAY,
-            self._jitter(attempt),
+            self._bounded_jitter(attempt),
+        )
+
+    def _bounded_jitter(self, attempt: int) -> Decimal:
+        return min(
+            max(Decimal("0"), self._jitter(attempt)),
+            self._policy.retry_jitter_seconds,
         )
 
     def _sleep_before_retry(self, delay: Decimal, deadline: datetime) -> None:
@@ -393,10 +535,16 @@ class SafeHttpClient:
             raise RequestRejected("redirect is not allowed")
         target = urllib.parse.urlsplit(urllib.parse.urljoin(original_url, location))
         original = urllib.parse.urlsplit(original_url)
+        target_port = 443 if target.port is None else target.port
         if (
             target.scheme != "https"
+            or target.hostname is None
             or target.hostname != original.hostname
-            or target.port not in (None, 443)
+            or not _port_allowed(
+                target.hostname,
+                target_port,
+                self._policy.allowed_ports_by_host,
+            )
             or target.username is not None
             or target.password is not None
             or target.fragment
@@ -404,13 +552,24 @@ class SafeHttpClient:
             or _contains_traversal(target.path)
         ):
             raise RequestRejected("redirect crosses an unsafe host")
-        return urllib.parse.urlunsplit(
-            (target.scheme, target.netloc, target.path, target.query, "")
-        )
+        query = _validate_query_string(target.query)
+        return urllib.parse.urlunsplit((target.scheme, target.netloc, target.path, query, ""))
 
 
 def _host_matches_policy(host: str, domains: Sequence[str]) -> bool:
-    return any(host == domain or host.endswith(f".{domain}") for domain in domains)
+    return any(host == domain.lower() or host.endswith(f".{domain.lower()}") for domain in domains)
+
+
+def _port_allowed(
+    host: str,
+    port: int,
+    allowed_ports_by_host: FrozenMap[str, tuple[int, ...]],
+) -> bool:
+    return port == 443 or any(
+        host == allowed_host.lower() or host.endswith(f".{allowed_host.lower()}")
+        for allowed_host, ports in allowed_ports_by_host.items()
+        if port in ports
+    )
 
 
 def _contains_traversal(path: str) -> bool:
@@ -421,6 +580,41 @@ def _contains_traversal(path: str) -> bool:
             break
         candidate = decoded
     return any(part in {".", ".."} for part in candidate.split("/"))
+
+
+def _contains_path_delimiter(path: str) -> bool:
+    candidate = path
+    for _ in range(8):
+        decoded = urllib.parse.unquote(candidate)
+        if decoded == candidate:
+            break
+        candidate = decoded
+    return "?" in candidate or "#" in candidate
+
+
+def _validate_query_string(value: str) -> str:
+    if len(value) > _MAX_QUERY_ENTRIES * (_MAX_QUERY_VALUE_LENGTH * 2 + 2):
+        raise RequestRejected("redirect query is too large")
+    if any(unicodedata.category(character) in {"Cc", "Cf"} for character in value):
+        raise RequestRejected("redirect query contains a control or format character")
+    try:
+        pairs = urllib.parse.parse_qsl(
+            value,
+            keep_blank_values=True,
+            strict_parsing=True,
+            max_num_fields=_MAX_QUERY_ENTRIES,
+        )
+    except ValueError as error:
+        raise RequestRejected("redirect query is invalid or too large") from error
+    keys = tuple(key for key, _value in pairs)
+    if len(keys) != len(set(keys)) or any(
+        not 1 <= len(key) <= 128
+        or not 1 <= len(item) <= _MAX_QUERY_VALUE_LENGTH
+        or any(unicodedata.category(character) in {"Cc", "Cf"} for character in f"{key}{item}")
+        for key, item in pairs
+    ):
+        raise RequestRejected("redirect query is not bounded")
+    return urllib.parse.urlencode(pairs)
 
 
 def _read_bounded(chunks: Iterable[bytes], limit: int) -> bytes:
