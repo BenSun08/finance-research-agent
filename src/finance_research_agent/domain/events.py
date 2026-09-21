@@ -11,6 +11,7 @@ from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     EventRecord,
     GateResult,
+    Identifier,
     InstrumentIdentity,
     SourceHealth,
     StrictModel,
@@ -32,6 +33,15 @@ class EventAssessment(StrictModel):
     quality_flags: tuple[str, ...] = Field(default=())
 
 
+class EventEvidenceProjection(StrictModel):
+    """Prevalidated event-evidence metadata retained apart from event time."""
+
+    event_id: Identifier
+    retrieved_at: UtcDatetime
+    supporting_authority_tier: int = Field(ge=1, le=255)
+    conflicting_authority_tier: int | None = Field(default=None, ge=1, le=255)
+
+
 def _gate(
     status: GateStatus, reason: ErrorCode, message: str, evidence_ids: tuple[str, ...]
 ) -> GateResult:
@@ -50,7 +60,10 @@ def _macro_unavailable(source_health: Sequence[SourceHealth]) -> bool:
     return any(
         not health.available
         and health.required
-        and ("macro" in health.provider or health.provider in {"fed", "bls", "bea"})
+        and (
+            "macro" in health.provider
+            or health.provider in {"federal_reserve", "fed", "bls", "bea"}
+        )
         for health in source_health
     )
 
@@ -62,6 +75,7 @@ def assess_event_risk(
     plan_expires_at: UtcDatetime,
     evidence_cutoff_at: UtcDatetime,
     source_health: Sequence[SourceHealth] = (),
+    event_evidence: Sequence[EventEvidenceProjection] = (),
 ) -> EventAssessment:
     """Assess event evidence independently of regime or setup and fail closed."""
 
@@ -69,6 +83,7 @@ def assess_event_risk(
     risks: list[str] = []
     no_trade: list[str] = []
     flags: list[str] = []
+    projections = {projection.event_id: projection for projection in event_evidence}
     if _macro_unavailable(source_health):
         gates.append(
             _gate(
@@ -84,21 +99,29 @@ def assess_event_risk(
         evidence_ids = tuple(
             dict.fromkeys((*event.supporting_evidence_ids, *event.conflict_evidence_ids))
         )
+        projection = projections.get(event.event_id)
         event_type = event.event_type.upper()
         if event.conflict_evidence_ids:
             flags.append(ErrorCode.SOURCE_CONFLICT.value)
-            gates.append(
-                _gate(
-                    GateStatus.BLOCK,
-                    ErrorCode.SOURCE_CONFLICT,
-                    "material source conflict requires resolution",
-                    evidence_ids,
-                )
+            unresolved = (
+                projection is None
+                or projection.conflicting_authority_tier is None
+                or projection.conflicting_authority_tier
+                <= projection.supporting_authority_tier
             )
+            if event.materiality == "HIGH" and unresolved:
+                gates.append(
+                    _gate(
+                        GateStatus.BLOCK,
+                        ErrorCode.SOURCE_CONFLICT,
+                        "material unresolved source conflict requires resolution",
+                        evidence_ids,
+                    )
+                )
         if (
-            event_type in _LATE_MATERIAL_TYPES
-            and event.materiality == "HIGH"
-            and event.event_time > evidence_cutoff_at
+            event.materiality == "HIGH"
+            and projection is not None
+            and projection.retrieved_at > evidence_cutoff_at
         ):
             flags.append(ErrorCode.EVIDENCE_CUTOFF_VIOLATION.value)
             gates.append(

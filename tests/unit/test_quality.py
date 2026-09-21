@@ -1,11 +1,33 @@
+from decimal import Decimal
+
+import pytest
+
 from finance_research_agent.domain.enums import Capability, DataQualityStatus
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.models import ProviderFailure, SourceHealth
-from finance_research_agent.domain.quality import evaluate_data_quality
+from finance_research_agent.domain.models import CapabilityState, ProviderFailure, SourceHealth
+from finance_research_agent.domain.policies import RiskPolicy
+from finance_research_agent.domain.quality import DataQualityResult, evaluate_data_quality
+from finance_research_agent.domain.regime import Regime
+from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.market_data.historical import (
     HistoricalBarsRequestFailure,
     HistoricalBarsRequestFailureReason,
 )
+
+
+def _complete_risk_policy(*, sizing_enabled: bool = True) -> RiskPolicy:
+    return RiskPolicy(
+        version="1",
+        sizing_enabled=sizing_enabled,
+        planning_capital_usd="10000" if sizing_enabled else None,
+        max_risk_per_trade_pct="0.01" if sizing_enabled else None,
+        max_position_pct="0.10" if sizing_enabled else None,
+        minimum_reward_risk_ratio="2" if sizing_enabled else None,
+        max_total_portfolio_heat_pct="0.05" if sizing_enabled else None,
+        existing_portfolio_heat_pct="0.01" if sizing_enabled else None,
+        quantity_increment="1",
+        regime_risk_multipliers={regime.name: Decimal("1") for regime in Regime},
+    )
 
 
 def test_missing_required_macro_degrades_report_and_blocks_plans() -> None:
@@ -82,3 +104,112 @@ def test_provider_failure_for_one_symbol_keeps_global_capabilities_and_isolates_
     assert result.symbol_capability("MSFT", Capability.PLAN_DRAFT_AVAILABLE).reason_codes == (
         "PROVIDER_MISSING_SESSION",
     )
+
+
+def test_optional_discovery_global_failure_degrades_without_disabling_technical_research() -> None:
+    result = evaluate_data_quality(
+        source_health=(
+            SourceHealth(
+                provider="alpaca_news",
+                available=False,
+                required=False,
+                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                message="discovery unavailable",
+            ),
+        ),
+        provider_failures=(
+            ProviderFailure(
+                provider="alpaca_news",
+                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                retryable=False,
+            ),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert result.status is DataQualityStatus.DEGRADED
+    assert result.capability(Capability.WATCHLIST_METRICS_AVAILABLE).available is True
+    assert result.capability(Capability.SETUP_DETECTION_AVAILABLE).available is True
+
+
+@pytest.mark.parametrize("error_code", (ErrorCode.PROVIDER_NO_DATA, ErrorCode.STALE_DATA))
+def test_symbol_current_price_failure_preserves_history_and_caps_plan_review(
+    error_code: ErrorCode,
+) -> None:
+    result = evaluate_data_quality(
+        source_health=(SourceHealth(provider="alpaca", available=True, required=True),),
+        current_price_failures=(
+            ProviderFailure(
+                provider="alpaca",
+                symbol="MSFT",
+                error_code=error_code,
+                retryable=False,
+            ),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert result.capability(Capability.WATCHLIST_METRICS_AVAILABLE).available is True
+    assert result.symbol_capability("MSFT", Capability.PLAN_DRAFT_AVAILABLE).available is True
+    assert result.symbol_capability("MSFT", Capability.POSITION_SIZING_AVAILABLE).available is False
+    assert result.symbol_plan_status("MSFT").value == "REVIEW_REQUIRED"
+
+
+def test_disabled_risk_policy_disables_only_sizing_and_portfolio_heat() -> None:
+    result = evaluate_data_quality(
+        source_health=(),
+        risk_policy=_complete_risk_policy(sizing_enabled=False),
+    )
+
+    assert result.status is DataQualityStatus.DEGRADED
+    assert result.capability(Capability.PLAN_DRAFT_AVAILABLE).available is True
+    assert result.capability(Capability.POSITION_SIZING_AVAILABLE).available is False
+    assert result.capability(Capability.PORTFOLIO_HEAT_CHECK_AVAILABLE).available is False
+
+
+def test_complete_risk_policy_allows_sizing_and_portfolio_heat() -> None:
+    result = evaluate_data_quality(source_health=(), risk_policy=_complete_risk_policy())
+
+    assert result.status is DataQualityStatus.PASS
+    assert all(capability.available for capability in result.capabilities)
+
+
+def test_global_diagnostics_retain_multiple_provider_reasons() -> None:
+    result = evaluate_data_quality(
+        source_health=(),
+        provider_failures=(
+            ProviderFailure(
+                provider="alpaca",
+                error_code=ErrorCode.CREDENTIALS_MISSING,
+                retryable=False,
+            ),
+            ProviderFailure(
+                provider="alpaca",
+                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                retryable=False,
+            ),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert result.status is DataQualityStatus.FAIL
+    assert result.global_reason_codes == (
+        ErrorCode.CREDENTIALS_MISSING,
+        ErrorCode.PROVIDER_UNAVAILABLE,
+    )
+
+
+def test_quality_result_rejects_duplicate_or_missing_capability_states() -> None:
+    state = CapabilityState(
+        capability=Capability.MARKET_SUMMARY_AVAILABLE,
+        available=True,
+        reason_codes=(),
+        evidence_ids=(),
+    )
+
+    with pytest.raises(ValueError, match="exactly one state"):
+        DataQualityResult(
+            status=DataQualityStatus.PASS,
+            capabilities=(state,) * len(Capability),
+            symbol_capabilities=FrozenMap({}),
+        )

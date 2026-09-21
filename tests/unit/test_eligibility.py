@@ -154,4 +154,37 @@ def test_only_satellite_role_with_required_proxies_can_enter_setup_detection() -
         setup_policy=_setup_policy(),
     )
 
-    assert all(gate.status is GateStatus.PASS for gate in gates)
+    assert gates == ()
+
+
+@pytest.mark.parametrize("field", ("primary_exchange", "listing_country"))
+def test_incomplete_instrument_identity_blocks_before_scoring(field: str) -> None:
+    instrument = InstrumentIdentity(
+        instrument_id="MSFT",
+        symbol="MSFT",
+        name="Microsoft",
+        instrument_type="COMMON_STOCK",
+        primary_exchange=None if field == "primary_exchange" else "NASDAQ",
+        listing_country=None if field == "listing_country" else "US",
+        currency="USD",
+        is_active=True,
+        is_leveraged=False,
+        is_inverse=False,
+        is_otc=False,
+    )
+
+    gates = evaluate_instrument_eligibility(
+        instrument=instrument,
+        watchlist_item=WatchlistItem(
+            symbol="MSFT",
+            role="SATELLITE_ELIGIBLE",
+            research_rationale="Research.",
+            benchmark_symbol="SPY",
+            sector_proxy_symbol="XLK",
+        ),
+        snapshot=_snapshot(instrument),
+        setup_policy=_setup_policy(),
+    )
+
+    assert any(gate.status is GateStatus.BLOCK for gate in gates)
+    assert any(gate.reason_code == "UNSUPPORTED_INSTRUMENT" for gate in gates)

@@ -40,9 +40,16 @@ def evaluate_instrument_eligibility(
     evidence_ids = tuple(bar.evidence_id for bar in snapshot.completed_daily_bars)
     if instrument.symbol != watchlist_item.symbol or snapshot.instrument != instrument:
         gates.append(_gate(ErrorCode.CONFIGURATION_INVALID, "instrument context is inconsistent"))
-    if instrument.listing_country != "US" or instrument.is_otc is not False:
+    if (
+        instrument.primary_exchange is None
+        or instrument.listing_country != "US"
+        or instrument.is_otc is not False
+    ):
         gates.append(
-            _gate(ErrorCode.UNSUPPORTED_INSTRUMENT, "instrument must be U.S.-listed and non-OTC")
+            _gate(
+                ErrorCode.UNSUPPORTED_INSTRUMENT,
+                "instrument identity must be exchange-listed, U.S., and non-OTC",
+            )
         )
     if instrument.instrument_type not in {"COMMON_STOCK", "ETF"}:
         gates.append(_gate(ErrorCode.UNSUPPORTED_INSTRUMENT, "instrument type is not eligible"))

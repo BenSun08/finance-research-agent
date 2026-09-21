@@ -1,8 +1,10 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from finance_research_agent.domain.enums import GateStatus, PlanStatus
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.events import assess_event_risk
+from finance_research_agent.domain.events import EventEvidenceProjection, assess_event_risk
 from finance_research_agent.domain.models import EventRecord, InstrumentIdentity, SourceHealth
 
 NOW = datetime(2026, 9, 21, 12, tzinfo=UTC)
@@ -126,7 +128,160 @@ def test_material_evidence_after_cutoff_requires_new_revision() -> None:
         ),
         plan_expires_at=NOW + timedelta(days=2),
         evidence_cutoff_at=NOW,
+        event_evidence=(
+            EventEvidenceProjection(
+                event_id="late",
+                retrieved_at=NOW + timedelta(seconds=1),
+                supporting_authority_tier=1,
+                conflicting_authority_tier=None,
+            ),
+        ),
     )
 
     assert assessment.plan_status is PlanStatus.BLOCKED
     assert "EVIDENCE_CUTOFF_VIOLATION" in assessment.quality_flags
+
+
+def test_future_scheduled_event_known_before_cutoff_is_not_a_cutoff_violation() -> None:
+    assessment = assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(
+            EventRecord(
+                event_id="scheduled",
+                event_type="FILING",
+                subject_symbol="MSFT",
+                event_time=NOW + timedelta(days=1),
+                verified=True,
+                materiality="HIGH",
+                supporting_evidence_ids=("ev-scheduled",),
+                conflict_evidence_ids=(),
+            ),
+        ),
+        plan_expires_at=NOW + timedelta(days=2),
+        evidence_cutoff_at=NOW,
+        event_evidence=(
+            EventEvidenceProjection(
+                event_id="scheduled",
+                retrieved_at=NOW - timedelta(seconds=1),
+                supporting_authority_tier=1,
+                conflicting_authority_tier=None,
+            ),
+        ),
+    )
+
+    assert assessment.plan_status is PlanStatus.DRAFT
+    assert "EVIDENCE_CUTOFF_VIOLATION" not in assessment.quality_flags
+
+
+def test_past_material_event_retrieved_after_cutoff_requires_new_revision() -> None:
+    assessment = assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(
+            EventRecord(
+                event_id="late-past",
+                event_type="FILING",
+                subject_symbol="MSFT",
+                event_time=NOW - timedelta(days=1),
+                verified=True,
+                materiality="HIGH",
+                supporting_evidence_ids=("ev-late-past",),
+                conflict_evidence_ids=(),
+            ),
+        ),
+        plan_expires_at=NOW + timedelta(days=2),
+        evidence_cutoff_at=NOW,
+        event_evidence=(
+            EventEvidenceProjection(
+                event_id="late-past",
+                retrieved_at=NOW + timedelta(seconds=1),
+                supporting_authority_tier=1,
+                conflicting_authority_tier=None,
+            ),
+        ),
+    )
+
+    assert assessment.plan_status is PlanStatus.BLOCKED
+    assert "EVIDENCE_CUTOFF_VIOLATION" in assessment.quality_flags
+
+
+@pytest.mark.parametrize("provider", ("federal_reserve", "bls", "bea"))
+def test_required_official_macro_outage_blocks_plans(provider: str) -> None:
+    assessment = assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(),
+        plan_expires_at=NOW + timedelta(days=2),
+        evidence_cutoff_at=NOW,
+        source_health=(
+            SourceHealth(
+                provider=provider,
+                available=False,
+                required=True,
+                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                message="unavailable",
+            ),
+        ),
+    )
+
+    assert assessment.plan_status is PlanStatus.BLOCKED
+
+
+def test_low_authority_conflict_remains_visible_without_blocking_plan() -> None:
+    assessment = assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(
+            EventRecord(
+                event_id="low-conflict",
+                event_type="GUIDANCE",
+                subject_symbol="MSFT",
+                event_time=NOW,
+                verified=True,
+                materiality="LOW",
+                supporting_evidence_ids=("ev-official",),
+                conflict_evidence_ids=("ev-discovery",),
+            ),
+        ),
+        plan_expires_at=NOW + timedelta(days=2),
+        evidence_cutoff_at=NOW,
+        event_evidence=(
+            EventEvidenceProjection(
+                event_id="low-conflict",
+                retrieved_at=NOW,
+                supporting_authority_tier=1,
+                conflicting_authority_tier=3,
+            ),
+        ),
+    )
+
+    assert assessment.plan_status is PlanStatus.DRAFT
+    assert assessment.quality_flags == ("SOURCE_CONFLICT",)
+
+
+def test_material_conflict_with_lower_authority_counterevidence_does_not_block() -> None:
+    assessment = assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(
+            EventRecord(
+                event_id="resolved-conflict",
+                event_type="GUIDANCE",
+                subject_symbol="MSFT",
+                event_time=NOW,
+                verified=True,
+                materiality="HIGH",
+                supporting_evidence_ids=("ev-official",),
+                conflict_evidence_ids=("ev-discovery",),
+            ),
+        ),
+        plan_expires_at=NOW + timedelta(days=2),
+        evidence_cutoff_at=NOW,
+        event_evidence=(
+            EventEvidenceProjection(
+                event_id="resolved-conflict",
+                retrieved_at=NOW,
+                supporting_authority_tier=1,
+                conflicting_authority_tier=2,
+            ),
+        ),
+    )
+
+    assert assessment.plan_status is PlanStatus.DRAFT
+    assert assessment.quality_flags == ("SOURCE_CONFLICT",)
