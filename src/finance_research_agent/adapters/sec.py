@@ -276,6 +276,7 @@ class SecEdgarAdapter:
         ).text
         values: list[EvidenceItem] = []
         cutoff_violation = False
+        malformed_row = False
         recent = payload.filings.recent
         for index, form in enumerate(recent.form):
             if form not in self._material_forms:
@@ -283,56 +284,64 @@ class SecEdgarAdapter:
             try:
                 event_time = _filing_date(recent.filing_date[index])
                 published_time = _timestamp(recent.acceptance_datetime[index])
-            except (ValueError, IndexError):
-                continue
-            if (
-                event_time > cutoff_at
-                or published_time > cutoff_at
-                or event_time > now
-                or published_time > now
-            ):
-                cutoff_violation = True
-                continue
-            accession = recent.accession_number[index]
-            document = recent.primary_document[index]
-            accession_path = accession.replace("-", "")
-            source_url = (
-                f"https://www.sec.gov/Archives/edgar/data/{int(normalized_cik)}/"
-                f"{accession_path}/{document}"
-            )
-            observation_id = f"sec-observation-{normalized_cik}-{accession}"
-            evidence_id = f"sec-evidence-{normalized_cik}-{accession}"
-            source = SourceObservation(
-                observation_id=observation_id,
-                provider=SEC_PROVIDER,
-                source_url=source_url,
-                source_hash_sha256=digest(response.content),
-                observed_at=published_time,
-                retrieved_at=now,
-                content_type=response.content_type,
-                excerpt=excerpt,
-                persistence_allowed=self._policy.licensed_content_persistence != "NONE",
-                quality_flags=(),
-            )
-            values.append(
-                EvidenceItem(
-                    evidence_id=evidence_id,
-                    source=source,
-                    authority_tier=1,
-                    instrument_id=None,
-                    event_time=event_time,
-                    published_time=published_time,
-                    structured_fields=FrozenMap(
-                        {
-                            "accession_number": accession,
-                            "cik": normalized_cik,
-                            "form": form,
-                            "filing_date": recent.filing_date[index],
-                            "primary_document": document,
-                        }
-                    ),
-                    citation_label=f"SEC {form} {accession}",
+                if (
+                    event_time > cutoff_at
+                    or published_time > cutoff_at
+                    or event_time > now
+                    or published_time > now
+                ):
+                    cutoff_violation = True
+                    continue
+                accession = recent.accession_number[index]
+                document = recent.primary_document[index]
+                accession_path = accession.replace("-", "")
+                source_url = (
+                    f"https://www.sec.gov/Archives/edgar/data/{int(normalized_cik)}/"
+                    f"{accession_path}/{document}"
                 )
+                observation_id = f"sec-observation-{normalized_cik}-{accession}"
+                evidence_id = f"sec-evidence-{normalized_cik}-{accession}"
+                source = SourceObservation(
+                    observation_id=observation_id,
+                    provider=SEC_PROVIDER,
+                    source_url=source_url,
+                    source_hash_sha256=digest(response.content),
+                    observed_at=published_time,
+                    retrieved_at=now,
+                    content_type=response.content_type,
+                    excerpt=excerpt,
+                    persistence_allowed=self._policy.licensed_content_persistence != "NONE",
+                    quality_flags=(),
+                )
+                values.append(
+                    EvidenceItem(
+                        evidence_id=evidence_id,
+                        source=source,
+                        authority_tier=1,
+                        instrument_id=None,
+                        event_time=event_time,
+                        published_time=published_time,
+                        structured_fields=FrozenMap(
+                            {
+                                "accession_number": accession,
+                                "cik": normalized_cik,
+                                "form": form,
+                                "filing_date": recent.filing_date[index],
+                                "primary_document": document,
+                            }
+                        ),
+                        citation_label=f"SEC {form} {accession}",
+                    )
+                )
+            except (ValueError, IndexError, TypeError):
+                malformed_row = True
+        if malformed_row:
+            code, retryable = ErrorCode.PROVIDER_SCHEMA_DRIFT, False
+            message = "SEC material filing row failed strict validation"
+            return (
+                (),
+                unavailable(SEC_PROVIDER, True, code, message),
+                (failure(SEC_PROVIDER, code, retryable=retryable, message=message),),
             )
         if cutoff_violation:
             code, retryable = ErrorCode.EVIDENCE_CUTOFF_VIOLATION, False

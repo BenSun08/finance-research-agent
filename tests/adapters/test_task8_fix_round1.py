@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -140,6 +141,33 @@ def test_sec_empty_material_form_configuration_is_preserved() -> None:
     assert result.health.available is True
     assert result.health.empty_valid is True
     assert result.failures == ()
+
+
+def test_sec_malformed_material_row_is_typed_schema_failure() -> None:
+    payload = json.loads((FIXTURES / "sec/submissions.json").read_text())
+    payload["filings"]["recent"]["filingDate"][0] = "not-a-date"
+    start, end = _window()
+    adapter = SecEdgarAdapter(
+        _client(
+            _response(
+                "/submissions/CIK0000320193.json",
+                json.dumps(payload).encode(),
+                "application/json",
+            )
+        ),
+        _policy(),
+        user_agent="finance-research-agent/0.5 contact@example.test",
+        clock=lambda: CUTOFF,
+        cik_by_symbol={"AAPL": "0000320193"},
+    )
+    result = adapter.collect_events(("AAPL",), start, end, CUTOFF)
+    assert result.events == ()
+    assert result.evidence == ()
+    assert result.health.available is False
+    assert result.health.empty_valid is False
+    assert result.health.error_code == ErrorCode.PROVIDER_SCHEMA_DRIFT
+    assert result.failures[0].error_code == ErrorCode.PROVIDER_SCHEMA_DRIFT
+    assert result.failures[0].retryable is False
 
 
 def test_macro_transport_failure_retains_transport_failure_code() -> None:
