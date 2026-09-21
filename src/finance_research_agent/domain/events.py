@@ -1,0 +1,158 @@
+"""Independent, non-overridable Product A event-risk gates."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+from pydantic import Field
+
+from finance_research_agent.domain.enums import Capability, GateStatus, PlanStatus
+from finance_research_agent.domain.errors import ErrorCode
+from finance_research_agent.domain.models import (
+    EventRecord,
+    GateResult,
+    InstrumentIdentity,
+    SourceHealth,
+    StrictModel,
+)
+from finance_research_agent.domain.types import UtcDatetime
+
+_RULE_VERSION = "r5-events-1"
+_MACRO_TYPES = {"FED", "FOMC", "CPI", "PPI", "EMPLOYMENT", "GDP", "MACRO"}
+_LATE_MATERIAL_TYPES = {"GUIDANCE", "FILING", "CORPORATE_ACTION", "ANNOUNCEMENT"}
+
+
+class EventAssessment(StrictModel):
+    """Event overlay outcome that a later score cannot weaken or override."""
+
+    plan_status: PlanStatus
+    gates: tuple[GateResult, ...]
+    event_risks: tuple[str, ...] = Field(default=())
+    no_trade_conditions: tuple[str, ...] = Field(default=())
+    quality_flags: tuple[str, ...] = Field(default=())
+
+
+def _gate(
+    status: GateStatus, reason: ErrorCode, message: str, evidence_ids: tuple[str, ...]
+) -> GateResult:
+    return GateResult(
+        gate_id=f"event-{reason.value.lower()}",
+        status=status,
+        reason_code=reason.value,
+        message=message,
+        evidence_ids=evidence_ids,
+        capability=Capability.PLAN_DRAFT_AVAILABLE,
+        rule_version=_RULE_VERSION,
+    )
+
+
+def _macro_unavailable(source_health: Sequence[SourceHealth]) -> bool:
+    return any(
+        not health.available
+        and health.required
+        and ("macro" in health.provider or health.provider in {"fed", "bls", "bea"})
+        for health in source_health
+    )
+
+
+def assess_event_risk(
+    *,
+    instrument: InstrumentIdentity,
+    events: Sequence[EventRecord],
+    plan_expires_at: UtcDatetime,
+    evidence_cutoff_at: UtcDatetime,
+    source_health: Sequence[SourceHealth] = (),
+) -> EventAssessment:
+    """Assess event evidence independently of regime or setup and fail closed."""
+
+    gates: list[GateResult] = []
+    risks: list[str] = []
+    no_trade: list[str] = []
+    flags: list[str] = []
+    if _macro_unavailable(source_health):
+        gates.append(
+            _gate(
+                GateStatus.BLOCK,
+                ErrorCode.PROVIDER_UNAVAILABLE,
+                "required macro calendar is unavailable",
+                (),
+            )
+        )
+    for event in events:
+        if event.subject_symbol not in {None, instrument.symbol}:
+            continue
+        evidence_ids = tuple(
+            dict.fromkeys((*event.supporting_evidence_ids, *event.conflict_evidence_ids))
+        )
+        event_type = event.event_type.upper()
+        if event.conflict_evidence_ids:
+            flags.append(ErrorCode.SOURCE_CONFLICT.value)
+            gates.append(
+                _gate(
+                    GateStatus.BLOCK,
+                    ErrorCode.SOURCE_CONFLICT,
+                    "material source conflict requires resolution",
+                    evidence_ids,
+                )
+            )
+        if (
+            event_type in _LATE_MATERIAL_TYPES
+            and event.materiality == "HIGH"
+            and event.event_time > evidence_cutoff_at
+        ):
+            flags.append(ErrorCode.EVIDENCE_CUTOFF_VIOLATION.value)
+            gates.append(
+                _gate(
+                    GateStatus.BLOCK,
+                    ErrorCode.EVIDENCE_CUTOFF_VIOLATION,
+                    "post-cutoff material evidence requires a new revision",
+                    evidence_ids,
+                )
+            )
+        if (
+            event_type == "EARNINGS"
+            and event.verified
+            and evidence_cutoff_at <= event.event_time <= plan_expires_at
+        ):
+            gates.append(
+                _gate(
+                    GateStatus.BLOCK,
+                    ErrorCode.UNSUPPORTED_INSTRUMENT,
+                    "verified earnings fall inside plan lifetime",
+                    evidence_ids,
+                )
+            )
+        elif event_type in {"HALT", "CORPORATE_ACTION", "IDENTITY_UNCERTAIN"}:
+            gates.append(
+                _gate(
+                    GateStatus.BLOCK,
+                    ErrorCode.UNSUPPORTED_INSTRUMENT,
+                    "halt, corporate action, or identity uncertainty blocks the instrument",
+                    evidence_ids,
+                )
+            )
+        elif not event.verified and event.materiality in {"MEDIUM", "HIGH", "UNKNOWN"}:
+            gates.append(
+                _gate(
+                    GateStatus.WARNING,
+                    ErrorCode.PROVIDER_NO_DATA,
+                    "unverified material event requires review",
+                    evidence_ids,
+                )
+            )
+        if event_type in _MACRO_TYPES and event.materiality == "HIGH":
+            risks.append(event.event_id)
+            no_trade.append(event.event_id)
+    if any(gate.status is GateStatus.BLOCK for gate in gates):
+        status = PlanStatus.BLOCKED
+    elif any(gate.status is GateStatus.WARNING for gate in gates):
+        status = PlanStatus.REVIEW_REQUIRED
+    else:
+        status = PlanStatus.DRAFT
+    return EventAssessment(
+        plan_status=status,
+        gates=tuple(gates),
+        event_risks=tuple(dict.fromkeys(risks)),
+        no_trade_conditions=tuple(dict.fromkeys(no_trade)),
+        quality_flags=tuple(dict.fromkeys(flags)),
+    )
