@@ -1,19 +1,5 @@
 {
   "$defs": {
-    "Capability": {
-      "enum": [
-        "MARKET_SUMMARY_AVAILABLE",
-        "REGIME_CLASSIFICATION_AVAILABLE",
-        "WATCHLIST_METRICS_AVAILABLE",
-        "EVENT_RISK_CHECK_AVAILABLE",
-        "SETUP_DETECTION_AVAILABLE",
-        "PLAN_DRAFT_AVAILABLE",
-        "POSITION_SIZING_AVAILABLE",
-        "PORTFOLIO_HEAT_CHECK_AVAILABLE"
-      ],
-      "title": "Capability",
-      "type": "string"
-    },
     "ErrorCode": {
       "enum": [
         "CONFIGURATION_INVALID",
@@ -48,35 +34,44 @@
     }
   },
   "additionalProperties": false,
-  "description": "Explicit availability with mandatory reasons for disabled capabilities.",
+  "description": "Scoped source availability retained separately from collected values.",
   "properties": {
     "available": {
       "title": "Available",
       "type": "boolean"
     },
-    "capability": {
-      "$ref": "#/$defs/Capability"
+    "empty_valid": {
+      "default": false,
+      "title": "Empty Valid",
+      "type": "boolean"
     },
-    "evidence_ids": {
-      "items": {
-        "maxLength": 128,
-        "minLength": 1,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
-        "type": "string"
-      },
-      "maxItems": 256,
-      "title": "Evidence Ids",
-      "type": "array",
-      "uniqueItems": true
+    "error_code": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
-    "reason_codes": {
-      "items": {
-        "$ref": "#/$defs/ErrorCode"
-      },
-      "maxItems": 64,
-      "title": "Reason Codes",
-      "type": "array",
-      "uniqueItems": true
+    "message": {
+      "default": "",
+      "maxLength": 256,
+      "title": "Message",
+      "type": "string"
+    },
+    "provider": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Provider",
+      "type": "string"
+    },
+    "required": {
+      "title": "Required",
+      "type": "boolean"
     },
     "schema_version": {
       "const": "0.1",
@@ -86,11 +81,10 @@
     }
   },
   "required": [
-    "capability",
+    "provider",
     "available",
-    "reason_codes",
-    "evidence_ids"
+    "required"
   ],
-  "title": "CapabilityState",
+  "title": "SourceHealth",
   "type": "object"
 }

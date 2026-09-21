@@ -1,0 +1,536 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "enum": [
+        "CONFIGURATION_INVALID",
+        "CREDENTIALS_MISSING",
+        "PERMISSION_DENIED",
+        "MARKET_CALENDAR_UNAVAILABLE",
+        "PROVIDER_UNAVAILABLE",
+        "PROVIDER_NO_DATA",
+        "PROVIDER_MISSING_SESSION",
+        "PROVIDER_DUPLICATE_CONFLICT",
+        "PROVIDER_MALFORMED_BAR",
+        "PROVIDER_STALE",
+        "PROVIDER_FUTURE_OR_INCOMPLETE_BAR",
+        "PROVIDER_SCHEMA_DRIFT",
+        "INVALID_RESPONSE",
+        "INVALID_REQUEST",
+        "EVIDENCE_CUTOFF_VIOLATION",
+        "SOURCE_CONFLICT",
+        "STALE_DATA",
+        "UNSUPPORTED_INSTRUMENT",
+        "SIZING_UNAVAILABLE",
+        "PORTFOLIO_HEAT_UNAVAILABLE",
+        "INVALID_RUN_STATE",
+        "INTERNAL_ERROR",
+        "VALIDATION_FAILED",
+        "PUBLICATION_FAILED",
+        "PATH_NOT_ALLOWED",
+        "DEADLINE_EXCEEDED"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "EventRecord": {
+      "additionalProperties": false,
+      "description": "Known or scheduled event with ordered supporting and conflicting evidence.",
+      "properties": {
+        "conflict_evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Conflict Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_time": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Event Time",
+          "type": "string"
+        },
+        "event_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "materiality": {
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH",
+            "UNKNOWN"
+          ],
+          "title": "Materiality",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "subject_symbol": {
+          "anyOf": [
+            {
+              "maxLength": 16,
+              "minLength": 1,
+              "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Subject Symbol"
+        },
+        "supporting_evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Supporting Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "verified": {
+          "title": "Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "subject_symbol",
+        "event_time",
+        "verified",
+        "materiality",
+        "supporting_evidence_ids",
+        "conflict_evidence_ids"
+      ],
+      "title": "EventRecord",
+      "type": "object"
+    },
+    "EvidenceItem": {
+      "additionalProperties": false,
+      "description": "Citable bounded evidence; no source-authority or freshness decisions.",
+      "properties": {
+        "authority_tier": {
+          "maximum": 255,
+          "minimum": 1,
+          "title": "Authority Tier",
+          "type": "integer"
+        },
+        "citation_label": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Citation Label",
+          "type": "string"
+        },
+        "event_time": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Event Time"
+        },
+        "evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "instrument_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Instrument Id"
+        },
+        "published_time": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Published Time"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceObservation"
+        },
+        "structured_fields": {
+          "additionalProperties": false,
+          "maxProperties": 128,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.:-]*$": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "title": "Structured Fields",
+          "type": "object"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "source",
+        "authority_tier",
+        "instrument_id",
+        "event_time",
+        "published_time",
+        "structured_fields",
+        "citation_label"
+      ],
+      "title": "EvidenceItem",
+      "type": "object"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "maxLength": 8192,
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "maxProperties": 128,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ProviderFailure": {
+      "additionalProperties": false,
+      "description": "Secret-free provider failure scoped to one symbol or a whole request.",
+      "properties": {
+        "error_code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Message",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "maxLength": 16,
+              "minLength": 1,
+              "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Symbol"
+        }
+      },
+      "required": [
+        "provider",
+        "error_code",
+        "retryable"
+      ],
+      "title": "ProviderFailure",
+      "type": "object"
+    },
+    "SourceHealth": {
+      "additionalProperties": false,
+      "description": "Scoped source availability retained separately from collected values.",
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "empty_valid": {
+          "default": false,
+          "title": "Empty Valid",
+          "type": "boolean"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "message": {
+          "default": "",
+          "maxLength": 256,
+          "title": "Message",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "available",
+        "required"
+      ],
+      "title": "SourceHealth",
+      "type": "object"
+    },
+    "SourceObservation": {
+      "additionalProperties": false,
+      "description": "Source provenance with separately retained observation and retrieval times.",
+      "properties": {
+        "content_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Content Type",
+          "type": "string"
+        },
+        "excerpt": {
+          "maxLength": 8192,
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "observation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "persistence_allowed": {
+          "title": "Persistence Allowed",
+          "type": "boolean"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_hash_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Hash Sha256",
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^https://",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Url"
+        }
+      },
+      "required": [
+        "observation_id",
+        "provider",
+        "source_url",
+        "source_hash_sha256",
+        "observed_at",
+        "retrieved_at",
+        "content_type",
+        "excerpt",
+        "persistence_allowed",
+        "quality_flags"
+      ],
+      "title": "SourceObservation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Immutable event/evidence values with per-source health preserved.",
+  "properties": {
+    "events": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/EventRecord"
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "evidence": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/EvidenceItem"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "failures": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ProviderFailure"
+      },
+      "title": "Failures",
+      "type": "array"
+    },
+    "provider": {
+      "default": "composite",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Provider",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_health": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SourceHealth"
+      },
+      "title": "Source Health",
+      "type": "array"
+    },
+    "source_observations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SourceObservation"
+      },
+      "title": "Source Observations",
+      "type": "array"
+    }
+  },
+  "title": "EventCollection",
+  "type": "object"
+}

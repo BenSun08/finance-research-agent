@@ -13,6 +13,7 @@ SCHEMA_NAMES = {
     "capability-state.schema.json",
     "component-versions.schema.json",
     "configuration-snapshot.schema.json",
+    "event-collection.schema.json",
     "event-record.schema.json",
     "evidence-item.schema.json",
     "gate-result.schema.json",
@@ -22,6 +23,7 @@ SCHEMA_NAMES = {
     "price-observation.schema.json",
     "run-context.schema.json",
     "source-observation.schema.json",
+    "source-health.schema.json",
 }
 ROOT = Path(__file__).resolve().parents[2]
 

@@ -1,12 +1,19 @@
 """Provider-neutral outbound capabilities required by application use cases."""
 
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from finance_research_agent.domain.enums import InvocationType
 from finance_research_agent.domain.market_calendar import TradingCalendar
 from finance_research_agent.domain.models import (
+    CompletedDailyBar,
+    EventCollection,
+    InstrumentIdentity,
+    PriceObservation,
+    ProviderFailure,
+    ProviderReadiness,
     PublishedArtifact,
     PublishedRunBundle,
     RunCheckpoint,
@@ -24,11 +31,58 @@ from finance_research_agent.market_data.historical import (
 __all__ = [
     "ConfigurationRepository",
     "ConfigurationRepositoryFactory",
+    "EventProvider",
     "HistoricalBarsFetcher",
+    "MarketDataProvider",
     "RunRepository",
     "WatchlistRepository",
     "TradingCalendar",
 ]
+
+
+class MarketDataProvider(Protocol):
+    """Provider-neutral Product A market-data collection boundary."""
+
+    def readiness(self) -> ProviderReadiness: ...
+
+    def fetch_instruments(
+        self, symbols: Sequence[str]
+    ) -> Mapping[str, InstrumentIdentity | ProviderFailure]: ...
+
+    def fetch_daily_bars(
+        self,
+        symbols: Sequence[str],
+        start: date,
+        end: date,
+        *,
+        expected_sessions: tuple[date, ...] | None = None,
+        completed_through_session: date | None = None,
+        evidence_cutoff_at: datetime | None = None,
+        instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+    ) -> Mapping[str, tuple[CompletedDailyBar, ...] | ProviderFailure]: ...
+
+    def fetch_premarket_observations(
+        self,
+        symbols: Sequence[str],
+        as_of: datetime,
+        *,
+        instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+    ) -> Mapping[str, PriceObservation | ProviderFailure]: ...
+
+
+@runtime_checkable
+class EventProvider(Protocol):
+    """Provider-neutral collection boundary for bounded event evidence."""
+
+    provider_id: str
+
+    def collect_events(
+        self,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+        cutoff_at: datetime,
+    ) -> EventCollection: ...
 
 
 class HistoricalBarsFetcher(Protocol):

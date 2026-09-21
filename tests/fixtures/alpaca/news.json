@@ -1,0 +1,14 @@
+{
+  "news": [
+    {
+      "id": 123,
+      "headline": "Apple Inc. announces a possible catalyst",
+      "summary": "A bounded discovery excerpt.",
+      "author": "Fixture Wire",
+      "created_at": "2026-08-19T12:30:00Z",
+      "updated_at": "2026-08-19T12:31:00Z",
+      "url": "https://news.alpaca.markets/articles/123",
+      "symbols": ["AAPL"]
+    }
+  ]
+}

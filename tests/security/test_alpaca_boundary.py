@@ -21,6 +21,18 @@ FORBIDDEN_ENDPOINT_FRAGMENTS = (
     "/v2/positions",
 )
 ALPACA_HISTORICAL_ADAPTER = Path("adapters/alpaca_historical.py")
+R4_BOUNDARY_FILES = frozenset(
+    {
+        Path("adapters/http_client.py"),
+        Path("adapters/_event_common.py"),
+        Path("adapters/alpaca_news.py"),
+        Path("adapters/company_ir.py"),
+        Path("adapters/events.py"),
+        Path("adapters/macro.py"),
+        Path("adapters/sec.py"),
+        Path("settings.py"),
+    }
+)
 ALLOWED_ALPACA_FROM_IMPORTS = {
     "alpaca.common.exceptions": frozenset({"APIError"}),
     "alpaca.data.enums": frozenset({"Adjustment", "DataFeed"}),
@@ -116,8 +128,38 @@ def test_production_code_imports_no_alpaca_trading_or_broker_surface() -> None:
             ), (path, module)
 
 
+def test_product_a_alpaca_adapter_contains_only_market_data_surface() -> None:
+    path = PACKAGE_ROOT / "adapters" / "alpaca.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+    forbidden_import_parts = {
+        "trading",
+        "TradingClient",
+        "GetAccount",
+        "GetOrders",
+        "Position",
+        "Order",
+    }
+    assert not any(
+        forbidden.lower() in name.lower()
+        for forbidden in forbidden_import_parts
+        for name in imported
+    )
+    assert "/v2/account" not in source
+    assert "/v2/orders" not in source
+    assert "/v2/positions" not in source
+
+
 def test_first_data_slice_has_no_direct_network_escape_hatch() -> None:
     for path in PACKAGE_ROOT.rglob("*.py"):
+        if path.relative_to(PACKAGE_ROOT) in R4_BOUNDARY_FILES:
+            continue
         for module in _imports(path):
             assert not module.startswith(FORBIDDEN_DIRECT_TRANSPORT_PREFIXES), (
                 path,

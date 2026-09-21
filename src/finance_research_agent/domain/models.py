@@ -380,6 +380,37 @@ class PriceObservation(StrictModel):
         return self
 
 
+class ProviderFailure(StrictModel):
+    """Secret-free provider failure scoped to one symbol or a whole request."""
+
+    provider: Identifier
+    symbol: Symbol | None = None
+    error_code: ErrorCode
+    retryable: bool
+    message: Annotated[str, Field(max_length=256)] = ""
+
+    @property
+    def scope(self) -> Literal["symbol", "global"]:
+        return "symbol" if self.symbol is not None else "global"
+
+
+class ProviderReadiness(StrictModel):
+    """Non-secret configuration and availability state for one provider."""
+
+    provider: Identifier
+    configured: bool
+    available: bool
+    error_code: ErrorCode | None = None
+
+    @model_validator(mode="after")
+    def _available_requires_configuration(self) -> Self:
+        if self.available and not self.configured:
+            raise ValueError("an unconfigured provider cannot be available")
+        if self.configured and self.error_code is ErrorCode.CREDENTIALS_MISSING:
+            raise ValueError("configured provider cannot report missing credentials")
+        return self
+
+
 class CompletedDailyBar(StrictModel):
     """One completed daily bar with its evidence and provider provenance."""
 
@@ -497,6 +528,62 @@ class EventRecord(StrictModel):
     materiality: Literal["LOW", "MEDIUM", "HIGH", "UNKNOWN"]
     supporting_evidence_ids: EvidenceIds
     conflict_evidence_ids: EvidenceIds
+
+
+class SourceHealth(StrictModel):
+    """Scoped source availability retained separately from collected values."""
+
+    provider: Identifier
+    available: bool
+    required: bool
+    empty_valid: bool = False
+    error_code: ErrorCode | None = None
+    message: Annotated[str, Field(max_length=256)] = ""
+
+    @model_validator(mode="after")
+    def _consistent_health(self) -> Self:
+        if self.empty_valid and not self.available:
+            raise ValueError("an unavailable source cannot be an empty valid response")
+        if not self.available and self.error_code is None:
+            raise ValueError("an unavailable source requires an error code")
+        if self.available and self.error_code is not None:
+            raise ValueError("an available source cannot carry an error code")
+        return self
+
+
+class EventCollection(StrictModel):
+    """Immutable event/evidence values with per-source health preserved."""
+
+    provider: Identifier = "composite"
+    events: tuple[EventRecord, ...] = ()
+    evidence: tuple[EvidenceItem, ...] = ()
+    source_observations: tuple[SourceObservation, ...] = ()
+    source_health: tuple[SourceHealth, ...] = ()
+    failures: tuple[ProviderFailure, ...] = ()
+
+    @property
+    def health(self) -> SourceHealth:
+        """Return a convenient single-source view without hiding composite health."""
+
+        if len(self.source_health) == 1:
+            return self.source_health[0]
+        if not self.source_health:
+            return SourceHealth(
+                provider=self.provider,
+                available=False,
+                required=False,
+                error_code=ErrorCode.PROVIDER_NO_DATA,
+                message="no source health was reported",
+            )
+        unavailable = tuple(item for item in self.source_health if not item.available)
+        return SourceHealth(
+            provider=self.provider,
+            available=not unavailable,
+            required=any(item.required for item in self.source_health),
+            empty_valid=not self.events and not unavailable,
+            error_code=unavailable[0].error_code if unavailable else None,
+            message=unavailable[0].message if unavailable else "",
+        )
 
 
 class GateResult(StrictModel):

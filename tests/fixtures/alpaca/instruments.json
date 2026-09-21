@@ -1,0 +1,12 @@
+[
+  {
+    "id": "aapl-id",
+    "symbol": "AAPL",
+    "name": "Apple Inc.",
+    "exchange": "NASDAQ",
+    "class": "us_equity",
+    "status": "active",
+    "tradable": true,
+    "fractionable": true
+  }
+]

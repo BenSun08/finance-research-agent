@@ -16,6 +16,7 @@ from finance_research_agent.domain.models import (
     CapabilityState,
     ComponentVersions,
     ConfigurationSnapshot,
+    EventCollection,
     EventRecord,
     EvidenceItem,
     GateResult,
@@ -23,6 +24,7 @@ from finance_research_agent.domain.models import (
     MarketSnapshot,
     PriceObservation,
     RunContext,
+    SourceHealth,
     SourceObservation,
 )
 
@@ -31,6 +33,7 @@ SCHEMA_MODELS: Mapping[str, type[Any]] = MappingProxyType(
         "capability-state.schema.json": CapabilityState,
         "component-versions.schema.json": ComponentVersions,
         "configuration-snapshot.schema.json": ConfigurationSnapshot,
+        "event-collection.schema.json": EventCollection,
         "event-record.schema.json": EventRecord,
         "evidence-item.schema.json": EvidenceItem,
         "gate-result.schema.json": GateResult,
@@ -40,6 +43,7 @@ SCHEMA_MODELS: Mapping[str, type[Any]] = MappingProxyType(
         "price-observation.schema.json": PriceObservation,
         "run-context.schema.json": RunContext,
         "source-observation.schema.json": SourceObservation,
+        "source-health.schema.json": SourceHealth,
     }
 )
 

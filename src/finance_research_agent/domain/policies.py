@@ -43,6 +43,10 @@ def _percent_decode(value: str) -> str:
     )
 
 
+def _host_matches_domains(host: str, domains: tuple[str, ...]) -> bool:
+    return any(host == domain or host.endswith(f".{domain}") for domain in domains)
+
+
 class PolicyModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True, validate_default=True)
 
@@ -326,6 +330,8 @@ class SourcePolicy(PolicyModel):
     version: str
     allowed_adapters: tuple[str, ...]
     allowed_https_domains: tuple[str, ...]
+    allowed_hosts_by_adapter: FrozenMap[str, tuple[str, ...]] | None = None
+    allowed_ports_by_host: FrozenMap[str, tuple[int, ...]] = FrozenMap({})
     freshness_by_data_type: FrozenMap[str, int]
     cache_retention_seconds: int = Field(ge=0)
     request_deadline_seconds: Decimal
@@ -376,6 +382,43 @@ class SourcePolicy(PolicyModel):
             raise ValueError("allowed_https_domains must be bounded non-empty unique domains")
         return value
 
+    @field_validator("allowed_hosts_by_adapter")
+    @classmethod
+    def valid_adapter_hosts(
+        cls, value: FrozenMap[str, tuple[str, ...]] | None
+    ) -> FrozenMap[str, tuple[str, ...]] | None:
+        if value is None:
+            return None
+        if not 1 <= len(value) <= 16:
+            raise ValueError("allowed_hosts_by_adapter must be bounded and non-empty")
+        for adapter, hosts in value.items():
+            if _ADAPTER.fullmatch(adapter) is None or not 1 <= len(hosts) <= 64:
+                raise ValueError("adapter host entries must be bounded")
+            if len(hosts) != len(set(hosts)) or any(
+                type(host) is not str
+                or not 1 <= len(host) <= 253
+                or _DOMAIN.fullmatch(host) is None
+                for host in hosts
+            ):
+                raise ValueError("adapter host entries must be unique domain names")
+        return value
+
+    @field_validator("allowed_ports_by_host")
+    @classmethod
+    def valid_host_ports(
+        cls, value: FrozenMap[str, tuple[int, ...]]
+    ) -> FrozenMap[str, tuple[int, ...]]:
+        if len(value) > 64:
+            raise ValueError("allowed_ports_by_host must be bounded")
+        for host, ports in value.items():
+            if _DOMAIN.fullmatch(host) is None or not 1 <= len(ports) <= 16:
+                raise ValueError("host port entries must be bounded")
+            if len(ports) != len(set(ports)) or any(
+                type(port) is not int or not 1 <= port <= 65535 for port in ports
+            ):
+                raise ValueError("host ports must be unique valid integers")
+        return value
+
     @field_validator("allowed_content_types")
     @classmethod
     def valid_content_types(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -400,6 +443,22 @@ class SourcePolicy(PolicyModel):
         ):
             raise ValueError("source policy map entries must be bounded and non-negative")
         return value
+
+    @model_validator(mode="after")
+    def adapter_host_keys_are_allowed(self) -> SourcePolicy:
+        if self.allowed_hosts_by_adapter is not None and set(self.allowed_hosts_by_adapter) != set(
+            self.allowed_adapters
+        ):
+            raise ValueError("allowed_hosts_by_adapter must cover every allowed adapter")
+        if self.allowed_hosts_by_adapter is not None and any(
+            not _host_matches_domains(host, self.allowed_https_domains)
+            for hosts in self.allowed_hosts_by_adapter.values()
+            for host in hosts
+        ):
+            raise ValueError(
+                "allowed_hosts_by_adapter must be within the global HTTPS domain allowlist"
+            )
+        return self
 
 
 class AppConfiguration(PolicyModel):
