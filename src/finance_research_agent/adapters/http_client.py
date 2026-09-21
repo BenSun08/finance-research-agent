@@ -49,6 +49,10 @@ class RequestDeadlineExceeded(RequestRejected):
     """Raised when a request cannot finish before its run deadline."""
 
 
+class RequestTransportUnavailable(RequestRejected):
+    """Raised when the bounded retry budget is exhausted by transport errors."""
+
+
 class AllowedRequest(BaseModel):
     """Closed GET-only request data accepted by the HTTP boundary."""
 
@@ -492,7 +496,7 @@ class SafeHttpClient:
                         )
                 except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as error:
                     if attempt >= max_attempts:
-                        raise RequestRejected("request transport failed") from error
+                        raise RequestTransportUnavailable("request transport failed") from error
                     self._sleep_before_retry(
                         retry_delay(
                             attempt,

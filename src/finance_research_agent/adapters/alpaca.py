@@ -8,8 +8,11 @@ from decimal import Decimal
 from hashlib import sha256
 from math import isfinite
 from re import fullmatch
+from typing import Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -21,6 +24,7 @@ from pydantic import (
 from finance_research_agent.adapters.http_client import (
     AllowedRequest,
     RequestRejected,
+    RequestTransportUnavailable,
     SafeHttpClient,
 )
 from finance_research_agent.domain.enums import Coverage, Session
@@ -52,10 +56,15 @@ from finance_research_agent.settings import Settings
 ADAPTER_VERSION = "alpaca-daily-bars-v1"
 MARKET_DATA_ADAPTER = "alpaca"
 MARKET_DATA_HOST = "data.alpaca.markets"
+ALPACA_API_HOST = "api.alpaca.markets"
+_NEW_YORK = ZoneInfo("America/New_York")
+_IEX_EXCHANGES = frozenset({"V", "IEX"})
+_PREMARKET_START = time(4, 0)
+_PREMARKET_END = time(9, 30)
 
 
 class _AlpacaPayload(BaseModel):
-    model_config = ConfigDict(extra="ignore", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class _AssetPayload(_AlpacaPayload):
@@ -67,6 +76,10 @@ class _AssetPayload(_AlpacaPayload):
     status: str
     tradable: bool
     fractionable: bool
+    asset_type: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("type", "asset_type"),
+    )
 
 
 class _BarPayload(_AlpacaPayload):
@@ -110,6 +123,28 @@ class _LatestPayload(_AlpacaPayload):
 
 
 _ASSETS_ADAPTER = TypeAdapter(list[_AssetPayload])
+
+_HISTORICAL_FAILURE_CODES = {
+    HistoricalBarsUnavailableReason.NO_DATA: ErrorCode.PROVIDER_NO_DATA,
+    HistoricalBarsUnavailableReason.MISSING_EXPECTED_SESSION: ErrorCode.PROVIDER_MISSING_SESSION,
+    HistoricalBarsUnavailableReason.DUPLICATE_CONFLICT: ErrorCode.PROVIDER_DUPLICATE_CONFLICT,
+    HistoricalBarsUnavailableReason.MALFORMED_BAR: ErrorCode.PROVIDER_MALFORMED_BAR,
+    HistoricalBarsUnavailableReason.STALE: ErrorCode.PROVIDER_STALE,
+    HistoricalBarsUnavailableReason.FUTURE_OR_INCOMPLETE_BAR: (
+        ErrorCode.PROVIDER_FUTURE_OR_INCOMPLETE_BAR
+    ),
+}
+
+
+def _instrument_type(asset_type: str | None) -> Literal["COMMON_STOCK", "ETF", "UNKNOWN"]:
+    if asset_type is None:
+        return "UNKNOWN"
+    normalized = asset_type.casefold()
+    if normalized in {"stock", "common_stock"}:
+        return "COMMON_STOCK"
+    if normalized in {"etf", "exchange_traded_fund"}:
+        return "ETF"
+    return "UNKNOWN"
 
 
 def _utc_timestamp(value: str) -> datetime:
@@ -177,7 +212,12 @@ def _price(value: float) -> Decimal:
 
 
 def _volume(value: float) -> int:
-    if not isinstance(value, float) or not isfinite(value) or value < 0 or not value.is_integer():
+    if (
+        not isinstance(value, float)
+        or not isfinite(value)
+        or value < 0
+        or not value.is_integer()
+    ):
         raise InvalidMarketDataError(
             "Alpaca bar volume must be a finite non-negative integer value"
         )
@@ -212,7 +252,9 @@ def _base_quality_flags(
     adjustment: BarAdjustment,
 ) -> tuple[str, ...]:
     feed_flag = (
-        "FEED_IEX_SINGLE_EXCHANGE" if feed is MarketDataFeed.IEX else "FEED_SIP_CONSOLIDATED_US"
+        "FEED_IEX_SINGLE_EXCHANGE"
+        if feed is MarketDataFeed.IEX
+        else "FEED_SIP_CONSOLIDATED_US"
     )
     return tuple(
         sorted(
@@ -298,7 +340,9 @@ def normalize_alpaca_daily_bars(
             continue
 
         try:
-            normalized = tuple(_normalize_record(record, symbol) for record in provider_records)
+            normalized = tuple(
+                _normalize_record(record, symbol) for record in provider_records
+            )
         except (AttributeError, InvalidMarketDataError, TypeError, ValueError):
             outcomes.append(
                 _failure(
@@ -426,11 +470,13 @@ class AlpacaMarketDataProvider:
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         host: str = MARKET_DATA_HOST,
+        api_host: str = ALPACA_API_HOST,
     ) -> None:
         self._settings = settings
         self._http_client = http_client
         self._clock = clock
         self._host = host
+        self._api_host = api_host
 
     def readiness(self) -> ProviderReadiness:
         configured = (
@@ -467,6 +513,7 @@ class AlpacaMarketDataProvider:
         request_failure, payload = self._get_json(
             "/v2/assets",
             {"status": "active", "asset_class": "us_equity"},
+            host=self._api_host,
         )
         if request_failure is not None:
             return {symbol: request_failure for symbol in requested}
@@ -482,14 +529,6 @@ class AlpacaMarketDataProvider:
             return {symbol: schema_failure for symbol in requested}
 
         by_symbol = {asset.symbol: asset for asset in assets}
-        if set(by_symbol) - set(requested):
-            schema_failure = self._failure(
-                error_code=ErrorCode.PROVIDER_SCHEMA_DRIFT,
-                retryable=False,
-                message="instrument response contains an unrequested symbol",
-            )
-            return {symbol: schema_failure for symbol in requested}
-
         result: dict[str, InstrumentIdentity | ProviderFailure] = {}
         for symbol in requested:
             asset = by_symbol.get(symbol)
@@ -510,17 +549,17 @@ class AlpacaMarketDataProvider:
                 )
                 continue
             result[symbol] = InstrumentIdentity(
-                instrument_id=symbol,
+                instrument_id=asset.id,
                 symbol=symbol,
                 name=asset.name,
-                instrument_type="COMMON_STOCK",
+                instrument_type=_instrument_type(asset.asset_type),
                 primary_exchange=asset.exchange,
                 listing_country="US",
                 currency="USD",
                 is_active=asset.status == "active",
                 is_leveraged=None,
                 is_inverse=None,
-                is_otc=asset.exchange == "OTC",
+                is_otc=None,
             )
         return result
 
@@ -530,6 +569,8 @@ class AlpacaMarketDataProvider:
         start: date,
         end: date,
         *,
+        expected_sessions: tuple[date, ...] | None = None,
+        completed_through_session: date | None = None,
         feed: MarketDataFeed = MarketDataFeed.IEX,
         adjustment: BarAdjustment = BarAdjustment.ALL,
     ) -> dict[str, tuple[DailyBar, ...] | ProviderFailure]:
@@ -560,6 +601,18 @@ class AlpacaMarketDataProvider:
                 error_code=ErrorCode.INVALID_REQUEST,
                 retryable=False,
                 message="daily-bars date range is invalid",
+            )
+            return {symbol: request_failure for symbol in requested}
+        if (
+            not isinstance(expected_sessions, tuple)
+            or not expected_sessions
+            or not isinstance(completed_through_session, date)
+            or isinstance(completed_through_session, datetime)
+        ):
+            request_failure = self._failure(
+                error_code=ErrorCode.INVALID_REQUEST,
+                retryable=False,
+                message="daily-bars calendar sessions are required",
             )
             return {symbol: request_failure for symbol in requested}
 
@@ -625,29 +678,25 @@ class AlpacaMarketDataProvider:
             )
             return {symbol: schema_failure for symbol in requested}
 
-        expected_sessions = tuple(
-            current
-            for offset in range((end - start).days + 1)
-            if (current := start + timedelta(days=offset)).weekday() < 5
-        )
-        if not expected_sessions:
+        retrieved_at = self._now()
+        try:
+            normalization_request = HistoricalDailyBarsRequest(
+                symbols=requested,
+                start_at=datetime.combine(start, time.min, tzinfo=UTC),
+                end_at=min(datetime.combine(end, time.max, tzinfo=UTC), retrieved_at),
+                expected_sessions=expected_sessions,
+                completed_through_session=completed_through_session,
+                feed=feed,
+                adjustment=adjustment,
+                evidence_cutoff_at=retrieved_at + timedelta(days=1),
+            )
+        except InvalidMarketDataError:
             request_failure = self._failure(
                 error_code=ErrorCode.INVALID_REQUEST,
                 retryable=False,
-                message="daily-bars request contains no weekday sessions",
+                message="daily-bars calendar sessions are invalid",
             )
             return {symbol: request_failure for symbol in requested}
-        retrieved_at = self._now()
-        normalization_request = HistoricalDailyBarsRequest(
-            symbols=requested,
-            start_at=datetime.combine(start, time.min, tzinfo=UTC),
-            end_at=min(datetime.combine(end, time.max, tzinfo=UTC), retrieved_at),
-            expected_sessions=expected_sessions,
-            completed_through_session=expected_sessions[-1],
-            feed=feed,
-            adjustment=adjustment,
-            evidence_cutoff_at=retrieved_at + timedelta(days=1),
-        )
         outcomes = normalize_alpaca_daily_bars(
             records,
             request=normalization_request,
@@ -660,8 +709,9 @@ class AlpacaMarketDataProvider:
                     observation.bar for observation in outcome.observations
                 )
             else:
+                error_code = _HISTORICAL_FAILURE_CODES[outcome.reason]
                 result[outcome.symbol] = self._failure(
-                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    error_code=error_code,
                     retryable=False,
                     symbol=outcome.symbol,
                     message=f"historical data unavailable: {outcome.reason.value}",
@@ -743,6 +793,8 @@ class AlpacaMarketDataProvider:
                 if isinstance(item, _TradePayload):
                     value = _positive_decimal(item.price)
                     observed_at = _utc_timestamp(item.timestamp)
+                    if item.exchange not in _IEX_EXCHANGES:
+                        raise ValueError("premarket trade venue does not match IEX feed")
                     raw_payload = item.model_dump(mode="json", by_alias=True)
                 else:
                     ask = _positive_decimal(item.ask_price)
@@ -752,6 +804,9 @@ class AlpacaMarketDataProvider:
                     raw_payload = item.model_dump(mode="json", by_alias=True)
                 if observed_at > as_of or observed_at > retrieved_at:
                     raise ValueError("premarket observation is after the evidence cutoff")
+                local_time = observed_at.astimezone(_NEW_YORK).time()
+                if not _PREMARKET_START <= local_time < _PREMARKET_END:
+                    raise ValueError("premarket observation is outside the US premarket window")
                 result[symbol] = PriceObservation(
                     instrument_id=symbol,
                     value=value,
@@ -800,6 +855,8 @@ class AlpacaMarketDataProvider:
         self,
         path: str,
         query: Mapping[str, str],
+        *,
+        host: str | None = None,
     ) -> tuple[ProviderFailure | None, str | None]:
         if self.readiness().configured is False:
             return (
@@ -813,7 +870,7 @@ class AlpacaMarketDataProvider:
         request = AllowedRequest.for_adapter(
             MARKET_DATA_ADAPTER,
             path,
-            host=self._host,
+            host=self._host if host is None else host,
             query=query,
             accepted_content_types=("application/json",),
         )
@@ -827,12 +884,21 @@ class AlpacaMarketDataProvider:
                 deadline=self._now() + timedelta(seconds=60),
                 provider_credentials=(key.get_secret_value(), secret.get_secret_value()),
             )
-        except RequestRejected:
+        except RequestTransportUnavailable:
             return (
                 self._failure(
                     error_code=ErrorCode.PROVIDER_UNAVAILABLE,
                     retryable=True,
                     message="market-data transport unavailable",
+                ),
+                None,
+            )
+        except RequestRejected:
+            return (
+                self._failure(
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=False,
+                    message="market-data request was rejected by policy",
                 ),
                 None,
             )

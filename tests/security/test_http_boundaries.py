@@ -11,6 +11,7 @@ import pytest
 from finance_research_agent.adapters.http_client import (
     AllowedRequest,
     RequestRejected,
+    RequestTransportUnavailable,
     SafeHttpClient,
     _PinnedNetworkBackend,
 )
@@ -192,6 +193,28 @@ def test_retryable_responses_are_retried_with_injected_delay(source_policy: Sour
     assert result.status_code == 200
     assert result.attempts == 2
     assert delays == [Decimal("0.6")]
+
+
+def test_exhausted_transport_errors_have_typed_retryable_signal(
+    source_policy: SourcePolicy,
+) -> None:
+    policy = source_policy.model_copy(update={"retry_attempts": 0})
+
+    def fail_transport(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline", request=request)
+
+    client = SafeHttpClient(
+        policy,
+        transport=httpx.MockTransport(fail_transport),
+        resolver=lambda host, port: ("93.184.216.34",),
+        clock=lambda: datetime(2026, 9, 21, 12, tzinfo=UTC),
+    )
+
+    with pytest.raises(RequestTransportUnavailable):
+        client.request(
+            AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
+            deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+        )
 
 
 def test_default_retry_jitter_uses_the_policy_bound(source_policy: SourcePolicy) -> None:

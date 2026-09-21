@@ -1,0 +1,34 @@
+[
+  {
+    "id": "stock-id",
+    "symbol": "AAPL",
+    "name": "Apple Inc.",
+    "exchange": "NASDAQ",
+    "class": "us_equity",
+    "type": "stock",
+    "status": "active",
+    "tradable": true,
+    "fractionable": true
+  },
+  {
+    "id": "etf-id",
+    "symbol": "SPY",
+    "name": "SPDR S&P 500 ETF Trust",
+    "exchange": "ARCA",
+    "class": "us_equity",
+    "type": "etf",
+    "status": "active",
+    "tradable": true,
+    "fractionable": true
+  },
+  {
+    "id": "unknown-id",
+    "symbol": "QQQ",
+    "name": "Invesco QQQ Trust",
+    "exchange": "NASDAQ",
+    "class": "us_equity",
+    "status": "active",
+    "tradable": true,
+    "fractionable": true
+  }
+]

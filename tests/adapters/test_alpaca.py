@@ -1,13 +1,19 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
 
 from finance_research_agent.adapters.alpaca import AlpacaMarketDataProvider
-from finance_research_agent.adapters.http_client import SafeHttpClient
+from finance_research_agent.adapters.http_client import (
+    RequestDeadlineExceeded,
+    RequestRejected,
+    RequestTransportUnavailable,
+    SafeHttpClient,
+)
 from finance_research_agent.domain.policies import SourcePolicy
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.market_data.historical import BarAdjustment, MarketDataFeed
@@ -15,6 +21,7 @@ from finance_research_agent.settings import Settings
 
 FIXTURES = Path("tests/fixtures/alpaca")
 AS_OF = datetime(2026, 8, 19, 12, 58, tzinfo=UTC)
+EXPECTED_SESSIONS = (date(2026, 8, 18), date(2026, 8, 19))
 
 
 def _provider(
@@ -33,7 +40,8 @@ def _provider(
     )
 
     def respond(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "data.alpaca.markets"
+        expected_host = "api.alpaca.markets" if path == "/v2/assets" else "data.alpaca.markets"
+        assert request.url.host == expected_host
         assert request.url.path == path
         if require_auth:
             assert request.headers["APCA-API-KEY-ID"] == "fixture-key"
@@ -47,8 +55,10 @@ def _provider(
     policy = SourcePolicy(
         version="1",
         allowed_adapters=("alpaca",),
-        allowed_https_domains=("data.alpaca.markets",),
-        allowed_hosts_by_adapter=FrozenMap({"alpaca": ("data.alpaca.markets",)}),
+        allowed_https_domains=("api.alpaca.markets", "data.alpaca.markets"),
+        allowed_hosts_by_adapter=FrozenMap(
+            {"alpaca": ("api.alpaca.markets", "data.alpaca.markets")}
+        ),
         freshness_by_data_type=FrozenMap({"market_data": 60}),
         cache_retention_seconds=60,
         request_deadline_seconds=Decimal("10"),
@@ -120,8 +130,8 @@ def test_instruments_are_normalized_to_provider_neutral_identity() -> None:
     result = provider.fetch_instruments(["AAPL"])
     identity = result["AAPL"]
     assert identity.symbol == "AAPL"
-    assert identity.instrument_id == "AAPL"
-    assert identity.instrument_type == "COMMON_STOCK"
+    assert identity.instrument_id == "aapl-id"
+    assert identity.instrument_type == "UNKNOWN"
     assert identity.primary_exchange == "NASDAQ"
     assert identity.currency == "USD"
     assert identity.is_active is True
@@ -137,6 +147,8 @@ def test_daily_bars_use_the_existing_completed_history_normalizer() -> None:
         ["AAPL"],
         datetime(2026, 8, 18, tzinfo=UTC).date(),
         datetime(2026, 8, 19, tzinfo=UTC).date(),
+        expected_sessions=EXPECTED_SESSIONS,
+        completed_through_session=EXPECTED_SESSIONS[-1],
     )
     bars = result["AAPL"]
     assert [bar.session_date.isoformat() for bar in bars] == ["2026-08-18", "2026-08-19"]
@@ -154,6 +166,8 @@ def test_daily_bar_request_preserves_explicit_feed_and_adjustment() -> None:
         ["AAPL"],
         datetime(2026, 8, 18, tzinfo=UTC).date(),
         datetime(2026, 8, 19, tzinfo=UTC).date(),
+        expected_sessions=EXPECTED_SESSIONS,
+        completed_through_session=EXPECTED_SESSIONS[-1],
         feed=MarketDataFeed.SIP,
         adjustment=BarAdjustment.SPLIT,
     )
@@ -170,9 +184,11 @@ def test_daily_bar_symbol_absence_is_scoped_without_fabricating_a_bar() -> None:
         ["AAPL", "MSFT"],
         datetime(2026, 8, 18, tzinfo=UTC).date(),
         datetime(2026, 8, 19, tzinfo=UTC).date(),
+        expected_sessions=EXPECTED_SESSIONS,
+        completed_through_session=EXPECTED_SESSIONS[-1],
     )
     assert result["MSFT"].symbol == "MSFT"
-    assert result["MSFT"].error_code == "PROVIDER_UNAVAILABLE"
+    assert result["MSFT"].error_code == "PROVIDER_NO_DATA"
     assert result["MSFT"].scope == "symbol"
 
 
@@ -208,6 +224,291 @@ def test_invalid_premarket_timestamp_is_not_rewritten_into_success() -> None:
     )
     result = provider.fetch_premarket_observations(["AAPL"], AS_OF)
     assert result["AAPL"].error_code == "PROVIDER_SCHEMA_DRIFT"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("x", "NASDAQ"),
+        ("t", "2026-08-19T14:00:00Z"),
+        ("t", "2026-08-19T13:00:00Z"),
+    ),
+)
+def test_premarket_rejects_wrong_venue_outside_window_and_future_trade(
+    field: str, value: str
+) -> None:
+    payload = {
+        "trades": {
+            "AAPL": {
+                "p": 192.34,
+                "s": 10,
+                "t": "2026-08-19T12:58:00Z",
+                "x": "V",
+            }
+        }
+    }
+    payload["trades"]["AAPL"][field] = value
+    provider = _provider("premarket-iex.json", payload=payload)
+
+    result = provider.fetch_premarket_observations(["AAPL"], AS_OF)
+
+    assert result["AAPL"].error_code == "PROVIDER_SCHEMA_DRIFT"
+    assert result["AAPL"].retryable is False
+
+
+def test_instrument_catalog_selects_requested_assets_and_reports_absence_per_symbol() -> None:
+    provider = _provider(
+        "instruments.json",
+        path="/v2/assets",
+        payload=[
+            {
+                "id": "aapl-id",
+                "symbol": "AAPL",
+                "name": "Apple Inc.",
+                "exchange": "NASDAQ",
+                "class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "fractionable": True,
+            },
+            {
+                "id": "msft-id",
+                "symbol": "MSFT",
+                "name": "Microsoft Corporation",
+                "exchange": "NASDAQ",
+                "class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "fractionable": True,
+            },
+        ],
+    )
+
+    result = provider.fetch_instruments(["AAPL", "SPY"])
+
+    assert result["AAPL"].instrument_id == "aapl-id"
+    assert result["SPY"].error_code == "UNSUPPORTED_INSTRUMENT"
+    assert result["SPY"].scope == "symbol"
+
+
+def test_instrument_classification_requires_explicit_provider_evidence() -> None:
+    provider = _provider(
+        "instruments-classifications.json",
+        path="/v2/assets",
+    )
+
+    result = provider.fetch_instruments(["AAPL", "SPY", "QQQ"])
+
+    assert result["AAPL"].instrument_id == "stock-id"
+    assert result["AAPL"].instrument_type == "COMMON_STOCK"
+    assert result["SPY"].instrument_id == "etf-id"
+    assert result["SPY"].instrument_type == "ETF"
+    assert result["QQQ"].instrument_id == "unknown-id"
+    assert result["QQQ"].instrument_type == "UNKNOWN"
+
+
+def test_unknown_payload_shape_is_rejected_without_guessing() -> None:
+    provider = _provider(
+        "premarket-iex.json",
+        payload={
+            "trades": {
+                "AAPL": {
+                    "p": 192.34,
+                    "s": 10,
+                    "t": "2026-08-19T12:58:00Z",
+                    "x": "V",
+                    "unexpected": "schema drift",
+                }
+            }
+        },
+    )
+
+    result = provider.fetch_premarket_observations(["AAPL"], AS_OF)
+
+    assert result["AAPL"].error_code == "PROVIDER_SCHEMA_DRIFT"
+
+
+def test_daily_bars_require_caller_supplied_calendar_sessions() -> None:
+    provider = _provider(
+        "daily-bars.json",
+        path="/v2/stocks/bars",
+        clock=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+
+    result = provider.fetch_daily_bars(
+        ["AAPL"],
+        date(2026, 8, 18),
+        date(2026, 8, 19),
+    )
+
+    assert result["AAPL"].error_code == "INVALID_REQUEST"
+    assert result["AAPL"].retryable is False
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_code"),
+    (
+        (
+            {"bars": {}, "next_page_token": None},
+            "PROVIDER_NO_DATA",
+        ),
+        (
+            {
+                "bars": {
+                    "AAPL": [
+                        {
+                            "t": "2026-08-19T20:00:00Z",
+                            "o": 191.0,
+                            "h": 194.0,
+                            "l": 190.0,
+                            "c": 193.0,
+                            "v": 1100,
+                        }
+                    ]
+                },
+                "next_page_token": None,
+            },
+            "PROVIDER_MISSING_SESSION",
+        ),
+        (
+            {
+                "bars": {
+                    "AAPL": [
+                        {
+                            "t": "2026-08-18T20:00:00Z",
+                            "o": 190.0,
+                            "h": 193.0,
+                            "l": 189.0,
+                            "c": 192.0,
+                            "v": 1000,
+                        }
+                    ]
+                },
+                "next_page_token": None,
+            },
+            "PROVIDER_STALE",
+        ),
+        (
+            {
+                "bars": {
+                    "AAPL": [
+                        {
+                            "t": "2026-08-18T20:00:00Z",
+                            "o": 190.0,
+                            "h": 193.0,
+                            "l": 189.0,
+                            "c": 192.0,
+                            "v": 1000,
+                        },
+                        {
+                            "t": "2026-08-18T20:00:00Z",
+                            "o": 190.0,
+                            "h": 193.0,
+                            "l": 189.0,
+                            "c": 191.0,
+                            "v": 1000,
+                        },
+                    ]
+                },
+                "next_page_token": None,
+            },
+            "PROVIDER_DUPLICATE_CONFLICT",
+        ),
+        (
+            {
+                "bars": {
+                    "AAPL": [
+                        {
+                            "t": "2026-08-18T20:00:00Z",
+                            "o": 190.0,
+                            "h": 193.0,
+                            "l": 189.0,
+                            "c": 192.0,
+                            "v": -1,
+                        },
+                        {
+                            "t": "2026-08-19T20:00:00Z",
+                            "o": 191.0,
+                            "h": 194.0,
+                            "l": 190.0,
+                            "c": 193.0,
+                            "v": 1100,
+                        },
+                    ]
+                },
+                "next_page_token": None,
+            },
+            "PROVIDER_MALFORMED_BAR",
+        ),
+        (
+            {
+                "bars": {
+                    "AAPL": [
+                        {
+                            "t": "2026-08-20T20:00:00Z",
+                            "o": 190.0,
+                            "h": 193.0,
+                            "l": 189.0,
+                            "c": 192.0,
+                            "v": 1000,
+                        }
+                    ]
+                },
+                "next_page_token": None,
+            },
+            "PROVIDER_FUTURE_OR_INCOMPLETE_BAR",
+        ),
+    ),
+)
+def test_historical_normalizer_reason_maps_to_distinct_provider_failure(
+    payload: object, expected_code: str
+) -> None:
+    provider = _provider(
+        "daily-bars.json",
+        path="/v2/stocks/bars",
+        payload=payload,
+        clock=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+
+    result = provider.fetch_daily_bars(
+        ["AAPL"],
+        date(2026, 8, 18),
+        date(2026, 8, 19),
+        expected_sessions=EXPECTED_SESSIONS,
+        completed_through_session=EXPECTED_SESSIONS[-1],
+    )
+
+    assert result["AAPL"].error_code == expected_code
+    assert result["AAPL"].retryable is False
+    assert result["AAPL"].message.startswith("historical data unavailable:")
+
+
+@pytest.mark.parametrize(
+    ("exception", "retryable"),
+    (
+        (RequestRejected("policy"), False),
+        (RequestDeadlineExceeded("deadline"), False),
+        (RequestTransportUnavailable("transport"), True),
+    ),
+)
+def test_request_rejection_retryability_uses_typed_boundary_signal(
+    exception: RequestRejected, retryable: bool
+) -> None:
+    class RejectingClient:
+        def request(self, *args: object, **kwargs: object) -> object:
+            raise exception
+
+    settings = Settings(
+        data_dir=Path("data"),
+        alpaca_api_key="fixture-key",
+        alpaca_api_secret="fixture-secret",
+    )
+    provider = AlpacaMarketDataProvider(settings, cast(SafeHttpClient, RejectingClient()))
+
+    result = provider.fetch_premarket_observations(["AAPL"], AS_OF)
+
+    assert result["AAPL"].error_code == "PROVIDER_UNAVAILABLE"
+    assert result["AAPL"].retryable is retryable
 
 
 def test_configured_requests_send_only_market_data_credentials() -> None:

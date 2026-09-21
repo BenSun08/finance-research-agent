@@ -48,7 +48,13 @@ class MarketDataProvider(Protocol):
     ) -> Mapping[str, InstrumentIdentity | ProviderFailure]: ...
 
     def fetch_daily_bars(
-        self, symbols: Sequence[str], start: date, end: date
+        self,
+        symbols: Sequence[str],
+        start: date,
+        end: date,
+        *,
+        expected_sessions: tuple[date, ...] | None = None,
+        completed_through_session: date | None = None,
     ) -> Mapping[str, tuple[DailyBar, ...] | ProviderFailure]: ...
 
     def fetch_premarket_observations(
