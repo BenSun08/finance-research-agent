@@ -188,20 +188,18 @@ class MacroCalendarAdapter:
                         matches = _ISO_TIMESTAMP.findall(" ".join(row.text))
                         raw_event_time = matches[0] if matches else ""
                     event_time = _parse_timestamp(raw_event_time, source.timezone)
-                    if not start <= event_time < end:
-                        continue
-                    if event_time > cutoff_at:
-                        raise EvidenceCutoffViolation("macro event is after the evidence cutoff")
                     raw_published = row.attributes.get("data-published", "")
                     published_time = (
                         _parse_timestamp(raw_published, "UTC") if raw_published else None
                     )
-                    if published_time is not None and published_time > now:
-                        raise ValueError("macro publication is after retrieval")
                     if published_time is not None and published_time > cutoff_at:
                         raise EvidenceCutoffViolation(
                             "macro publication is after the evidence cutoff"
                         )
+                    if published_time is not None and published_time > now:
+                        raise ValueError("macro publication is after retrieval")
+                    if not start <= event_time < end:
+                        continue
                     evidence_id = f"macro-evidence-{provider}-{row_index}"
                     observation = SourceObservation(
                         observation_id=f"macro-observation-{provider}-{row_index}",

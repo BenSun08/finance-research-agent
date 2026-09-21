@@ -81,6 +81,52 @@ def test_macro_retrieval_after_cutoff_is_unavailable_not_empty_valid() -> None:
     assert result.health.empty_valid is False
 
 
+def test_macro_future_scheduled_event_with_frozen_evidence_is_retained() -> None:
+    source = MacroCalendarSource(
+        provider="federal_reserve",
+        url="https://www.federalreserve.gov/releases/calendar.htm",
+    )
+    start = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 8, 19, 16, 0, tzinfo=UTC)
+    payload = (
+        b'<table><tr data-event-time="2026-08-19T15:00:00Z" '
+        b'data-published="2026-08-19T12:00:00Z"><td>Future release</td></tr></table>'
+    )
+    adapter = MacroCalendarAdapter(
+        _client(_response("/releases/calendar.htm", payload, "text/html")),
+        _policy(),
+        sources=(source,),
+        clock=lambda: CUTOFF,
+    )
+    result = adapter.collect_events((), start, end, CUTOFF)
+    assert result.events[0].event_time == datetime(2026, 8, 19, 15, 0, tzinfo=UTC)
+    assert result.health.available is True
+    assert result.health.empty_valid is False
+
+
+def test_macro_future_event_with_post_cutoff_publication_is_rejected() -> None:
+    source = MacroCalendarSource(
+        provider="federal_reserve",
+        url="https://www.federalreserve.gov/releases/calendar.htm",
+    )
+    start = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 8, 19, 16, 0, tzinfo=UTC)
+    payload = (
+        b'<table><tr data-event-time="2026-08-19T15:00:00Z" '
+        b'data-published="2026-08-19T13:00:00Z"><td>Future release</td></tr></table>'
+    )
+    adapter = MacroCalendarAdapter(
+        _client(_response("/releases/calendar.htm", payload, "text/html")),
+        _policy(),
+        sources=(source,),
+        clock=lambda: CUTOFF,
+    )
+    result = adapter.collect_events((), start, end, CUTOFF)
+    assert result.events == ()
+    assert result.health.error_code == ErrorCode.EVIDENCE_CUTOFF_VIOLATION
+    assert result.health.empty_valid is False
+
+
 def test_news_retrieval_after_cutoff_is_unavailable_not_empty_valid() -> None:
     from finance_research_agent.settings import Settings
 
@@ -220,6 +266,48 @@ def test_company_ir_missing_timestamp_returns_unverified_evidence() -> None:
     assert result.evidence[0].authority_tier > 1
     assert result.evidence[0].source.quality_flags == ("UNVERIFIED_CONTENT",)
     assert result.health.available is True
+    assert result.health.empty_valid is False
+
+
+def test_company_ir_future_scheduled_event_with_frozen_evidence_is_retained() -> None:
+    payload = (
+        b'<html><head><meta name="published" content="2026-08-19T12:00:00Z">'
+        b'</head><body><h1>Apple Inc. release</h1>'
+        b'<time datetime="2026-08-19T15:00:00Z">Scheduled</time></body></html>'
+    )
+    start = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 8, 19, 16, 0, tzinfo=UTC)
+    adapter = CompanyIrAdapter(
+        _client(_response("/releases/aapl.html", payload, "text/html")),
+        _policy(),
+        watchlist_items=(_company_item(),),
+        company_names={"AAPL": "Apple Inc."},
+        clock=lambda: CUTOFF,
+    )
+    result = adapter.collect_events(("AAPL",), start, end, CUTOFF)
+    assert result.events[0].event_time == datetime(2026, 8, 19, 15, 0, tzinfo=UTC)
+    assert result.events[0].verified is True
+    assert result.health.available is True
+
+
+def test_company_ir_future_event_with_post_cutoff_publication_is_rejected() -> None:
+    payload = (
+        b'<html><head><meta name="published" content="2026-08-19T13:00:00Z">'
+        b'</head><body><h1>Apple Inc. release</h1>'
+        b'<time datetime="2026-08-19T15:00:00Z">Scheduled</time></body></html>'
+    )
+    start = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 8, 19, 16, 0, tzinfo=UTC)
+    adapter = CompanyIrAdapter(
+        _client(_response("/releases/aapl.html", payload, "text/html")),
+        _policy(),
+        watchlist_items=(_company_item(),),
+        company_names={"AAPL": "Apple Inc."},
+        clock=lambda: CUTOFF,
+    )
+    result = adapter.collect_events(("AAPL",), start, end, CUTOFF)
+    assert result.events == ()
+    assert result.health.error_code == ErrorCode.EVIDENCE_CUTOFF_VIOLATION
     assert result.health.empty_valid is False
 
 

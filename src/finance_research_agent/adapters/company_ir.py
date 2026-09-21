@@ -212,9 +212,8 @@ class CompanyIrAdapter:
                 published_time = (
                     _timestamp(parser.published_time) if parser.published_time else None
                 )
-                if event_time > cutoff_at or (
-                    published_time is not None
-                    and (published_time > cutoff_at or published_time > now)
+                if published_time is not None and (
+                    published_time > cutoff_at or published_time > now
                 ):
                     raise EvidenceCutoffViolation("company IR content is after the evidence cutoff")
                 if not start <= event_time < end:
