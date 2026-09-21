@@ -230,7 +230,25 @@ def test_each_binary_eligibility_failure_blocks_plan(
     )
     snapshot = _snapshot(instrument)
     bars = tuple(
-        bar.model_copy(update={"close": close, "volume": volume})
+        CompletedDailyBar(
+            instrument_id=bar.instrument_id,
+            session_date=bar.session_date,
+            source_timestamp=bar.source_timestamp,
+            open=close,
+            high=close + Decimal("1"),
+            low=close - Decimal("1"),
+            close=close,
+            volume=volume,
+            session=bar.session,
+            provider=bar.provider,
+            feed=bar.feed,
+            coverage=bar.coverage,
+            adjustment=bar.adjustment,
+            retrieved_at=bar.retrieved_at,
+            evidence_cutoff_at=bar.evidence_cutoff_at,
+            evidence_id=bar.evidence_id,
+            quality_flags=bar.quality_flags,
+        )
         for bar in snapshot.completed_daily_bars[:history_count]
     )
     snapshot = snapshot.model_copy(update={"completed_daily_bars": bars})

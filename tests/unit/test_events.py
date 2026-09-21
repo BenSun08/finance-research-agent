@@ -193,6 +193,30 @@ def test_unknown_event_evidence_projection_is_rejected() -> None:
         )
 
 
+def test_multi_symbol_projection_is_known_but_only_target_events_are_gated() -> None:
+    assessment = assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(
+            EventRecord(
+                event_id="aapl-filing",
+                event_type="FILING",
+                subject_symbol="AAPL",
+                event_time=NOW - timedelta(days=1),
+                verified=True,
+                materiality="HIGH",
+                supporting_evidence_ids=("ev-aapl-filing",),
+                conflict_evidence_ids=(),
+            ),
+        ),
+        plan_expires_at=NOW + timedelta(days=2),
+        evidence_cutoff_at=NOW,
+        event_evidence=(_projection("aapl-filing"),),
+    )
+
+    assert assessment.plan_status is PlanStatus.DRAFT
+    assert assessment.gates == ()
+
+
 def test_duplicate_event_evidence_projection_is_rejected() -> None:
     event = EventRecord(
         event_id="duplicate-projection",

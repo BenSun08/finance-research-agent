@@ -87,10 +87,10 @@ def assess_event_risk(
     relevant_events = tuple(
         event for event in events if event.subject_symbol in {None, instrument.symbol}
     )
-    relevant_event_ids = {event.event_id for event in relevant_events}
+    supplied_event_ids = {event.event_id for event in events}
     projections: dict[str, EventEvidenceProjection] = {}
     for projection in event_evidence:
-        if projection.event_id not in relevant_event_ids:
+        if projection.event_id not in supplied_event_ids:
             raise ValueError("unknown event evidence projection")
         if projection.event_id in projections:
             raise ValueError("duplicate event evidence projection")
