@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 from decimal import Decimal
 from email.utils import format_datetime
+from urllib.parse import quote
 
 import httpcore
 import httpx
@@ -23,6 +24,9 @@ def source_policy() -> SourcePolicy:
         version="1",
         allowed_adapters=("company_ir", "sec"),
         allowed_https_domains=("example.test",),
+        allowed_hosts_by_adapter=FrozenMap(
+            {"company_ir": ("example.test",), "sec": ("example.test",)}
+        ),
         freshness_by_data_type=FrozenMap({"official_events": 86400}),
         cache_retention_seconds=86400,
         request_deadline_seconds=Decimal("10"),
@@ -410,31 +414,13 @@ def test_request_does_not_accept_headers_or_encoded_traversal() -> None:
             }
         )
 
-    request = AllowedRequest.for_adapter(
-        "sec",
-        "/%2e%2e/private",
-        accepted_content_types=("application/json",),
-        response_byte_limit=100,
-    )
-    with pytest.raises(RequestRejected, match="traversal"):
-        SafeHttpClient(
-            SourcePolicy(
-                version="1",
-                allowed_adapters=("sec",),
-                allowed_https_domains=("example.test",),
-                freshness_by_data_type=FrozenMap({"official_events": 1}),
-                cache_retention_seconds=1,
-                request_deadline_seconds=Decimal("1"),
-                retry_attempts=0,
-                retry_backoff_seconds=Decimal("0.1"),
-                retry_jitter_seconds=Decimal("0.1"),
-                per_run_request_budgets=FrozenMap({"official_events": 1}),
-                maximum_response_bytes=100,
-                allowed_content_types=("application/json",),
-                excerpt_limits=FrozenMap({"application/json": 10}),
-            ),
-            resolver=lambda host, port: ("93.184.216.34",),
-        ).validate(request)
+    with pytest.raises(ValueError, match="traversal"):
+        AllowedRequest.for_adapter(
+            "sec",
+            "/%2e%2e/private",
+            accepted_content_types=("application/json",),
+            response_byte_limit=100,
+        )
 
 
 def test_path_cannot_smuggle_query_data_outside_bounded_query_mapping() -> None:
@@ -442,6 +428,19 @@ def test_path_cannot_smuggle_query_data_outside_bounded_query_mapping() -> None:
         AllowedRequest.for_adapter(
             "sec",
             "/submissions?unbounded=outside",
+            accepted_content_types=("application/json",),
+        )
+
+
+def test_path_rejects_ninth_level_encoded_query_delimiter() -> None:
+    nested_delimiter = "?"
+    for _ in range(9):
+        nested_delimiter = quote(nested_delimiter, safe="")
+
+    with pytest.raises(ValueError, match="path"):
+        AllowedRequest.for_adapter(
+            "sec",
+            f"/submissions/{nested_delimiter}",
             accepted_content_types=("application/json",),
         )
 
@@ -478,6 +477,7 @@ def test_adapter_hosts_and_non_default_ports_are_policy_bound(source_policy: Sou
                 accepted_content_types=("application/json",),
             )
         )
+
     with pytest.raises(RequestRejected, match="port"):
         client.validate(
             AllowedRequest.for_adapter(
@@ -494,6 +494,54 @@ def test_adapter_hosts_and_non_default_ports_are_policy_bound(source_policy: Sou
             "sec",
             "/submissions%3Funbounded=outside",
             accepted_content_types=("application/json",),
+        )
+
+
+def test_client_rejects_requests_without_adapter_host_policy(
+    source_policy: SourcePolicy,
+) -> None:
+    policy_without_mapping = source_policy.model_copy(update={"allowed_hosts_by_adapter": None})
+    client = SafeHttpClient(policy_without_mapping, resolver=lambda host, port: ("93.184.216.34",))
+
+    with pytest.raises(RequestRejected, match="adapter host policy"):
+        client.validate(AllowedRequest.for_adapter("sec", "/submissions/CIK.json"))
+
+
+def _nested_percent_encoding(value: str, rounds: int = 9) -> str:
+    for _ in range(rounds):
+        value = quote(value, safe="")
+    return value
+
+
+@pytest.mark.parametrize(
+    "redirect_path",
+    [
+        "/" + "a" * 2048,
+        "/safe/" + _nested_percent_encoding("?"),
+        "/safe/%0A",
+    ],
+)
+def test_redirect_path_uses_the_same_bounded_safe_validator(
+    source_policy: SourcePolicy,
+    redirect_path: str,
+) -> None:
+    policy = source_policy.model_copy(update={"allow_redirects": True})
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            302,
+            headers={"location": f"https://example.test{redirect_path}"},
+        )
+    )
+    client = SafeHttpClient(
+        policy,
+        transport=transport,
+        resolver=lambda host, port: ("93.184.216.34",),
+    )
+
+    with pytest.raises(RequestRejected, match="path"):
+        client.request(
+            AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
+            deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
         )
 
 

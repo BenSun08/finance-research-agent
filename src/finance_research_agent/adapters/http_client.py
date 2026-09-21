@@ -25,6 +25,7 @@ from finance_research_agent.domain.policies import SourcePolicy
 from finance_research_agent.domain.types import FrozenMap
 
 _DEFAULT_HOST = "example.test"
+_MAX_PATH_LENGTH = 2048
 _MAX_QUERY_ENTRIES = 32
 _MAX_QUERY_VALUE_LENGTH = 512
 _MAX_RETRY_DELAY = Decimal("60")
@@ -57,17 +58,15 @@ class AllowedRequest(BaseModel):
     method: Literal["GET"]
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(default=443, ge=1, le=65535)
-    path: str = Field(min_length=1, max_length=2048)
+    path: str = Field(min_length=1, max_length=_MAX_PATH_LENGTH)
     query: FrozenMap[str, str] = FrozenMap({})
     accepted_content_types: tuple[str, ...] = Field(min_length=1, max_length=32)
     response_byte_limit: int = Field(default=1_000_000, gt=0, le=10_000_000)
 
     @field_validator("path")
     @classmethod
-    def path_has_no_embedded_query(cls, value: str) -> str:
-        if _contains_path_delimiter(value):
-            raise ValueError("path contains an ambiguous query or fragment delimiter")
-        return value
+    def path_is_safe(cls, value: str) -> str:
+        return _validate_path(value)
 
     @field_validator("query")
     @classmethod
@@ -388,12 +387,11 @@ class SafeHttpClient:
         host = request.host.strip("[]").lower()
         if host == "localhost":
             raise RequestRejected("host is not allowlisted")
-        if self._policy.allowed_hosts_by_adapter is None:
-            allowed_hosts = self._policy.allowed_https_domains
-            host_error = "host is not allowlisted"
-        else:
-            allowed_hosts = self._policy.allowed_hosts_by_adapter[request.adapter]
-            host_error = "adapter host is not allowlisted"
+        allowed_hosts_by_adapter = self._policy.allowed_hosts_by_adapter
+        if allowed_hosts_by_adapter is None or request.adapter not in allowed_hosts_by_adapter:
+            raise RequestRejected("adapter host policy is required")
+        allowed_hosts = allowed_hosts_by_adapter[request.adapter]
+        host_error = "adapter host is not allowlisted"
         if not _host_matches_policy(host, allowed_hosts):
             raise RequestRejected(host_error)
         if not _port_allowed(host, request.port, self._policy.allowed_ports_by_host):
@@ -415,12 +413,7 @@ class SafeHttpClient:
             if not addresses or any(_unsafe_address(address) for address in addresses):
                 raise RequestRejected("host resolves to a private or local address")
 
-        if request.path != request.path.strip() or not request.path.startswith("/"):
-            raise RequestRejected("path must be an absolute request path")
-        if any(character in request.path for character in "#\\\x00\r\n"):
-            raise RequestRejected("path contains an invalid character")
-        if _contains_traversal(request.path):
-            raise RequestRejected("path contains traversal")
+        _validate_path(request.path)
         netloc = host if request.port == 443 else f"{host}:{request.port}"
         raw_url = urllib.parse.urlunsplit(
             ("https", netloc, request.path, urllib.parse.urlencode(dict(request.query)), "")
@@ -548,10 +541,9 @@ class SafeHttpClient:
             or target.username is not None
             or target.password is not None
             or target.fragment
-            or not target.path.startswith("/")
-            or _contains_traversal(target.path)
         ):
             raise RequestRejected("redirect crosses an unsafe host")
+        _validate_path(target.path)
         query = _validate_query_string(target.query)
         return urllib.parse.urlunsplit((target.scheme, target.netloc, target.path, query, ""))
 
@@ -573,23 +565,43 @@ def _port_allowed(
 
 
 def _contains_traversal(path: str) -> bool:
-    candidate = path.replace("\\", "/")
-    for _ in range(8):
-        decoded = urllib.parse.unquote(candidate)
-        if decoded == candidate:
-            break
-        candidate = decoded
+    candidate = _fully_percent_decode(path).replace("\\", "/")
     return any(part in {".", ".."} for part in candidate.split("/"))
 
 
 def _contains_path_delimiter(path: str) -> bool:
-    candidate = path
-    for _ in range(8):
+    candidate = _fully_percent_decode(path)
+    return "?" in candidate or "#" in candidate
+
+
+def _validate_path(path: str) -> str:
+    if len(path) > _MAX_PATH_LENGTH:
+        raise RequestRejected("path exceeds maximum length")
+    if path != path.strip() or not path.startswith("/"):
+        raise RequestRejected("path must be an absolute request path")
+    decoded = _fully_percent_decode(path)
+    if len(decoded) > _MAX_PATH_LENGTH or not decoded.startswith("/"):
+        raise RequestRejected("path must be an absolute request path")
+    if (
+        any(unicodedata.category(character) in {"Cc", "Cf"} for character in f"{path}{decoded}")
+        or "\\" in path
+        or "\\" in decoded
+    ):
+        raise RequestRejected("path contains an invalid control or format character")
+    if _contains_path_delimiter(path):
+        raise RequestRejected("path contains an ambiguous query or fragment delimiter")
+    if _contains_traversal(path):
+        raise RequestRejected("path contains traversal")
+    return path
+
+
+def _fully_percent_decode(value: str) -> str:
+    candidate = value
+    while True:
         decoded = urllib.parse.unquote(candidate)
         if decoded == candidate:
-            break
+            return candidate
         candidate = decoded
-    return "?" in candidate or "#" in candidate
 
 
 def _validate_query_string(value: str) -> str:
