@@ -50,7 +50,11 @@ def test_alpaca_market_data_live_smoke() -> None:
         completed_through_session=expected_sessions[-1],
     )["SPY"]
     assert bars
-    observation = provider.fetch_premarket_observations(["SPY"], now)["SPY"]
+    observation = provider.fetch_premarket_observations(
+        ["SPY"],
+        now,
+        instrument_identities={"SPY": identity},
+    )["SPY"]
     assert observation.provider == "alpaca"
     assert observation.feed == "iex"
     assert observation.coverage.value == "single_exchange"

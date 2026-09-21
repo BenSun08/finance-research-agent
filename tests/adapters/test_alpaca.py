@@ -14,6 +14,12 @@ from finance_research_agent.adapters.http_client import (
     RequestTransportUnavailable,
     SafeHttpClient,
 )
+from finance_research_agent.domain.models import (
+    InstrumentIdentity,
+    MarketSnapshot,
+    PriceObservation,
+    SourceObservation,
+)
 from finance_research_agent.domain.policies import SourcePolicy
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.market_data.historical import BarAdjustment, MarketDataFeed
@@ -22,6 +28,22 @@ from finance_research_agent.settings import Settings
 FIXTURES = Path("tests/fixtures/alpaca")
 AS_OF = datetime(2026, 8, 19, 12, 58, tzinfo=UTC)
 EXPECTED_SESSIONS = (date(2026, 8, 18), date(2026, 8, 19))
+
+
+def _fixture_identity(symbol: str) -> InstrumentIdentity:
+    return InstrumentIdentity(
+        instrument_id=f"fixture-{symbol.lower()}",
+        symbol=symbol,
+        name=symbol,
+        instrument_type="UNKNOWN",
+        primary_exchange=None,
+        listing_country=None,
+        currency="USD",
+        is_active=None,
+        is_leveraged=None,
+        is_inverse=None,
+        is_otc=None,
+    )
 
 
 def _provider(
@@ -81,7 +103,12 @@ def _provider(
         alpaca_api_key="fixture-key",
         alpaca_api_secret="fixture-secret",
     )
-    return AlpacaMarketDataProvider(settings, client, clock=lambda: clock)
+    return AlpacaMarketDataProvider(
+        settings,
+        client,
+        clock=lambda: clock,
+        identity_cache={symbol: _fixture_identity(symbol) for symbol in ("AAPL", "MSFT")},
+    )
 
 
 @pytest.fixture
@@ -187,6 +214,59 @@ def test_instruments_are_normalized_to_provider_neutral_identity() -> None:
     assert identity.primary_exchange == "NASDAQ"
     assert identity.currency == "USD"
     assert identity.is_active is True
+
+
+def test_identity_and_current_observation_compose_into_market_snapshot() -> None:
+    identity_result = _provider("instruments.json", path="/v2/assets").fetch_instruments(["AAPL"])
+    identity = identity_result["AAPL"]
+    assert isinstance(identity, InstrumentIdentity)
+
+    observation_result = _provider("premarket-iex.json").fetch_premarket_observations(
+        ["AAPL"],
+        AS_OF,
+        instrument_identities={"AAPL": identity},
+    )
+    observation = observation_result["AAPL"]
+    assert observation.instrument_id == identity.instrument_id
+    assert isinstance(observation, PriceObservation)
+
+    source = SourceObservation(
+        observation_id=observation.evidence_id,
+        provider=observation.provider,
+        source_url=None,
+        source_hash_sha256="a" * 64,
+        observed_at=observation.observed_at,
+        retrieved_at=observation.retrieved_at,
+        content_type="application/vnd.finance-research-agent.price+json",
+        excerpt="",
+        persistence_allowed=True,
+        quality_flags=observation.quality_flags,
+    )
+    snapshot = MarketSnapshot(
+        instrument=identity,
+        latest_price=observation,
+        completed_daily_bars=(),
+        current_session_bars=(),
+        source_observations=(source,),
+        quality_flags=observation.quality_flags,
+    )
+
+    assert snapshot.latest_price is not None
+    assert snapshot.latest_price.instrument_id == identity.instrument_id
+
+
+def test_current_observation_fails_closed_without_identity_resolution() -> None:
+    provider = _provider("premarket-iex.json")
+
+    result = provider.fetch_premarket_observations(
+        ["AAPL"],
+        AS_OF,
+        instrument_identities={},
+    )
+
+    assert result["AAPL"].symbol == "AAPL"
+    assert result["AAPL"].error_code == "INVALID_REQUEST"
+    assert result["AAPL"].retryable is False
 
 
 def test_daily_bars_use_the_existing_completed_history_normalizer() -> None:

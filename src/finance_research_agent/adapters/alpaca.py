@@ -473,12 +473,14 @@ class AlpacaMarketDataProvider:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         host: str = MARKET_DATA_HOST,
         api_host: str = ALPACA_API_HOST,
+        identity_cache: Mapping[str, InstrumentIdentity] | None = None,
     ) -> None:
         self._settings = settings
         self._http_client = http_client
         self._clock = clock
         self._host = host
         self._api_host = api_host
+        self._identity_cache = dict(identity_cache or {})
 
     def readiness(self) -> ProviderReadiness:
         configured = (
@@ -511,6 +513,9 @@ class AlpacaMarketDataProvider:
             }
         if not requested:
             return {}
+
+        for symbol in requested:
+            self._identity_cache.pop(symbol, None)
 
         request_failure, payload = self._get_json(
             "/v2/assets",
@@ -550,7 +555,7 @@ class AlpacaMarketDataProvider:
                     message="instrument identity does not match request",
                 )
                 continue
-            result[symbol] = InstrumentIdentity(
+            identity = InstrumentIdentity(
                 instrument_id=asset.id,
                 symbol=symbol,
                 name=asset.name,
@@ -563,6 +568,8 @@ class AlpacaMarketDataProvider:
                 is_inverse=None,
                 is_otc=None,
             )
+            self._identity_cache[symbol] = identity
+            result[symbol] = identity
         return result
 
     def fetch_daily_bars(
@@ -721,7 +728,11 @@ class AlpacaMarketDataProvider:
         return result
 
     def fetch_premarket_observations(
-        self, symbols: Sequence[str], as_of: datetime
+        self,
+        symbols: Sequence[str],
+        as_of: datetime,
+        *,
+        instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
     ) -> dict[str, PriceObservation | ProviderFailure]:
         try:
             requested = _symbol_sequence(symbols)
@@ -814,8 +825,17 @@ class AlpacaMarketDataProvider:
                 local_time = observed_at.astimezone(_NEW_YORK).time()
                 if not _PREMARKET_START <= local_time < _PREMARKET_END:
                     raise ValueError("premarket observation is outside the US premarket window")
+                identity = self._resolve_identity(symbol, instrument_identities)
+                if identity is None:
+                    result[symbol] = self._failure(
+                        error_code=ErrorCode.INVALID_REQUEST,
+                        retryable=False,
+                        symbol=symbol,
+                        message="instrument identity is required for current observation",
+                    )
+                    continue
                 result[symbol] = PriceObservation(
-                    instrument_id=symbol,
+                    instrument_id=identity.instrument_id,
                     value=value,
                     currency="USD",
                     session=Session.PRE_MARKET,
@@ -835,6 +855,21 @@ class AlpacaMarketDataProvider:
                     message="premarket observation is invalid",
                 )
         return result
+
+    def _resolve_identity(
+        self,
+        symbol: str,
+        instrument_identities: Mapping[str, InstrumentIdentity] | None,
+    ) -> InstrumentIdentity | None:
+        identities: Mapping[str, InstrumentIdentity] = (
+            self._identity_cache if instrument_identities is None else instrument_identities
+        )
+        if not isinstance(identities, Mapping):
+            return None
+        identity = identities.get(symbol)
+        if not isinstance(identity, InstrumentIdentity) or identity.symbol != symbol:
+            return None
+        return identity
 
     def _now(self) -> datetime:
         value = self._clock()

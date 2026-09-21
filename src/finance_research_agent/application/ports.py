@@ -60,7 +60,11 @@ class MarketDataProvider(Protocol):
     ) -> Mapping[str, tuple[DailyBar, ...] | ProviderFailure]: ...
 
     def fetch_premarket_observations(
-        self, symbols: Sequence[str], as_of: datetime
+        self,
+        symbols: Sequence[str],
+        as_of: datetime,
+        *,
+        instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
     ) -> Mapping[str, PriceObservation | ProviderFailure]: ...
 
 
