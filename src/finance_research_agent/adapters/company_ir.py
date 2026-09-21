@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 
 from finance_research_agent.adapters._event_common import (
+    EvidenceCutoffViolation,
     available,
     deadline,
     digest,
+    failure,
     request_for_url,
     unavailable,
 )
 from finance_research_agent.adapters.http_client import (
+    RequestDeadlineExceeded,
     RequestRejected,
+    RequestTransportUnavailable,
     SafeHttpClient,
     sanitize_external_text,
 )
@@ -65,20 +69,24 @@ def _timestamp(value: str) -> datetime:
 class CompanyIrAdapter:
     """Read only URLs already present in the validated watchlist configuration."""
 
+    provider_id = "company_ir"
+
     def __init__(
         self,
         http_client: SafeHttpClient,
         source_policy: SourcePolicy,
         *,
         company_names: Mapping[str, str] | None = None,
+        watchlist_items: Sequence[WatchlistItem] = (),
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._http_client = http_client
         self._policy = source_policy
         self._company_names = dict(company_names or {})
+        self._watchlist_items = tuple(watchlist_items)
         self._clock = clock
 
-    def collect_events(
+    def collect_for_item(
         self,
         item: WatchlistItem,
         *,
@@ -88,14 +96,23 @@ class CompanyIrAdapter:
     ) -> EventCollection:
         now = self._clock()
         if now > cutoff_at:
+            message = "company IR retrieval is after the evidence cutoff"
             return EventCollection(
-                provider="company_ir",
+                provider=self.provider_id,
                 source_health=(
                     unavailable(
-                        "company_ir",
+                        self.provider_id,
                         True,
                         ErrorCode.EVIDENCE_CUTOFF_VIOLATION,
-                        "company IR retrieval is after the evidence cutoff",
+                        message,
+                    ),
+                ),
+                failures=(
+                    failure(
+                        self.provider_id,
+                        ErrorCode.EVIDENCE_CUTOFF_VIOLATION,
+                        retryable=False,
+                        message=message,
                     ),
                 ),
             )
@@ -105,12 +122,34 @@ class CompanyIrAdapter:
         for source_index, source_url in enumerate(item.official_sources):
             parsed = urllib.parse.urlsplit(source_url)
             allowed_hosts = self._policy.allowed_hosts_by_adapter
-            company_hosts = () if allowed_hosts is None else allowed_hosts["company_ir"]
+            company_hosts = () if allowed_hosts is None else allowed_hosts.get("company_ir", ())
             if (
                 parsed.hostname not in company_hosts
                 or parsed.hostname not in self._policy.allowed_https_domains
             ):
-                continue
+                message = "configured company IR source is outside the approved domain"
+                return EventCollection(
+                    provider=self.provider_id,
+                    events=tuple(events),
+                    evidence=tuple(evidence_values),
+                    source_observations=tuple(observations),
+                    source_health=(
+                        unavailable(
+                            self.provider_id,
+                            True,
+                            ErrorCode.CONFIGURATION_INVALID,
+                            message,
+                        ),
+                    ),
+                    failures=(
+                        failure(
+                            self.provider_id,
+                            ErrorCode.CONFIGURATION_INVALID,
+                            retryable=False,
+                            message=message,
+                        ),
+                    ),
+                )
             try:
                 request = request_for_url(
                     "company_ir",
@@ -136,22 +175,55 @@ class CompanyIrAdapter:
                     matches = _ISO.findall(text)
                     parser.event_time = matches[0] if matches else None
                 if parser.event_time is None:
-                    raise ValueError("company IR content has no parseable event timestamp")
+                    evidence_id = f"company-ir-evidence-{item.symbol}-{source_index}"
+                    observation = SourceObservation(
+                        observation_id=f"company-ir-observation-{item.symbol}-{source_index}",
+                        provider=self.provider_id,
+                        source_url=source_url,
+                        source_hash_sha256=digest(response.content),
+                        observed_at=now,
+                        retrieved_at=now,
+                        content_type=response.content_type,
+                        excerpt=text,
+                        persistence_allowed=self._policy.licensed_content_persistence != "NONE",
+                        quality_flags=("UNVERIFIED_CONTENT",),
+                    )
+                    evidence_values.append(
+                        EvidenceItem(
+                            evidence_id=evidence_id,
+                            source=observation,
+                            authority_tier=2,
+                            instrument_id=item.symbol,
+                            event_time=None,
+                            published_time=None,
+                            structured_fields=FrozenMap(
+                                {
+                                    "symbol": item.symbol,
+                                    "company_name": identity,
+                                    "unverified": True,
+                                }
+                            ),
+                            citation_label=f"Official {item.symbol} investor relations",
+                        )
+                    )
+                    observations.append(observation)
+                    continue
                 event_time = _timestamp(parser.event_time)
                 published_time = (
                     _timestamp(parser.published_time) if parser.published_time else None
                 )
-                if published_time is not None and (
-                    published_time > cutoff_at or published_time > now
+                if event_time > cutoff_at or (
+                    published_time is not None
+                    and (published_time > cutoff_at or published_time > now)
                 ):
-                    raise ValueError("company IR publication is after the evidence cutoff")
+                    raise EvidenceCutoffViolation("company IR content is after the evidence cutoff")
                 if not start <= event_time < end:
                     continue
                 verified = identity.casefold() in text.casefold()
                 evidence_id = f"company-ir-evidence-{item.symbol}-{source_index}"
                 observation = SourceObservation(
                     observation_id=f"company-ir-observation-{item.symbol}-{source_index}",
-                    provider="company_ir",
+                    provider=self.provider_id,
                     source_url=source_url,
                     source_hash_sha256=digest(response.content),
                     observed_at=now,
@@ -185,25 +257,139 @@ class CompanyIrAdapter:
                         conflict_evidence_ids=(),
                     )
                 )
-            except (RequestRejected, ValueError, TypeError):
+            except RequestTransportUnavailable:
+                code, retryable = ErrorCode.PROVIDER_UNAVAILABLE, True
+                message = "configured company IR transport is unavailable"
                 return EventCollection(
-                    provider="company_ir",
+                    provider=self.provider_id,
+                    events=tuple(events),
+                    evidence=tuple(evidence_values),
+                    source_observations=tuple(observations),
+                    source_health=(unavailable(self.provider_id, True, code, message),),
+                    failures=(
+                        failure(self.provider_id, code, retryable=retryable, message=message),
+                    ),
+                )
+            except RequestDeadlineExceeded:
+                code, retryable = ErrorCode.DEADLINE_EXCEEDED, True
+                message = "configured company IR request deadline was exceeded"
+                return EventCollection(
+                    provider=self.provider_id,
+                    events=tuple(events),
+                    evidence=tuple(evidence_values),
+                    source_observations=tuple(observations),
+                    source_health=(unavailable(self.provider_id, True, code, message),),
+                    failures=(
+                        failure(self.provider_id, code, retryable=retryable, message=message),
+                    ),
+                )
+            except EvidenceCutoffViolation:
+                code, retryable = ErrorCode.EVIDENCE_CUTOFF_VIOLATION, False
+                message = "configured company IR content crossed the evidence cutoff"
+                return EventCollection(
+                    provider=self.provider_id,
+                    events=tuple(events),
+                    evidence=tuple(evidence_values),
+                    source_observations=tuple(observations),
+                    source_health=(unavailable(self.provider_id, True, code, message),),
+                    failures=(
+                        failure(self.provider_id, code, retryable=retryable, message=message),
+                    ),
+                )
+            except RequestRejected:
+                code, retryable = ErrorCode.INVALID_RESPONSE, False
+                message = "configured company IR request or response violated policy"
+                return EventCollection(
+                    provider=self.provider_id,
+                    events=tuple(events),
+                    evidence=tuple(evidence_values),
+                    source_observations=tuple(observations),
+                    source_health=(unavailable(self.provider_id, True, code, message),),
+                    failures=(
+                        failure(self.provider_id, code, retryable=retryable, message=message),
+                    ),
+                )
+            except (ValueError, TypeError):
+                code, retryable = ErrorCode.INVALID_RESPONSE, False
+                message = "configured company IR content was invalid or post-cutoff"
+                return EventCollection(
+                    provider=self.provider_id,
                     events=tuple(events),
                     evidence=tuple(evidence_values),
                     source_observations=tuple(observations),
                     source_health=(
                         unavailable(
-                            "company_ir",
+                            self.provider_id,
                             True,
-                            ErrorCode.PROVIDER_UNAVAILABLE,
-                            "configured company IR source was unavailable or unverified",
+                            code,
+                            message,
                         ),
+                    ),
+                    failures=(
+                        failure(self.provider_id, code, retryable=retryable, message=message),
                     ),
                 )
         return EventCollection(
-            provider="company_ir",
+            provider=self.provider_id,
             events=tuple(events),
             evidence=tuple(evidence_values),
             source_observations=tuple(observations),
-            source_health=(available("company_ir", True, empty_valid=not events),),
+            source_health=(
+                available(self.provider_id, True, empty_valid=not events and not evidence_values),
+            ),
+        )
+
+    def collect_events(
+        self,
+        symbols: Sequence[str] | WatchlistItem,
+        start: datetime,
+        end: datetime,
+        cutoff_at: datetime,
+    ) -> EventCollection:
+        if isinstance(symbols, WatchlistItem):
+            return self.collect_for_item(symbols, start=start, end=end, cutoff_at=cutoff_at)
+        requested = set(symbols)
+        items = tuple(item for item in self._watchlist_items if item.symbol in requested)
+        if not items:
+            message = "company IR watchlist items are not configured"
+            return EventCollection(
+                provider=self.provider_id,
+                source_health=(
+                    unavailable(
+                        self.provider_id,
+                        True,
+                        ErrorCode.CONFIGURATION_INVALID,
+                        message,
+                    ),
+                ),
+                failures=(
+                    failure(
+                        self.provider_id,
+                        ErrorCode.CONFIGURATION_INVALID,
+                        retryable=False,
+                        message=message,
+                    ),
+                ),
+            )
+        collections = tuple(
+            self.collect_for_item(item, start=start, end=end, cutoff_at=cutoff_at)
+            for item in items
+        )
+        return EventCollection(
+            provider=self.provider_id,
+            events=tuple(event for collection in collections for event in collection.events),
+            evidence=tuple(item for collection in collections for item in collection.evidence),
+            source_observations=tuple(
+                observation
+                for collection in collections
+                for observation in collection.source_observations
+            ),
+            source_health=tuple(
+                health for collection in collections for health in collection.source_health
+            ),
+            failures=tuple(
+                failure_item
+                for collection in collections
+                for failure_item in collection.failures
+            ),
         )

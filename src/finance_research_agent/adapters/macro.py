@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from typing import Literal
@@ -12,14 +12,18 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from finance_research_agent.adapters._event_common import (
+    EvidenceCutoffViolation,
     available,
     deadline,
     digest,
+    failure,
     request_for_url,
     unavailable,
 )
 from finance_research_agent.adapters.http_client import (
+    RequestDeadlineExceeded,
     RequestRejected,
+    RequestTransportUnavailable,
     SafeHttpClient,
     sanitize_external_text,
 )
@@ -28,6 +32,7 @@ from finance_research_agent.domain.models import (
     EventCollection,
     EventRecord,
     EvidenceItem,
+    ProviderFailure,
     SourceHealth,
     SourceObservation,
 )
@@ -93,6 +98,8 @@ def _parse_timestamp(value: str, timezone: str) -> datetime:
 class MacroCalendarAdapter:
     """Parse configured official macro pages without treating HTML as instructions."""
 
+    provider_id = "macro"
+
     def __init__(
         self,
         http_client: SafeHttpClient,
@@ -108,16 +115,40 @@ class MacroCalendarAdapter:
         self._clock = clock
 
     def collect_events(
-        self, *, symbols: Iterable[str], start: datetime, end: datetime
+        self,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+        cutoff_at: datetime,
     ) -> EventCollection:
         del symbols
         all_events: list[EventRecord] = []
         all_evidence: list[EvidenceItem] = []
         health: list[SourceHealth] = []
+        failures: list[ProviderFailure] = []
         observations: list[SourceObservation] = []
         for source in self._sources:
             provider = source.provider
             now = self._clock()
+            if now > cutoff_at:
+                message = "official macro retrieval is after the evidence cutoff"
+                health.append(
+                    unavailable(
+                        provider,
+                        source.required,
+                        ErrorCode.EVIDENCE_CUTOFF_VIOLATION,
+                        message,
+                    )
+                )
+                failures.append(
+                    failure(
+                        provider,
+                        ErrorCode.EVIDENCE_CUTOFF_VIOLATION,
+                        retryable=False,
+                        message=message,
+                    )
+                )
+                continue
             try:
                 request = request_for_url(
                     "macro",
@@ -130,13 +161,18 @@ class MacroCalendarAdapter:
                     deadline=deadline(now, self._policy),
                 )
                 if not 200 <= response.status_code < 300:
+                    if response.status_code in {401, 403}:
+                        code, retryable = ErrorCode.PERMISSION_DENIED, False
+                    elif response.status_code == 429 or response.status_code >= 500:
+                        code, retryable = ErrorCode.PROVIDER_UNAVAILABLE, True
+                    else:
+                        code, retryable = ErrorCode.INVALID_RESPONSE, False
+                    message = "official macro calendar response was not successful"
                     health.append(
-                        unavailable(
-                            provider,
-                            source.required,
-                            ErrorCode.PROVIDER_UNAVAILABLE,
-                            "official macro calendar was unavailable",
-                        )
+                        unavailable(provider, source.required, code, message)
+                    )
+                    failures.append(
+                        failure(provider, code, retryable=retryable, message=message)
                     )
                     continue
                 parser = _CalendarParser()
@@ -154,12 +190,18 @@ class MacroCalendarAdapter:
                     event_time = _parse_timestamp(raw_event_time, source.timezone)
                     if not start <= event_time < end:
                         continue
+                    if event_time > cutoff_at:
+                        raise EvidenceCutoffViolation("macro event is after the evidence cutoff")
                     raw_published = row.attributes.get("data-published", "")
                     published_time = (
                         _parse_timestamp(raw_published, "UTC") if raw_published else None
                     )
                     if published_time is not None and published_time > now:
                         raise ValueError("macro publication is after retrieval")
+                    if published_time is not None and published_time > cutoff_at:
+                        raise EvidenceCutoffViolation(
+                            "macro publication is after the evidence cutoff"
+                        )
                     evidence_id = f"macro-evidence-{provider}-{row_index}"
                     observation = SourceObservation(
                         observation_id=f"macro-observation-{provider}-{row_index}",
@@ -212,19 +254,40 @@ class MacroCalendarAdapter:
                         ),
                     )
                 )
-            except (RequestRejected, ValueError, TypeError):
+            except RequestTransportUnavailable:
+                code, retryable = ErrorCode.PROVIDER_UNAVAILABLE, True
+                message = "official macro calendar transport is unavailable"
+                health.append(unavailable(provider, source.required, code, message))
+                failures.append(failure(provider, code, retryable=retryable, message=message))
+            except RequestDeadlineExceeded:
+                code, retryable = ErrorCode.DEADLINE_EXCEEDED, True
+                message = "official macro calendar request deadline was exceeded"
+                health.append(unavailable(provider, source.required, code, message))
+                failures.append(failure(provider, code, retryable=retryable, message=message))
+            except EvidenceCutoffViolation:
+                code, retryable = ErrorCode.EVIDENCE_CUTOFF_VIOLATION, False
+                message = "official macro calendar content crossed the evidence cutoff"
+                health.append(unavailable(provider, source.required, code, message))
+                failures.append(failure(provider, code, retryable=retryable, message=message))
+            except RequestRejected:
+                code, retryable = ErrorCode.INVALID_RESPONSE, False
+                message = "official macro calendar request or response violated policy"
+                health.append(unavailable(provider, source.required, code, message))
+                failures.append(failure(provider, code, retryable=retryable, message=message))
+            except (ValueError, TypeError):
+                code, retryable = ErrorCode.INVALID_RESPONSE, False
+                message = "official macro calendar payload was invalid or post-cutoff"
                 health.append(
-                    unavailable(
-                        provider,
-                        source.required,
-                        ErrorCode.INVALID_RESPONSE,
-                        "official macro calendar was unavailable or invalid",
-                    )
+                    unavailable(provider, source.required, code, message)
                 )
+                failures.append(failure(provider, code, retryable=retryable, message=message))
         return EventCollection(
             provider="macro",
             events=tuple(sorted(all_events, key=lambda item: (item.event_time, item.event_id))),
             evidence=tuple(sorted(all_evidence, key=lambda item: item.evidence_id)),
             source_observations=tuple(sorted(observations, key=lambda item: item.observation_id)),
             source_health=tuple(sorted(health, key=lambda item: item.provider)),
+            failures=tuple(
+                sorted(failures, key=lambda item: (item.provider, item.symbol or ""))
+            ),
         )

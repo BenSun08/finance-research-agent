@@ -11,8 +11,12 @@ from finance_research_agent.adapters.http_client import (
     RequestRejected,
 )
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.models import SourceHealth
+from finance_research_agent.domain.models import ProviderFailure, SourceHealth
 from finance_research_agent.domain.policies import SourcePolicy
+
+
+class EvidenceCutoffViolation(ValueError):
+    """Internal signal that source content crossed the immutable cutoff."""
 
 
 def digest(value: bytes) -> str:
@@ -66,6 +70,21 @@ def unavailable(provider: str, required: bool, error_code: ErrorCode, message: s
         available=False,
         required=required,
         error_code=error_code,
+        message=message[:256],
+    )
+
+
+def failure(
+    provider: str,
+    error_code: ErrorCode,
+    *,
+    retryable: bool,
+    message: str,
+) -> ProviderFailure:
+    return ProviderFailure(
+        provider=provider,
+        error_code=error_code,
+        retryable=retryable,
         message=message[:256],
     )
 

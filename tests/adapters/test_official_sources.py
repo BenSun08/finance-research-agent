@@ -138,10 +138,16 @@ def test_missing_required_macro_calendar_is_explicit() -> None:
         return httpx.Response(503, headers={"content-type": "text/html"}, content=b"unavailable")
 
     adapter = MacroCalendarAdapter(
-        http_client=_client(unavailable), source_policy=_policy(), sources=(source,)
+        http_client=_client(unavailable),
+        source_policy=_policy(),
+        sources=(source,),
+        clock=lambda: CUTOFF,
     )
     result = adapter.collect_events(
-        symbols=(), start=datetime(2026, 8, 19, tzinfo=UTC), end=datetime(2026, 8, 20, tzinfo=UTC)
+        symbols=(),
+        start=datetime(2026, 8, 19, tzinfo=UTC),
+        end=datetime(2026, 8, 20, tzinfo=UTC),
+        cutoff_at=CUTOFF,
     )
     assert result.health.available is False
     assert result.health.required is True
@@ -161,9 +167,13 @@ def test_valid_empty_macro_calendar_is_not_unavailable() -> None:
         ),
         source_policy=_policy(),
         sources=(source,),
+        clock=lambda: CUTOFF,
     )
     result = adapter.collect_events(
-        symbols=(), start=datetime(2026, 8, 19, tzinfo=UTC), end=datetime(2026, 8, 20, tzinfo=UTC)
+        symbols=(),
+        start=datetime(2026, 8, 19, tzinfo=UTC),
+        end=datetime(2026, 8, 20, tzinfo=UTC),
+        cutoff_at=CUTOFF,
     )
     assert result.events == ()
     assert result.health.available is True
@@ -182,9 +192,13 @@ def test_macro_event_timezone_is_normalized_to_utc() -> None:
         http_client=_client(_response("/releases/calendar.htm", payload, "text/html")),
         source_policy=_policy(),
         sources=(source,),
+        clock=lambda: CUTOFF,
     )
     result = adapter.collect_events(
-        symbols=(), start=datetime(2026, 8, 19, tzinfo=UTC), end=datetime(2026, 8, 20, tzinfo=UTC)
+        symbols=(),
+        start=datetime(2026, 8, 19, tzinfo=UTC),
+        end=datetime(2026, 8, 20, tzinfo=UTC),
+        cutoff_at=CUTOFF,
     )
     assert result.events[0].event_time == datetime(2026, 8, 19, 12, 30, tzinfo=UTC)
     assert result.events[0].verified is True
@@ -203,9 +217,13 @@ def test_invalid_macro_timestamp_is_not_treated_as_empty_valid() -> None:
         http_client=_client(_response("/schedule/news_release/", payload, "text/html")),
         source_policy=_policy(),
         sources=(source,),
+        clock=lambda: CUTOFF,
     )
     result = adapter.collect_events(
-        symbols=(), start=datetime(2026, 8, 19, tzinfo=UTC), end=datetime(2026, 8, 20, tzinfo=UTC)
+        symbols=(),
+        start=datetime(2026, 8, 19, tzinfo=UTC),
+        end=datetime(2026, 8, 20, tzinfo=UTC),
+        cutoff_at=CUTOFF,
     )
     assert result.events == ()
     assert result.health.available is False
@@ -298,11 +316,13 @@ def test_news_is_discovery_only_until_officially_verified() -> None:
         http_client=_client(_response("/v1beta1/news", payload, "application/json")),
         source_policy=_policy(),
         settings=settings,
+        clock=lambda: CUTOFF,
     )
     result = adapter.collect_events(
         symbols=("AAPL",),
         start=datetime(2026, 8, 19, tzinfo=UTC),
         end=datetime(2026, 8, 20, tzinfo=UTC),
+        cutoff_at=CUTOFF,
     )
     assert result.events[0].verified is False
     assert result.events[0].supporting_evidence_ids
@@ -317,11 +337,13 @@ def test_news_outage_is_scoped_and_does_not_look_like_empty_valid() -> None:
         http_client=_client(unavailable),
         source_policy=_policy(),
         settings=Settings(data_dir=Path("data")),
+        clock=lambda: CUTOFF,
     )
     result = adapter.collect_events(
         symbols=("AAPL",),
         start=datetime(2026, 8, 19, tzinfo=UTC),
         end=datetime(2026, 8, 20, tzinfo=UTC),
+        cutoff_at=CUTOFF,
     )
     assert result.events == ()
     assert result.health.available is False
@@ -345,11 +367,13 @@ def test_news_uses_market_data_credentials_without_promoting_news_authority() ->
             alpaca_api_key="fixture-key",
             alpaca_api_secret="fixture-secret",
         ),
+        clock=lambda: CUTOFF,
     )
     result = adapter.collect_events(
         symbols=("AAPL",),
         start=datetime(2026, 8, 19, tzinfo=UTC),
         end=datetime(2026, 8, 20, tzinfo=UTC),
+        cutoff_at=CUTOFF,
     )
     assert result.events[0].verified is False
 
@@ -401,6 +425,8 @@ def test_composite_retains_conflict_evidence_and_health() -> None:
     event_b = event_a.model_copy(update={"verified": False, "supporting_evidence_ids": ("ev_b",)})
 
     class FakeProvider:
+        provider_id = "fake"
+
         def __init__(self, provider: str, event: EventRecord, evidence: EvidenceItem) -> None:
             self._result = {
                 "events": (event,),
@@ -409,7 +435,7 @@ def test_composite_retains_conflict_evidence_and_health() -> None:
                 "source_health": (SourceHealth(provider=provider, available=True, required=False),),
             }
 
-        def collect_events(self, **kwargs: object) -> object:
+        def collect_events(self, *args: object, **kwargs: object) -> object:
             from finance_research_agent.domain.models import EventCollection
 
             return EventCollection.model_validate(self._result)
@@ -419,7 +445,7 @@ def test_composite_retains_conflict_evidence_and_health() -> None:
             FakeProvider("sec_edgar", event_a, evidence_a),
             FakeProvider("alpaca_news", event_b, evidence_b),
         )
-    ).collect_events(symbols=("AAPL",), start=CUTOFF, end=datetime(2026, 8, 20, tzinfo=UTC))
+    ).collect_events(("AAPL",), CUTOFF, datetime(2026, 8, 20, tzinfo=UTC), CUTOFF)
     assert result.events[0].conflict_evidence_ids == ("ev_a", "ev_b")
     assert {item.evidence_id for item in result.evidence} == {"ev_a", "ev_b"}
     assert [health.provider for health in result.source_health] == ["alpaca_news", "sec_edgar"]

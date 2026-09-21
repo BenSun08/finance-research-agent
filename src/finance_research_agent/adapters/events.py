@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
+from finance_research_agent.application.ports import EventProvider
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     EventCollection,
     EventRecord,
@@ -18,43 +20,78 @@ from finance_research_agent.domain.models import (
 class CompositeEventProvider:
     """Combine bounded providers without hiding source outages or conflicts."""
 
-    def __init__(self, providers: Sequence[object]) -> None:
+    provider_id = "composite"
+
+    def __init__(self, providers: Sequence[EventProvider]) -> None:
+        invalid = tuple(
+            provider for provider in providers if not isinstance(provider, EventProvider)
+        )
+        if invalid:
+            raise TypeError("all event providers must implement EventProvider")
         self._providers = tuple(providers)
 
     def collect_events(
-        self, *, symbols: Sequence[str], start: datetime, end: datetime
+        self,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+        cutoff_at: datetime,
     ) -> EventCollection:
         collections: list[EventCollection] = []
+        source_health: list[SourceHealth] = []
+        failures: list[ProviderFailure] = []
         for provider in self._providers:
-            collect = getattr(provider, "collect_events", None)
-            if not callable(collect):
+            try:
+                value = provider.collect_events(symbols, start, end, cutoff_at)
+                if not isinstance(value, EventCollection):
+                    raise TypeError("event provider must return EventCollection")
+            except Exception as error:
+                message = f"event provider failed: {type(error).__name__}"[:256]
+                source_health.append(
+                    SourceHealth(
+                        provider=provider.provider_id,
+                        available=False,
+                        required=False,
+                        error_code=ErrorCode.INTERNAL_ERROR,
+                        message=message,
+                    )
+                )
+                failures.append(
+                    ProviderFailure(
+                        provider=provider.provider_id,
+                        error_code=ErrorCode.INTERNAL_ERROR,
+                        retryable=False,
+                        message=message,
+                    )
+                )
                 continue
-            value = collect(symbols=symbols, start=start, end=end)
-            if not isinstance(value, EventCollection):
-                raise TypeError("event provider must return EventCollection")
             collections.append(value)
+            source_health.extend(value.source_health)
+            failures.extend(value.failures)
 
-        evidence_by_id: dict[str, EvidenceItem] = {}
-        observations_by_id: dict[str, SourceObservation] = {}
-        health_by_provider: dict[str, SourceHealth] = {}
-        failures_by_key: dict[tuple[str, str | None], ProviderFailure] = {}
+        evidence: list[EvidenceItem] = []
+        observations: list[SourceObservation] = []
         grouped: dict[tuple[str, str | None, datetime], list[EventRecord]] = {}
         for collection in collections:
-            for evidence in collection.evidence:
-                evidence_by_id.setdefault(evidence.evidence_id, evidence)
+            for item in collection.evidence:
+                if item not in evidence:
+                    evidence.append(item)
             for observation in collection.source_observations:
-                observations_by_id.setdefault(observation.observation_id, observation)
-            for health in collection.source_health:
-                health_by_provider[health.provider] = health
-            for failure in collection.failures:
-                failures_by_key[(failure.provider, failure.symbol)] = failure
+                if observation not in observations:
+                    observations.append(observation)
             for event in collection.events:
-                key = (event.event_type, event.subject_symbol, event.event_time)
-                grouped.setdefault(key, []).append(event)
+                grouped.setdefault(
+                    (event.event_type, event.subject_symbol, event.event_time), []
+                ).append(event)
 
         events: list[EventRecord] = []
-        for key, records in grouped.items():
-            all_supporting = tuple(
+        materiality_rank = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3}
+        for key, grouped_records in grouped.items():
+            records: list[EventRecord] = []
+            for record in grouped_records:
+                if record not in records:
+                    records.append(record)
+            supporting_ids = tuple(
                 sorted(
                     {
                         evidence_id
@@ -63,17 +100,17 @@ class CompositeEventProvider:
                     }
                 )
             )
-            existing_conflicts = {
-                evidence_id for record in records for evidence_id in record.conflict_evidence_ids
+            explicit_conflicts = {
+                evidence_id
+                for record in records
+                for evidence_id in record.conflict_evidence_ids
             }
-            if len(records) > 1:
-                existing_conflicts.update(all_supporting)
-            verified = any(record.verified for record in records)
-            materiality_rank = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3}
-            materiality = max(
-                (record.materiality for record in records),
-                key=lambda value: materiality_rank[value],
-            )
+            competing_values = {
+                (record.verified, record.materiality) for record in records
+            }
+            conflict_ids = set(explicit_conflicts)
+            if len(competing_values) > 1:
+                conflict_ids.update(supporting_ids)
             first = min(records, key=lambda record: record.event_id)
             events.append(
                 EventRecord(
@@ -81,29 +118,46 @@ class CompositeEventProvider:
                     event_type=key[0],
                     subject_symbol=key[1],
                     event_time=key[2],
-                    verified=verified,
-                    materiality=materiality,
-                    supporting_evidence_ids=all_supporting,
-                    conflict_evidence_ids=tuple(sorted(existing_conflicts)),
+                    verified=any(record.verified for record in records),
+                    materiality=max(
+                        (record.materiality for record in records),
+                        key=lambda value: materiality_rank[value],
+                    ),
+                    supporting_evidence_ids=supporting_ids,
+                    conflict_evidence_ids=tuple(sorted(conflict_ids)),
                 )
             )
         return EventCollection(
-            provider="composite",
+            provider=self.provider_id,
             events=tuple(
                 sorted(
-                    events, key=lambda event: (event.event_time, event.event_type, event.event_id)
+                    events,
+                    key=lambda event: (event.event_time, event.event_type, event.event_id),
                 )
             ),
-            evidence=tuple(sorted(evidence_by_id.values(), key=lambda item: item.evidence_id)),
+            evidence=tuple(sorted(evidence, key=lambda item: item.evidence_id)),
             source_observations=tuple(
-                sorted(observations_by_id.values(), key=lambda item: item.observation_id)
+                sorted(observations, key=lambda item: item.observation_id)
             ),
             source_health=tuple(
-                sorted(health_by_provider.values(), key=lambda item: item.provider)
+                sorted(
+                    source_health,
+                    key=lambda item: (
+                        item.provider,
+                        item.error_code.value if item.error_code else "",
+                        item.message,
+                    ),
+                )
             ),
             failures=tuple(
                 sorted(
-                    failures_by_key.values(), key=lambda item: (item.provider, item.symbol or "")
+                    failures,
+                    key=lambda item: (
+                        item.provider,
+                        item.symbol or "",
+                        item.error_code.value,
+                        item.message,
+                    ),
                 )
             ),
         )

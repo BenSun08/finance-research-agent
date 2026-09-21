@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from finance_research_agent.domain.enums import InvocationType
 from finance_research_agent.domain.market import DailyBar
@@ -64,11 +64,18 @@ class MarketDataProvider(Protocol):
     ) -> Mapping[str, PriceObservation | ProviderFailure]: ...
 
 
+@runtime_checkable
 class EventProvider(Protocol):
     """Provider-neutral collection boundary for bounded event evidence."""
 
+    provider_id: str
+
     def collect_events(
-        self, symbols: Sequence[str], start: datetime, end: datetime
+        self,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+        cutoff_at: datetime,
     ) -> EventCollection: ...
 
 
