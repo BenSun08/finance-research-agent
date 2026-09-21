@@ -188,3 +188,66 @@ def test_incomplete_instrument_identity_blocks_before_scoring(field: str) -> Non
 
     assert any(gate.status is GateStatus.BLOCK for gate in gates)
     assert any(gate.reason_code == "UNSUPPORTED_INSTRUMENT" for gate in gates)
+
+
+@pytest.mark.parametrize(
+    "direction, halted, history_count, close, volume, role, benchmark, sector_proxy",
+    (
+        ("SHORT", False, 3, Decimal("20"), 10_000, "SATELLITE_ELIGIBLE", "SPY", "XLK"),
+        ("LONG", True, 3, Decimal("20"), 10_000, "SATELLITE_ELIGIBLE", "SPY", "XLK"),
+        ("LONG", False, 2, Decimal("20"), 10_000, "SATELLITE_ELIGIBLE", "SPY", "XLK"),
+        ("LONG", False, 3, Decimal("9"), 10_000, "SATELLITE_ELIGIBLE", "SPY", "XLK"),
+        ("LONG", False, 3, Decimal("20"), None, "SATELLITE_ELIGIBLE", "SPY", "XLK"),
+        ("LONG", False, 3, Decimal("20"), 1, "SATELLITE_ELIGIBLE", "SPY", "XLK"),
+        ("LONG", False, 3, Decimal("20"), 10_000, "CORE_MONITOR", "SPY", "XLK"),
+        ("LONG", False, 3, Decimal("20"), 10_000, "RESEARCH_ONLY", "SPY", "XLK"),
+        ("LONG", False, 3, Decimal("20"), 10_000, "SATELLITE_ELIGIBLE", None, "XLK"),
+        ("LONG", False, 3, Decimal("20"), 10_000, "SATELLITE_ELIGIBLE", "SPY", None),
+    ),
+)
+def test_each_binary_eligibility_failure_blocks_plan(
+    direction: str,
+    halted: bool,
+    history_count: int,
+    close: Decimal,
+    volume: int | None,
+    role: str,
+    benchmark: str | None,
+    sector_proxy: str | None,
+) -> None:
+    instrument = InstrumentIdentity(
+        instrument_id="MSFT",
+        symbol="MSFT",
+        name="Microsoft",
+        instrument_type="COMMON_STOCK",
+        primary_exchange="NASDAQ",
+        listing_country="US",
+        currency="USD",
+        is_active=True,
+        is_leveraged=False,
+        is_inverse=False,
+        is_otc=False,
+    )
+    snapshot = _snapshot(instrument)
+    bars = tuple(
+        bar.model_copy(update={"close": close, "volume": volume})
+        for bar in snapshot.completed_daily_bars[:history_count]
+    )
+    snapshot = snapshot.model_copy(update={"completed_daily_bars": bars})
+
+    gates = evaluate_instrument_eligibility(
+        instrument=instrument,
+        watchlist_item=WatchlistItem(
+            symbol="MSFT",
+            role=role,  # type: ignore[arg-type]
+            research_rationale="Research.",
+            benchmark_symbol=benchmark,
+            sector_proxy_symbol=sector_proxy,
+        ),
+        snapshot=snapshot,
+        setup_policy=_setup_policy(),
+        direction=direction,
+        halted=halted,
+    )
+
+    assert any(gate.status is GateStatus.BLOCK for gate in gates)

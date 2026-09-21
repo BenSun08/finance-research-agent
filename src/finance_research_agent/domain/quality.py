@@ -27,7 +27,7 @@ _CAPABILITIES = tuple(Capability)
 _MARKET_PREREQUISITES = {"alpaca", "market-calendar"}
 _MACRO_PROVIDERS = {"macro", "macro-calendar", "federal_reserve", "fed", "bls", "bea"}
 _OPTIONAL_DISCOVERY_PROVIDERS = {"alpaca_news", "news"}
-_OFFICIAL_VERIFICATION_PROVIDERS = {"company_ir", "sec"}
+_OFFICIAL_VERIFICATION_PROVIDERS = {"company_ir", "sec_edgar"}
 _SIZING_INPUTS = (
     "planning_capital_usd",
     "max_risk_per_trade_pct",

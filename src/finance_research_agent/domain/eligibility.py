@@ -37,7 +37,7 @@ def evaluate_instrument_eligibility(
     """Return immutable binary blocking gates before setup detection or scoring."""
 
     gates: list[GateResult] = []
-    evidence_ids = tuple(bar.evidence_id for bar in snapshot.completed_daily_bars)
+    evidence_ids = tuple(dict.fromkeys(bar.evidence_id for bar in snapshot.completed_daily_bars))
     if instrument.symbol != watchlist_item.symbol or snapshot.instrument != instrument:
         gates.append(_gate(ErrorCode.CONFIGURATION_INVALID, "instrument context is inconsistent"))
     if (

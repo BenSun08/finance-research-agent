@@ -76,6 +76,7 @@ def assess_event_risk(
     evidence_cutoff_at: UtcDatetime,
     source_health: Sequence[SourceHealth] = (),
     event_evidence: Sequence[EventEvidenceProjection] = (),
+    unverified_material_status: PlanStatus = PlanStatus.REVIEW_REQUIRED,
 ) -> EventAssessment:
     """Assess event evidence independently of regime or setup and fail closed."""
 
@@ -83,7 +84,26 @@ def assess_event_risk(
     risks: list[str] = []
     no_trade: list[str] = []
     flags: list[str] = []
-    projections = {projection.event_id: projection for projection in event_evidence}
+    relevant_events = tuple(
+        event for event in events if event.subject_symbol in {None, instrument.symbol}
+    )
+    relevant_event_ids = {event.event_id for event in relevant_events}
+    projections: dict[str, EventEvidenceProjection] = {}
+    for projection in event_evidence:
+        if projection.event_id not in relevant_event_ids:
+            raise ValueError("unknown event evidence projection")
+        if projection.event_id in projections:
+            raise ValueError("duplicate event evidence projection")
+        projections[projection.event_id] = projection
+    for event in relevant_events:
+        if (
+            event.materiality == "HIGH"
+            and (event.supporting_evidence_ids or event.conflict_evidence_ids)
+            and event.event_id not in projections
+        ):
+            raise ValueError("missing event evidence projection")
+    if unverified_material_status not in {PlanStatus.REVIEW_REQUIRED, PlanStatus.BLOCKED}:
+        raise ValueError("unverified material status must require review or block")
     if _macro_unavailable(source_health):
         gates.append(
             _gate(
@@ -93,21 +113,19 @@ def assess_event_risk(
                 (),
             )
         )
-    for event in events:
-        if event.subject_symbol not in {None, instrument.symbol}:
-            continue
+    for event in relevant_events:
         evidence_ids = tuple(
             dict.fromkeys((*event.supporting_evidence_ids, *event.conflict_evidence_ids))
         )
-        projection = projections.get(event.event_id)
+        event_projection = projections.get(event.event_id)
         event_type = event.event_type.upper()
         if event.conflict_evidence_ids:
             flags.append(ErrorCode.SOURCE_CONFLICT.value)
             unresolved = (
-                projection is None
-                or projection.conflicting_authority_tier is None
-                or projection.conflicting_authority_tier
-                <= projection.supporting_authority_tier
+                event_projection is None
+                or event_projection.conflicting_authority_tier is None
+                or event_projection.conflicting_authority_tier
+                <= event_projection.supporting_authority_tier
             )
             if event.materiality == "HIGH" and unresolved:
                 gates.append(
@@ -120,8 +138,8 @@ def assess_event_risk(
                 )
         if (
             event.materiality == "HIGH"
-            and projection is not None
-            and projection.retrieved_at > evidence_cutoff_at
+            and event_projection is not None
+            and event_projection.retrieved_at > evidence_cutoff_at
         ):
             flags.append(ErrorCode.EVIDENCE_CUTOFF_VIOLATION.value)
             gates.append(
@@ -157,9 +175,17 @@ def assess_event_risk(
         elif not event.verified and event.materiality in {"MEDIUM", "HIGH", "UNKNOWN"}:
             gates.append(
                 _gate(
-                    GateStatus.WARNING,
+                    (
+                        GateStatus.BLOCK
+                        if unverified_material_status is PlanStatus.BLOCKED
+                        else GateStatus.WARNING
+                    ),
                     ErrorCode.PROVIDER_NO_DATA,
-                    "unverified material event requires review",
+                    (
+                        "unverified material event is blocked by source policy"
+                        if unverified_material_status is PlanStatus.BLOCKED
+                        else "unverified material event requires review"
+                    ),
                     evidence_ids,
                 )
             )

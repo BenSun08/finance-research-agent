@@ -1,3 +1,4 @@
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -10,8 +11,15 @@ from finance_research_agent.domain.quality import DataQualityResult, evaluate_da
 from finance_research_agent.domain.regime import Regime
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.market_data.historical import (
+    FAILURE_SCHEMA_VERSION,
+    BarAdjustment,
+    HistoricalBarsFailure,
+    HistoricalBarsProvenance,
     HistoricalBarsRequestFailure,
     HistoricalBarsRequestFailureReason,
+    HistoricalBarsUnavailableReason,
+    MarketDataCoverage,
+    MarketDataFeed,
 )
 
 
@@ -213,3 +221,78 @@ def test_quality_result_rejects_duplicate_or_missing_capability_states() -> None
             capabilities=(state,) * len(Capability),
             symbol_capabilities=FrozenMap({}),
         )
+
+
+def test_sec_edgar_official_verification_failure_keeps_technical_research() -> None:
+    result = evaluate_data_quality(
+        source_health=(
+            SourceHealth(
+                provider="sec_edgar",
+                available=False,
+                required=True,
+                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                message="official filings unavailable",
+            ),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert result.status is DataQualityStatus.DEGRADED
+    assert result.capability(Capability.SETUP_DETECTION_AVAILABLE).available is True
+    assert result.capability(Capability.PLAN_DRAFT_AVAILABLE).available is False
+
+
+def _historical_failure(reason: HistoricalBarsUnavailableReason) -> HistoricalBarsFailure:
+    return HistoricalBarsFailure(
+        schema_version=FAILURE_SCHEMA_VERSION,
+        symbol="MSFT",
+        reason=reason,
+        provenance=HistoricalBarsProvenance(
+            provider="fixture",
+            feed=MarketDataFeed.IEX,
+            coverage=MarketDataCoverage.SINGLE_EXCHANGE,
+            adjustment=BarAdjustment.SPLIT,
+            requested_start_at=datetime(2026, 8, 31, tzinfo=UTC),
+            requested_end_at=datetime(2026, 9, 1, tzinfo=UTC),
+            retrieved_at=datetime(2026, 9, 2, tzinfo=UTC),
+            evidence_cutoff_at=datetime(2026, 9, 2, 12, tzinfo=UTC),
+            completed_through_session=date(2026, 9, 1),
+            adapter_version="fixture-v1",
+        ),
+        missing_sessions=(),
+        quality_flags=(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "error_code"),
+    (
+        (HistoricalBarsUnavailableReason.NO_DATA, ErrorCode.PROVIDER_NO_DATA),
+        (
+            HistoricalBarsUnavailableReason.MISSING_EXPECTED_SESSION,
+            ErrorCode.PROVIDER_MISSING_SESSION,
+        ),
+        (
+            HistoricalBarsUnavailableReason.DUPLICATE_CONFLICT,
+            ErrorCode.PROVIDER_DUPLICATE_CONFLICT,
+        ),
+        (HistoricalBarsUnavailableReason.MALFORMED_BAR, ErrorCode.PROVIDER_MALFORMED_BAR),
+        (HistoricalBarsUnavailableReason.STALE, ErrorCode.PROVIDER_STALE),
+        (
+            HistoricalBarsUnavailableReason.FUTURE_OR_INCOMPLETE_BAR,
+            ErrorCode.PROVIDER_FUTURE_OR_INCOMPLETE_BAR,
+        ),
+    ),
+)
+def test_each_historical_failure_reason_blocks_only_its_symbol(
+    reason: HistoricalBarsUnavailableReason, error_code: ErrorCode
+) -> None:
+    result = evaluate_data_quality(
+        source_health=(),
+        historical_failures=(_historical_failure(reason),),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    state = result.symbol_capability("MSFT", Capability.PLAN_DRAFT_AVAILABLE)
+    assert state.available is False
+    assert state.reason_codes == (error_code,)

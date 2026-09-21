@@ -23,6 +23,15 @@ INSTRUMENT = InstrumentIdentity(
 )
 
 
+def _projection(event_id: str, *, retrieved_at: datetime = NOW) -> EventEvidenceProjection:
+    return EventEvidenceProjection(
+        event_id=event_id,
+        retrieved_at=retrieved_at,
+        supporting_authority_tier=1,
+        conflicting_authority_tier=None,
+    )
+
+
 def test_verified_earnings_inside_plan_window_blocks_plan() -> None:
     assessment = assess_event_risk(
         instrument=INSTRUMENT,
@@ -40,6 +49,7 @@ def test_verified_earnings_inside_plan_window_blocks_plan() -> None:
         ),
         plan_expires_at=NOW + timedelta(days=2),
         evidence_cutoff_at=NOW,
+        event_evidence=(_projection("earnings"),),
     )
 
     assert assessment.plan_status is PlanStatus.BLOCKED
@@ -63,6 +73,7 @@ def test_unverified_material_event_requires_review() -> None:
         ),
         plan_expires_at=NOW + timedelta(days=2),
         evidence_cutoff_at=NOW,
+        event_evidence=(_projection("guidance"),),
     )
 
     assert assessment.plan_status is PlanStatus.REVIEW_REQUIRED
@@ -85,6 +96,14 @@ def test_source_conflict_remains_visible_and_blocks_affected_plan() -> None:
         ),
         plan_expires_at=NOW + timedelta(days=2),
         evidence_cutoff_at=NOW,
+        event_evidence=(
+            EventEvidenceProjection(
+                event_id="conflict",
+                retrieved_at=NOW,
+                supporting_authority_tier=1,
+                conflicting_authority_tier=None,
+            ),
+        ),
     )
 
     assert "SOURCE_CONFLICT" in assessment.quality_flags
@@ -140,6 +159,59 @@ def test_material_evidence_after_cutoff_requires_new_revision() -> None:
 
     assert assessment.plan_status is PlanStatus.BLOCKED
     assert "EVIDENCE_CUTOFF_VIOLATION" in assessment.quality_flags
+
+
+def test_relevant_material_event_with_evidence_requires_a_projection() -> None:
+    with pytest.raises(ValueError, match="missing event evidence projection"):
+        assess_event_risk(
+            instrument=INSTRUMENT,
+            events=(
+                EventRecord(
+                    event_id="missing-projection",
+                    event_type="FILING",
+                    subject_symbol="MSFT",
+                    event_time=NOW - timedelta(days=1),
+                    verified=True,
+                    materiality="HIGH",
+                    supporting_evidence_ids=("ev-missing",),
+                    conflict_evidence_ids=(),
+                ),
+            ),
+            plan_expires_at=NOW + timedelta(days=2),
+            evidence_cutoff_at=NOW,
+        )
+
+
+def test_unknown_event_evidence_projection_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown event evidence projection"):
+        assess_event_risk(
+            instrument=INSTRUMENT,
+            events=(),
+            plan_expires_at=NOW + timedelta(days=2),
+            evidence_cutoff_at=NOW,
+            event_evidence=(_projection("unknown"),),
+        )
+
+
+def test_duplicate_event_evidence_projection_is_rejected() -> None:
+    event = EventRecord(
+        event_id="duplicate-projection",
+        event_type="FILING",
+        subject_symbol="MSFT",
+        event_time=NOW - timedelta(days=1),
+        verified=True,
+        materiality="HIGH",
+        supporting_evidence_ids=("ev-duplicate",),
+        conflict_evidence_ids=(),
+    )
+    with pytest.raises(ValueError, match="duplicate event evidence projection"):
+        assess_event_risk(
+            instrument=INSTRUMENT,
+            events=(event,),
+            plan_expires_at=NOW + timedelta(days=2),
+            evidence_cutoff_at=NOW,
+            event_evidence=(_projection(event.event_id), _projection(event.event_id)),
+        )
 
 
 def test_future_scheduled_event_known_before_cutoff_is_not_a_cutoff_violation() -> None:
@@ -285,3 +357,73 @@ def test_material_conflict_with_lower_authority_counterevidence_does_not_block()
 
     assert assessment.plan_status is PlanStatus.DRAFT
     assert assessment.quality_flags == ("SOURCE_CONFLICT",)
+
+
+@pytest.mark.parametrize("event_type", ("HALT", "IDENTITY_UNCERTAIN"))
+def test_halt_or_identity_event_blocks_plan(event_type: str) -> None:
+    assessment = assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(
+            EventRecord(
+                event_id=event_type.lower(),
+                event_type=event_type,
+                subject_symbol="MSFT",
+                event_time=NOW,
+                verified=True,
+                materiality="HIGH",
+                supporting_evidence_ids=(),
+                conflict_evidence_ids=(),
+            ),
+        ),
+        plan_expires_at=NOW + timedelta(days=2),
+        evidence_cutoff_at=NOW,
+    )
+
+    assert assessment.plan_status is PlanStatus.BLOCKED
+
+
+def test_high_impact_macro_event_is_explicit_no_trade_condition() -> None:
+    assessment = assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(
+            EventRecord(
+                event_id="cpi",
+                event_type="CPI",
+                subject_symbol=None,
+                event_time=NOW + timedelta(hours=1),
+                verified=True,
+                materiality="HIGH",
+                supporting_evidence_ids=(),
+                conflict_evidence_ids=(),
+            ),
+        ),
+        plan_expires_at=NOW + timedelta(days=2),
+        evidence_cutoff_at=NOW,
+    )
+
+    assert assessment.event_risks == ("cpi",)
+    assert assessment.no_trade_conditions == ("cpi",)
+
+
+def test_source_policy_can_escalate_unverified_material_event_to_block() -> None:
+    assessment = assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(
+            EventRecord(
+                event_id="unverified-block",
+                event_type="GUIDANCE",
+                subject_symbol="MSFT",
+                event_time=NOW,
+                verified=False,
+                materiality="HIGH",
+                supporting_evidence_ids=("ev-unverified",),
+                conflict_evidence_ids=(),
+            ),
+        ),
+        plan_expires_at=NOW + timedelta(days=2),
+        evidence_cutoff_at=NOW,
+        event_evidence=(_projection("unverified-block"),),
+        unverified_material_status=PlanStatus.BLOCKED,
+    )
+
+    assert assessment.plan_status is PlanStatus.BLOCKED
