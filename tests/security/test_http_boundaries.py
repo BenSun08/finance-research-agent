@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -17,6 +18,9 @@ from finance_research_agent.adapters.http_client import (
 )
 from finance_research_agent.domain.policies import SourcePolicy
 from finance_research_agent.domain.types import FrozenMap
+
+TEST_NOW = datetime(2026, 9, 21, 12, tzinfo=UTC)
+TEST_DEADLINE = datetime(2026, 9, 21, 13, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -39,6 +43,11 @@ def source_policy() -> SourcePolicy:
         allowed_content_types=("application/json", "text/html"),
         excerpt_limits=FrozenMap({"text/html": 4096}),
     )
+
+
+@pytest.fixture
+def fixed_clock() -> Callable[[], datetime]:
+    return lambda: TEST_NOW
 
 
 @pytest.mark.parametrize(
@@ -66,16 +75,19 @@ def test_private_and_local_targets_are_rejected(host: str, source_policy: Source
 
 
 def test_cross_domain_redirect_is_rejected(
-    source_policy: SourcePolicy, redirect_transport: object
+    source_policy: SourcePolicy,
+    redirect_transport: object,
+    fixed_clock: Callable[[], datetime],
 ) -> None:
     client = SafeHttpClient(
         source_policy,
         transport=redirect_transport,
         resolver=lambda host, port: ("93.184.216.34",),
+        clock=fixed_clock,
     )
     request = AllowedRequest.for_adapter("sec", "/submissions/CIK.json")
     with pytest.raises(RequestRejected, match="redirect"):
-        client.request(request, deadline=datetime(2026, 9, 21, 13, tzinfo=UTC))
+        client.request(request, deadline=TEST_DEADLINE)
 
 
 class _RecordingStream(httpcore.NetworkStream):
@@ -133,7 +145,7 @@ def test_validated_dns_address_is_pinned_without_changing_tls_hostname() -> None
 
 
 def test_same_host_redirect_is_allowed_only_when_policy_enables_it(
-    source_policy: SourcePolicy,
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
 ) -> None:
     policy = source_policy.model_copy(update={"allow_redirects": True})
     responses = iter(
@@ -146,12 +158,12 @@ def test_same_host_redirect_is_allowed_only_when_policy_enables_it(
         policy,
         transport=httpx.MockTransport(lambda request: next(responses)),
         resolver=lambda host, port: ("93.184.216.34",),
-        clock=lambda: datetime(2026, 9, 21, 12, tzinfo=UTC),
+        clock=fixed_clock,
     )
 
     result = client.request(
         AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
-        deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+        deadline=TEST_DEADLINE,
     )
 
     assert result.status_code == 200
@@ -165,7 +177,9 @@ def redirect_transport() -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
-def test_retryable_responses_are_retried_with_injected_delay(source_policy: SourcePolicy) -> None:
+def test_retryable_responses_are_retried_with_injected_delay(
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
+) -> None:
     responses = iter(
         (
             httpx.Response(503, headers={"content-type": "application/json"}),
@@ -180,14 +194,14 @@ def test_retryable_responses_are_retried_with_injected_delay(source_policy: Sour
         resolver=lambda host, port: ("93.184.216.34",),
         sleeper=delays.append,
         jitter=lambda attempt: Decimal("0.1"),
-        clock=lambda: datetime(2026, 9, 21, 12, tzinfo=UTC),
+        clock=fixed_clock,
     )
 
     result = client.request(
         AllowedRequest.for_adapter(
             "sec", "/submissions/CIK.json", accepted_content_types=("application/json",)
         ),
-        deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+        deadline=TEST_DEADLINE,
     )
 
     assert result.status_code == 200
@@ -196,7 +210,7 @@ def test_retryable_responses_are_retried_with_injected_delay(source_policy: Sour
 
 
 def test_exhausted_transport_errors_have_typed_retryable_signal(
-    source_policy: SourcePolicy,
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
 ) -> None:
     policy = source_policy.model_copy(update={"retry_attempts": 0})
 
@@ -207,17 +221,19 @@ def test_exhausted_transport_errors_have_typed_retryable_signal(
         policy,
         transport=httpx.MockTransport(fail_transport),
         resolver=lambda host, port: ("93.184.216.34",),
-        clock=lambda: datetime(2026, 9, 21, 12, tzinfo=UTC),
+        clock=fixed_clock,
     )
 
     with pytest.raises(RequestTransportUnavailable):
         client.request(
             AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
-            deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+            deadline=TEST_DEADLINE,
         )
 
 
-def test_default_retry_jitter_uses_the_policy_bound(source_policy: SourcePolicy) -> None:
+def test_default_retry_jitter_uses_the_policy_bound(
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
+) -> None:
     responses = iter(
         (
             httpx.Response(503, headers={"content-type": "application/json"}),
@@ -230,14 +246,14 @@ def test_default_retry_jitter_uses_the_policy_bound(source_policy: SourcePolicy)
         transport=httpx.MockTransport(lambda request: next(responses)),
         resolver=lambda host, port: ("93.184.216.34",),
         sleeper=delays.append,
-        clock=lambda: datetime(2026, 9, 21, 12, tzinfo=UTC),
+        clock=fixed_clock,
     )
 
     client.request(
         AllowedRequest.for_adapter(
             "sec", "/submissions/CIK.json", accepted_content_types=("application/json",)
         ),
-        deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+        deadline=TEST_DEADLINE,
     )
 
     assert len(delays) == 1
@@ -308,7 +324,7 @@ def test_retry_after_http_date_cannot_outlive_the_run_deadline(
 
 
 def test_non_retryable_authentication_response_is_returned_once(
-    source_policy: SourcePolicy,
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
 ) -> None:
     calls = 0
 
@@ -321,12 +337,12 @@ def test_non_retryable_authentication_response_is_returned_once(
         source_policy,
         transport=httpx.MockTransport(handler),
         resolver=lambda host, port: ("93.184.216.34",),
-        clock=lambda: datetime(2026, 9, 21, 12, tzinfo=UTC),
+        clock=fixed_clock,
     )
 
     result = client.request(
         AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
-        deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+        deadline=TEST_DEADLINE,
     )
 
     assert result.status_code == 401
@@ -334,7 +350,9 @@ def test_non_retryable_authentication_response_is_returned_once(
     assert calls == 1
 
 
-def test_content_type_matching_is_case_insensitive(source_policy: SourcePolicy) -> None:
+def test_content_type_matching_is_case_insensitive(
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
+) -> None:
     client = SafeHttpClient(
         source_policy,
         transport=httpx.MockTransport(
@@ -345,19 +363,22 @@ def test_content_type_matching_is_case_insensitive(source_policy: SourcePolicy) 
             )
         ),
         resolver=lambda host, port: ("93.184.216.34",),
+        clock=fixed_clock,
     )
 
     result = client.request(
         AllowedRequest.for_adapter(
             "sec", "/submissions/CIK.json", accepted_content_types=("APPLICATION/JSON",)
         ),
-        deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+        deadline=TEST_DEADLINE,
     )
 
     assert result.content_type == "application/json"
 
 
-def test_redirect_query_is_bounded_and_control_safe(source_policy: SourcePolicy) -> None:
+def test_redirect_query_is_bounded_and_control_safe(
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
+) -> None:
     policy = source_policy.model_copy(update={"allow_redirects": True})
     oversized_query = "&".join(f"key{index}=value" for index in range(33))
     transport = httpx.MockTransport(
@@ -370,16 +391,19 @@ def test_redirect_query_is_bounded_and_control_safe(source_policy: SourcePolicy)
         policy,
         transport=transport,
         resolver=lambda host, port: ("93.184.216.34",),
+        clock=fixed_clock,
     )
 
     with pytest.raises(RequestRejected, match="query"):
         client.request(
             AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
-            deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+            deadline=TEST_DEADLINE,
         )
 
 
-def test_safe_response_is_immutable(source_policy: SourcePolicy) -> None:
+def test_safe_response_is_immutable(
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
+) -> None:
     client = SafeHttpClient(
         source_policy,
         transport=httpx.MockTransport(
@@ -390,11 +414,12 @@ def test_safe_response_is_immutable(source_policy: SourcePolicy) -> None:
             )
         ),
         resolver=lambda host, port: ("93.184.216.34",),
+        clock=fixed_clock,
     )
 
     result = client.request(
         AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
-        deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+        deadline=TEST_DEADLINE,
     )
 
     with pytest.raises(FrozenInstanceError):
@@ -403,6 +428,7 @@ def test_safe_response_is_immutable(source_policy: SourcePolicy) -> None:
 
 def test_response_byte_limit_is_enforced_before_returning_content(
     source_policy: SourcePolicy,
+    fixed_clock: Callable[[], datetime],
 ) -> None:
     client = SafeHttpClient(
         source_policy,
@@ -414,12 +440,13 @@ def test_response_byte_limit_is_enforced_before_returning_content(
             )
         ),
         resolver=lambda host, port: ("93.184.216.34",),
+        clock=fixed_clock,
     )
 
     with pytest.raises(RequestRejected, match="byte limit"):
         client.request(
             AllowedRequest.for_adapter("sec", "/submissions/CIK.json", response_byte_limit=4),
-            deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+            deadline=TEST_DEADLINE,
         )
 
 
@@ -588,6 +615,7 @@ def _nested_percent_encoding(value: str, rounds: int = 9) -> str:
 )
 def test_redirect_path_uses_the_same_bounded_safe_validator(
     source_policy: SourcePolicy,
+    fixed_clock: Callable[[], datetime],
     redirect_path: str,
 ) -> None:
     policy = source_policy.model_copy(update={"allow_redirects": True})
@@ -601,12 +629,13 @@ def test_redirect_path_uses_the_same_bounded_safe_validator(
         policy,
         transport=transport,
         resolver=lambda host, port: ("93.184.216.34",),
+        clock=fixed_clock,
     )
 
     with pytest.raises(RequestRejected, match="path"):
         client.request(
             AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
-            deadline=datetime(2026, 9, 21, 13, tzinfo=UTC),
+            deadline=TEST_DEADLINE,
         )
 
 
