@@ -32,6 +32,9 @@ include = ["finance_research_agent*"]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "live: opt-in provider smoke tests; never run in default or CI test suites",
+]
 
 [tool.ruff]
 target-version = "py312"

@@ -1,12 +1,18 @@
 """Provider-neutral outbound capabilities required by application use cases."""
 
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Protocol
 
 from finance_research_agent.domain.enums import InvocationType
+from finance_research_agent.domain.market import DailyBar
 from finance_research_agent.domain.market_calendar import TradingCalendar
 from finance_research_agent.domain.models import (
+    InstrumentIdentity,
+    PriceObservation,
+    ProviderFailure,
+    ProviderReadiness,
     PublishedArtifact,
     PublishedRunBundle,
     RunCheckpoint,
@@ -25,10 +31,29 @@ __all__ = [
     "ConfigurationRepository",
     "ConfigurationRepositoryFactory",
     "HistoricalBarsFetcher",
+    "MarketDataProvider",
     "RunRepository",
     "WatchlistRepository",
     "TradingCalendar",
 ]
+
+
+class MarketDataProvider(Protocol):
+    """Provider-neutral Product A market-data collection boundary."""
+
+    def readiness(self) -> ProviderReadiness: ...
+
+    def fetch_instruments(
+        self, symbols: Sequence[str]
+    ) -> Mapping[str, InstrumentIdentity | ProviderFailure]: ...
+
+    def fetch_daily_bars(
+        self, symbols: Sequence[str], start: date, end: date
+    ) -> Mapping[str, tuple[DailyBar, ...] | ProviderFailure]: ...
+
+    def fetch_premarket_observations(
+        self, symbols: Sequence[str], as_of: datetime
+    ) -> Mapping[str, PriceObservation | ProviderFailure]: ...
 
 
 class HistoricalBarsFetcher(Protocol):

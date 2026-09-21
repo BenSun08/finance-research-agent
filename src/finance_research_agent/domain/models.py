@@ -380,6 +380,37 @@ class PriceObservation(StrictModel):
         return self
 
 
+class ProviderFailure(StrictModel):
+    """Secret-free provider failure scoped to one symbol or a whole request."""
+
+    provider: Identifier
+    symbol: Symbol | None = None
+    error_code: ErrorCode
+    retryable: bool
+    message: Annotated[str, Field(max_length=256)] = ""
+
+    @property
+    def scope(self) -> Literal["symbol", "global"]:
+        return "symbol" if self.symbol is not None else "global"
+
+
+class ProviderReadiness(StrictModel):
+    """Non-secret configuration and availability state for one provider."""
+
+    provider: Identifier
+    configured: bool
+    available: bool
+    error_code: ErrorCode | None = None
+
+    @model_validator(mode="after")
+    def _available_requires_configuration(self) -> Self:
+        if self.available and not self.configured:
+            raise ValueError("an unconfigured provider cannot be available")
+        if self.configured and self.error_code is ErrorCode.CREDENTIALS_MISSING:
+            raise ValueError("configured provider cannot report missing credentials")
+        return self
+
+
 class CompletedDailyBar(StrictModel):
     """One completed daily bar with its evidence and provider provenance."""
 

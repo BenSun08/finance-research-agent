@@ -424,7 +424,17 @@ class SafeHttpClient:
             raise RequestRejected("request must use HTTPS and an allowed port")
         return raw_url, addresses
 
-    def request(self, request: AllowedRequest, deadline: datetime) -> SafeResponse:
+    def request(
+        self,
+        request: AllowedRequest,
+        deadline: datetime,
+        *,
+        provider_credentials: tuple[str, str] | None = None,
+    ) -> SafeResponse:
+        if provider_credentials is not None and any(
+            type(value) is not str or not value for value in provider_credentials
+        ):
+            raise RequestRejected("provider credentials must be non-empty strings")
         url, addresses = self._validate_request(request)
         if deadline.tzinfo is None or deadline.utcoffset() is None:
             raise RequestRejected("deadline must be timezone-aware")
@@ -435,6 +445,14 @@ class SafeHttpClient:
         attempt = 1
         redirects = 0
         transport = self._transport or _PinnedHTTPTransport(addresses)
+        headers = (
+            {
+                "APCA-API-KEY-ID": provider_credentials[0],
+                "APCA-API-SECRET-KEY": provider_credentials[1],
+            }
+            if provider_credentials is not None
+            else None
+        )
         with httpx.Client(transport=transport, follow_redirects=False) as client:
             while attempt <= max_attempts:
                 remaining = (deadline - self._clock()).total_seconds()
@@ -444,6 +462,7 @@ class SafeHttpClient:
                     with client.stream(
                         request.method,
                         url,
+                        headers=headers,
                         timeout=min(float(self._policy.request_deadline_seconds), remaining),
                     ) as response:
                         if 300 <= response.status_code < 400:

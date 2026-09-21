@@ -29,7 +29,7 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest
+        run: pytest -m "not live"
 
       - name: Run Ruff
         run: ruff check .
