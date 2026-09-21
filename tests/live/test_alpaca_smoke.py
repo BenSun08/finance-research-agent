@@ -48,6 +48,8 @@ def test_alpaca_market_data_live_smoke() -> None:
         end=expected_sessions[-1],
         expected_sessions=expected_sessions,
         completed_through_session=expected_sessions[-1],
+        evidence_cutoff_at=now,
+        instrument_identities={"SPY": identity},
     )["SPY"]
     assert bars
     observation = provider.fetch_premarket_observations(

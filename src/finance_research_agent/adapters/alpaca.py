@@ -29,8 +29,8 @@ from finance_research_agent.adapters.http_client import (
 )
 from finance_research_agent.domain.enums import Coverage, Session
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.market import DailyBar
 from finance_research_agent.domain.models import (
+    CompletedDailyBar,
     InstrumentIdentity,
     PriceObservation,
     ProviderFailure,
@@ -47,6 +47,7 @@ from finance_research_agent.market_data.historical import (
     HistoricalDailyBars,
     HistoricalDailyBarsRequest,
     InvalidMarketDataError,
+    MarketDataCoverage,
     MarketDataFeed,
     coverage_for_feed,
     create_daily_bar_observation,
@@ -147,6 +148,14 @@ def _instrument_type(asset_type: str | None) -> Literal["COMMON_STOCK", "ETF", "
     if normalized in {"etf", "exchange_traded_fund"}:
         return "ETF"
     return "UNKNOWN"
+
+
+def _coverage_for_history(coverage: MarketDataCoverage) -> Coverage:
+    if coverage is MarketDataCoverage.SINGLE_EXCHANGE:
+        return Coverage.SINGLE_EXCHANGE
+    if coverage is MarketDataCoverage.CONSOLIDATED_US:
+        return Coverage.CONSOLIDATED
+    raise InvalidMarketDataError("unsupported historical market-data coverage")
 
 
 def _utc_timestamp(value: str) -> datetime:
@@ -555,19 +564,28 @@ class AlpacaMarketDataProvider:
                     message="instrument identity does not match request",
                 )
                 continue
-            identity = InstrumentIdentity(
-                instrument_id=asset.id,
-                symbol=symbol,
-                name=asset.name,
-                instrument_type=_instrument_type(asset.asset_type),
-                primary_exchange=asset.exchange,
-                listing_country="US",
-                currency="USD",
-                is_active=asset.status == "active",
-                is_leveraged=None,
-                is_inverse=None,
-                is_otc=None,
-            )
+            try:
+                identity = InstrumentIdentity(
+                    instrument_id=asset.id,
+                    symbol=symbol,
+                    name=asset.name,
+                    instrument_type=_instrument_type(asset.asset_type),
+                    primary_exchange=asset.exchange,
+                    listing_country="US",
+                    currency="USD",
+                    is_active=asset.status == "active",
+                    is_leveraged=None,
+                    is_inverse=None,
+                    is_otc=None,
+                )
+            except ValidationError:
+                result[symbol] = self._failure(
+                    error_code=ErrorCode.PROVIDER_SCHEMA_DRIFT,
+                    retryable=False,
+                    symbol=symbol,
+                    message="instrument identity is invalid",
+                )
+                continue
             self._identity_cache[symbol] = identity
             result[symbol] = identity
         return result
@@ -580,9 +598,11 @@ class AlpacaMarketDataProvider:
         *,
         expected_sessions: tuple[date, ...] | None = None,
         completed_through_session: date | None = None,
+        evidence_cutoff_at: datetime | None = None,
+        instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
         feed: MarketDataFeed = MarketDataFeed.IEX,
         adjustment: BarAdjustment = BarAdjustment.ALL,
-    ) -> dict[str, tuple[DailyBar, ...] | ProviderFailure]:
+    ) -> dict[str, tuple[CompletedDailyBar, ...] | ProviderFailure]:
         try:
             requested = _symbol_sequence(symbols)
         except ValueError:
@@ -622,6 +642,17 @@ class AlpacaMarketDataProvider:
                 error_code=ErrorCode.INVALID_REQUEST,
                 retryable=False,
                 message="daily-bars calendar sessions are required",
+            )
+            return {symbol: request_failure for symbol in requested}
+        if (
+            not isinstance(evidence_cutoff_at, datetime)
+            or evidence_cutoff_at.tzinfo is None
+            or evidence_cutoff_at.utcoffset() != timedelta(0)
+        ):
+            request_failure = self._failure(
+                error_code=ErrorCode.INVALID_REQUEST,
+                retryable=False,
+                message="daily-bars evidence cutoff must be UTC",
             )
             return {symbol: request_failure for symbol in requested}
 
@@ -688,6 +719,13 @@ class AlpacaMarketDataProvider:
             return {symbol: schema_failure for symbol in requested}
 
         retrieved_at = self._now()
+        if retrieved_at > evidence_cutoff_at:
+            request_failure = self._failure(
+                error_code=ErrorCode.INVALID_REQUEST,
+                retryable=False,
+                message="daily-bars retrieval is after evidence cutoff",
+            )
+            return {symbol: request_failure for symbol in requested}
         try:
             normalization_request = HistoricalDailyBarsRequest(
                 symbols=requested,
@@ -697,7 +735,7 @@ class AlpacaMarketDataProvider:
                 completed_through_session=completed_through_session,
                 feed=feed,
                 adjustment=adjustment,
-                evidence_cutoff_at=retrieved_at + timedelta(days=1),
+                evidence_cutoff_at=evidence_cutoff_at,
             )
         except InvalidMarketDataError:
             request_failure = self._failure(
@@ -706,16 +744,52 @@ class AlpacaMarketDataProvider:
                 message="daily-bars calendar sessions are invalid",
             )
             return {symbol: request_failure for symbol in requested}
-        outcomes = normalize_alpaca_daily_bars(
-            records,
-            request=normalization_request,
-            retrieved_at=retrieved_at,
-        )
-        result: dict[str, tuple[DailyBar, ...] | ProviderFailure] = {}
+        try:
+            outcomes = normalize_alpaca_daily_bars(
+                records,
+                request=normalization_request,
+                retrieved_at=retrieved_at,
+            )
+        except InvalidMarketDataError:
+            request_failure = self._failure(
+                error_code=ErrorCode.INVALID_REQUEST,
+                retryable=False,
+                message="daily-bars evidence context is invalid",
+            )
+            return {symbol: request_failure for symbol in requested}
+        result: dict[str, tuple[CompletedDailyBar, ...] | ProviderFailure] = {}
         for outcome in outcomes:
             if isinstance(outcome, HistoricalDailyBars):
+                identity = self._resolve_identity(outcome.symbol, instrument_identities)
+                if identity is None:
+                    result[outcome.symbol] = self._failure(
+                        error_code=ErrorCode.INVALID_REQUEST,
+                        retryable=False,
+                        symbol=outcome.symbol,
+                        message="instrument identity is required for daily bars",
+                    )
+                    continue
                 result[outcome.symbol] = tuple(
-                    observation.bar for observation in outcome.observations
+                    CompletedDailyBar(
+                        instrument_id=identity.instrument_id,
+                        session_date=observation.bar.session_date,
+                        source_timestamp=observation.source_timestamp,
+                        open=observation.bar.open,
+                        high=observation.bar.high,
+                        low=observation.bar.low,
+                        close=observation.bar.close,
+                        volume=observation.bar.volume,
+                        session=Session.COMPLETED_SESSION,
+                        provider=outcome.provenance.provider,
+                        feed=outcome.provenance.feed.value,
+                        coverage=_coverage_for_history(outcome.provenance.coverage),
+                        adjustment=outcome.provenance.adjustment.value,
+                        retrieved_at=outcome.provenance.retrieved_at,
+                        evidence_cutoff_at=outcome.provenance.evidence_cutoff_at,
+                        evidence_id=outcome.history_id,
+                        quality_flags=outcome.quality_flags,
+                    )
+                    for observation in outcome.observations
                 )
             else:
                 error_code = _HISTORICAL_FAILURE_CODES[outcome.reason]
@@ -791,6 +865,13 @@ class AlpacaMarketDataProvider:
             return {symbol: schema_failure for symbol in requested}
 
         retrieved_at = self._now()
+        if retrieved_at > as_of:
+            cutoff_failure = self._failure(
+                error_code=ErrorCode.EVIDENCE_CUTOFF_VIOLATION,
+                retryable=False,
+                message="premarket retrieval is after the evidence cutoff",
+            )
+            return {symbol: cutoff_failure for symbol in requested}
         result: dict[str, PriceObservation | ProviderFailure] = {}
         for symbol in requested:
             item = latest_values.get(symbol)

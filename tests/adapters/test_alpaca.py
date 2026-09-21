@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
@@ -15,6 +15,7 @@ from finance_research_agent.adapters.http_client import (
     SafeHttpClient,
 )
 from finance_research_agent.domain.models import (
+    CompletedDailyBar,
     InstrumentIdentity,
     MarketSnapshot,
     PriceObservation,
@@ -28,6 +29,8 @@ from finance_research_agent.settings import Settings
 FIXTURES = Path("tests/fixtures/alpaca")
 AS_OF = datetime(2026, 8, 19, 12, 58, tzinfo=UTC)
 EXPECTED_SESSIONS = (date(2026, 8, 18), date(2026, 8, 19))
+DAILY_RETRIEVED_AT = datetime(2026, 8, 20, tzinfo=UTC)
+DAILY_EVIDENCE_CUTOFF = datetime(2026, 8, 20, 12, tzinfo=UTC)
 
 
 def _fixture_identity(symbol: str) -> InstrumentIdentity:
@@ -269,6 +272,116 @@ def test_current_observation_fails_closed_without_identity_resolution() -> None:
     assert result["AAPL"].retryable is False
 
 
+def test_daily_bars_preserve_provenance_and_provider_identity() -> None:
+    provider = _provider(
+        "daily-bars.json",
+        path="/v2/stocks/bars",
+        clock=DAILY_RETRIEVED_AT,
+    )
+
+    result = provider.fetch_daily_bars(
+        ["AAPL"],
+        date(2026, 8, 18),
+        date(2026, 8, 19),
+        expected_sessions=EXPECTED_SESSIONS,
+        completed_through_session=EXPECTED_SESSIONS[-1],
+        evidence_cutoff_at=DAILY_EVIDENCE_CUTOFF,
+        instrument_identities={"AAPL": _fixture_identity("AAPL")},
+    )
+
+    bars = result["AAPL"]
+    assert isinstance(bars, tuple)
+    assert all(isinstance(bar, CompletedDailyBar) for bar in bars)
+    assert [bar.instrument_id for bar in bars] == ["fixture-aapl", "fixture-aapl"]
+    assert bars[0].provider == "alpaca"
+    assert bars[0].feed == "iex"
+    assert bars[0].coverage.value == "single_exchange"
+    assert bars[0].adjustment == "all"
+    assert bars[0].source_timestamp == datetime(2026, 8, 18, 20, tzinfo=UTC)
+    assert bars[0].retrieved_at == DAILY_RETRIEVED_AT
+    assert bars[0].evidence_cutoff_at == DAILY_EVIDENCE_CUTOFF
+    assert bars[0].evidence_id
+    assert bars[0].quality_flags
+
+
+def test_daily_bars_fail_closed_without_explicit_evidence_cutoff() -> None:
+    provider = _provider(
+        "daily-bars.json",
+        path="/v2/stocks/bars",
+        clock=DAILY_RETRIEVED_AT,
+    )
+
+    result = provider.fetch_daily_bars(
+        ["AAPL"],
+        date(2026, 8, 18),
+        date(2026, 8, 19),
+        expected_sessions=EXPECTED_SESSIONS,
+        completed_through_session=EXPECTED_SESSIONS[-1],
+        instrument_identities={"AAPL": _fixture_identity("AAPL")},
+    )
+
+    assert result["AAPL"].error_code == "INVALID_REQUEST"
+    assert result["AAPL"].retryable is False
+
+
+def test_daily_bars_fail_closed_without_identity_resolution() -> None:
+    provider = _provider(
+        "daily-bars.json",
+        path="/v2/stocks/bars",
+        clock=DAILY_RETRIEVED_AT,
+    )
+
+    result = provider.fetch_daily_bars(
+        ["AAPL"],
+        date(2026, 8, 18),
+        date(2026, 8, 19),
+        expected_sessions=EXPECTED_SESSIONS,
+        completed_through_session=EXPECTED_SESSIONS[-1],
+        evidence_cutoff_at=DAILY_EVIDENCE_CUTOFF,
+        instrument_identities={},
+    )
+
+    assert result["AAPL"].error_code == "INVALID_REQUEST"
+    assert result["AAPL"].retryable is False
+
+
+def test_premarket_fails_when_retrieval_is_after_evidence_cutoff() -> None:
+    provider = _provider(
+        "premarket-iex.json",
+        clock=AS_OF + timedelta(minutes=1),
+    )
+
+    result = provider.fetch_premarket_observations(["AAPL"], AS_OF)
+
+    assert result["AAPL"].error_code == "EVIDENCE_CUTOFF_VIOLATION"
+    assert result["AAPL"].retryable is False
+
+
+def test_empty_provider_asset_id_is_typed_schema_failure() -> None:
+    provider = _provider(
+        "instruments.json",
+        path="/v2/assets",
+        payload=[
+            {
+                "id": "",
+                "symbol": "AAPL",
+                "name": "Apple Inc.",
+                "exchange": "NASDAQ",
+                "class": "us_equity",
+                "status": "active",
+                "tradable": True,
+                "fractionable": True,
+            }
+        ],
+    )
+
+    result = provider.fetch_instruments(["AAPL"])
+
+    assert result["AAPL"].error_code == "PROVIDER_SCHEMA_DRIFT"
+    assert result["AAPL"].retryable is False
+    assert result["AAPL"].scope == "symbol"
+
+
 def test_daily_bars_use_the_existing_completed_history_normalizer() -> None:
     provider = _provider(
         "daily-bars.json",
@@ -281,6 +394,7 @@ def test_daily_bars_use_the_existing_completed_history_normalizer() -> None:
         datetime(2026, 8, 19, tzinfo=UTC).date(),
         expected_sessions=EXPECTED_SESSIONS,
         completed_through_session=EXPECTED_SESSIONS[-1],
+        evidence_cutoff_at=DAILY_EVIDENCE_CUTOFF,
     )
     bars = result["AAPL"]
     assert [bar.session_date.isoformat() for bar in bars] == ["2026-08-18", "2026-08-19"]
@@ -300,6 +414,7 @@ def test_daily_bar_request_preserves_explicit_feed_and_adjustment() -> None:
         datetime(2026, 8, 19, tzinfo=UTC).date(),
         expected_sessions=EXPECTED_SESSIONS,
         completed_through_session=EXPECTED_SESSIONS[-1],
+        evidence_cutoff_at=DAILY_EVIDENCE_CUTOFF,
         feed=MarketDataFeed.SIP,
         adjustment=BarAdjustment.SPLIT,
     )
@@ -318,6 +433,7 @@ def test_daily_bar_symbol_absence_is_scoped_without_fabricating_a_bar() -> None:
         datetime(2026, 8, 19, tzinfo=UTC).date(),
         expected_sessions=EXPECTED_SESSIONS,
         completed_through_session=EXPECTED_SESSIONS[-1],
+        evidence_cutoff_at=DAILY_EVIDENCE_CUTOFF,
     )
     assert result["MSFT"].symbol == "MSFT"
     assert result["MSFT"].error_code == "PROVIDER_NO_DATA"
@@ -608,6 +724,7 @@ def test_historical_normalizer_reason_maps_to_distinct_provider_failure(
         date(2026, 8, 19),
         expected_sessions=EXPECTED_SESSIONS,
         completed_through_session=EXPECTED_SESSIONS[-1],
+        evidence_cutoff_at=DAILY_EVIDENCE_CUTOFF,
     )
 
     assert result["AAPL"].error_code == expected_code

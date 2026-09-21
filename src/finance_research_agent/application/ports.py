@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from finance_research_agent.domain.enums import InvocationType
-from finance_research_agent.domain.market import DailyBar
 from finance_research_agent.domain.market_calendar import TradingCalendar
 from finance_research_agent.domain.models import (
+    CompletedDailyBar,
     EventCollection,
     InstrumentIdentity,
     PriceObservation,
@@ -57,7 +57,9 @@ class MarketDataProvider(Protocol):
         *,
         expected_sessions: tuple[date, ...] | None = None,
         completed_through_session: date | None = None,
-    ) -> Mapping[str, tuple[DailyBar, ...] | ProviderFailure]: ...
+        evidence_cutoff_at: datetime | None = None,
+        instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+    ) -> Mapping[str, tuple[CompletedDailyBar, ...] | ProviderFailure]: ...
 
     def fetch_premarket_observations(
         self,
