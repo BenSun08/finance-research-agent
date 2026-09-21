@@ -434,6 +434,7 @@ class SafeHttpClient:
         deadline: datetime,
         *,
         provider_credentials: tuple[str, str] | None = None,
+        user_agent: str | None = None,
     ) -> SafeResponse:
         if provider_credentials is not None and any(
             type(value) is not str or not value for value in provider_credentials
@@ -444,19 +445,27 @@ class SafeHttpClient:
             raise RequestRejected("deadline must be timezone-aware")
         if deadline <= self._clock():
             raise RequestDeadlineExceeded("request deadline exceeded")
+        if user_agent is not None and (
+            not user_agent
+            or len(user_agent) > 256
+            or any(ord(character) < 32 or ord(character) == 127 for character in user_agent)
+        ):
+            raise RequestRejected("user agent must be bounded identifying text")
 
         max_attempts = max(1, self._policy.retry_attempts + 1)
         attempt = 1
         redirects = 0
         transport = self._transport or _PinnedHTTPTransport(addresses)
-        headers = (
-            {
-                "APCA-API-KEY-ID": provider_credentials[0],
-                "APCA-API-SECRET-KEY": provider_credentials[1],
-            }
-            if provider_credentials is not None
-            else None
-        )
+        headers: dict[str, str] = {}
+        if provider_credentials is not None:
+            headers.update(
+                {
+                    "APCA-API-KEY-ID": provider_credentials[0],
+                    "APCA-API-SECRET-KEY": provider_credentials[1],
+                }
+            )
+        if user_agent is not None:
+            headers["User-Agent"] = user_agent
         with httpx.Client(transport=transport, follow_redirects=False) as client:
             while attempt <= max_attempts:
                 remaining = (deadline - self._clock()).total_seconds()
@@ -466,7 +475,7 @@ class SafeHttpClient:
                     with client.stream(
                         request.method,
                         url,
-                        headers=headers,
+                        headers=headers or None,
                         timeout=min(float(self._policy.request_deadline_seconds), remaining),
                     ) as response:
                         if 300 <= response.status_code < 400:

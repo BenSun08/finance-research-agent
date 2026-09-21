@@ -9,6 +9,7 @@ from finance_research_agent.domain.enums import InvocationType
 from finance_research_agent.domain.market import DailyBar
 from finance_research_agent.domain.market_calendar import TradingCalendar
 from finance_research_agent.domain.models import (
+    EventCollection,
     InstrumentIdentity,
     PriceObservation,
     ProviderFailure,
@@ -30,6 +31,7 @@ from finance_research_agent.market_data.historical import (
 __all__ = [
     "ConfigurationRepository",
     "ConfigurationRepositoryFactory",
+    "EventProvider",
     "HistoricalBarsFetcher",
     "MarketDataProvider",
     "RunRepository",
@@ -60,6 +62,14 @@ class MarketDataProvider(Protocol):
     def fetch_premarket_observations(
         self, symbols: Sequence[str], as_of: datetime
     ) -> Mapping[str, PriceObservation | ProviderFailure]: ...
+
+
+class EventProvider(Protocol):
+    """Provider-neutral collection boundary for bounded event evidence."""
+
+    def collect_events(
+        self, symbols: Sequence[str], start: datetime, end: datetime
+    ) -> EventCollection: ...
 
 
 class HistoricalBarsFetcher(Protocol):

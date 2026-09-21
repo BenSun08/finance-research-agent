@@ -21,7 +21,18 @@ FORBIDDEN_ENDPOINT_FRAGMENTS = (
     "/v2/positions",
 )
 ALPACA_HISTORICAL_ADAPTER = Path("adapters/alpaca_historical.py")
-R4_BOUNDARY_FILES = frozenset({Path("adapters/http_client.py"), Path("settings.py")})
+R4_BOUNDARY_FILES = frozenset(
+    {
+        Path("adapters/http_client.py"),
+        Path("adapters/_event_common.py"),
+        Path("adapters/alpaca_news.py"),
+        Path("adapters/company_ir.py"),
+        Path("adapters/events.py"),
+        Path("adapters/macro.py"),
+        Path("adapters/sec.py"),
+        Path("settings.py"),
+    }
+)
 ALLOWED_ALPACA_FROM_IMPORTS = {
     "alpaca.common.exceptions": frozenset({"APIError"}),
     "alpaca.data.enums": frozenset({"Adjustment", "DataFeed"}),
