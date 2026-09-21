@@ -108,6 +108,58 @@ def test_premarket_quote_preserves_iex_provenance(
     assert quote.evidence_id
 
 
+def test_quote_shaped_latest_observation_validates_both_iex_venues() -> None:
+    provider = _provider(
+        "premarket-iex.json",
+        payload={
+            "quotes": {
+                "AAPL": {
+                    "ap": 192.34,
+                    "bp": 192.33,
+                    "t": "2026-08-19T12:58:00Z",
+                    "ax": "V",
+                    "bx": "V",
+                }
+            }
+        },
+    )
+
+    result = provider.fetch_premarket_observations(["AAPL"], AS_OF)
+
+    observation = result["AAPL"]
+    assert observation.value == Decimal("192.34")
+    assert observation.feed == "iex"
+    assert observation.coverage.value == "single_exchange"
+    assert observation.session.value == "PRE_MARKET"
+
+
+@pytest.mark.parametrize(
+    "venue_fields",
+    ({}, {"ax": "V", "bx": "NASDAQ"}),
+)
+def test_quote_shaped_latest_observation_rejects_missing_or_non_iex_venue(
+    venue_fields: dict[str, str],
+) -> None:
+    provider = _provider(
+        "premarket-iex.json",
+        payload={
+            "quotes": {
+                "AAPL": {
+                    "ap": 192.34,
+                    "bp": 192.33,
+                    "t": "2026-08-19T12:58:00Z",
+                    **venue_fields,
+                }
+            }
+        },
+    )
+
+    result = provider.fetch_premarket_observations(["AAPL"], AS_OF)
+
+    assert result["AAPL"].error_code == "PROVIDER_SCHEMA_DRIFT"
+    assert result["AAPL"].retryable is False
+
+
 def test_schema_drift_returns_failure_without_guessing(
     alpaca_schema_drift_provider: AlpacaMarketDataProvider,
 ) -> None:

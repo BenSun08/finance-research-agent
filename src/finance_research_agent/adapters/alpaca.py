@@ -107,6 +107,8 @@ class _QuotePayload(_AlpacaPayload):
     ask_price: int | float = Field(alias="ap")
     bid_price: int | float = Field(alias="bp")
     timestamp: str = Field(alias="t")
+    ask_exchange: str = Field(alias="ax")
+    bid_exchange: str = Field(alias="bx")
 
 
 class _LatestPayload(_AlpacaPayload):
@@ -799,6 +801,11 @@ class AlpacaMarketDataProvider:
                 else:
                     ask = _positive_decimal(item.ask_price)
                     bid = _positive_decimal(item.bid_price)
+                    if (
+                        item.ask_exchange not in _IEX_EXCHANGES
+                        or item.bid_exchange not in _IEX_EXCHANGES
+                    ):
+                        raise ValueError("premarket quote venues do not match IEX feed")
                     value = ask if ask > 0 else bid
                     observed_at = _utc_timestamp(item.timestamp)
                     raw_payload = item.model_dump(mode="json", by_alias=True)
