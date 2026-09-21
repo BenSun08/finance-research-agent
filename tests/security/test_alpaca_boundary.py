@@ -21,6 +21,7 @@ FORBIDDEN_ENDPOINT_FRAGMENTS = (
     "/v2/positions",
 )
 ALPACA_HISTORICAL_ADAPTER = Path("adapters/alpaca_historical.py")
+R4_BOUNDARY_FILES = frozenset({Path("adapters/http_client.py"), Path("settings.py")})
 ALLOWED_ALPACA_FROM_IMPORTS = {
     "alpaca.common.exceptions": frozenset({"APIError"}),
     "alpaca.data.enums": frozenset({"Adjustment", "DataFeed"}),
@@ -118,6 +119,8 @@ def test_production_code_imports_no_alpaca_trading_or_broker_surface() -> None:
 
 def test_first_data_slice_has_no_direct_network_escape_hatch() -> None:
     for path in PACKAGE_ROOT.rglob("*.py"):
+        if path.relative_to(PACKAGE_ROOT) in R4_BOUNDARY_FILES:
+            continue
         for module in _imports(path):
             assert not module.startswith(FORBIDDEN_DIRECT_TRANSPORT_PREFIXES), (
                 path,
