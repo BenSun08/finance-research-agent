@@ -43,6 +43,10 @@ def _percent_decode(value: str) -> str:
     )
 
 
+def _host_matches_domains(host: str, domains: tuple[str, ...]) -> bool:
+    return any(host == domain or host.endswith(f".{domain}") for domain in domains)
+
+
 class PolicyModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True, validate_default=True)
 
@@ -446,6 +450,14 @@ class SourcePolicy(PolicyModel):
             self.allowed_adapters
         ):
             raise ValueError("allowed_hosts_by_adapter must cover every allowed adapter")
+        if self.allowed_hosts_by_adapter is not None and any(
+            not _host_matches_domains(host, self.allowed_https_domains)
+            for hosts in self.allowed_hosts_by_adapter.values()
+            for host in hosts
+        ):
+            raise ValueError(
+                "allowed_hosts_by_adapter must be within the global HTTPS domain allowlist"
+            )
         return self
 
 

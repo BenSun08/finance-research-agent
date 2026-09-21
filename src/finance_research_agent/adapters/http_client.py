@@ -396,6 +396,8 @@ class SafeHttpClient:
             raise RequestRejected("adapter host policy is required")
         allowed_hosts = allowed_hosts_by_adapter[request.adapter]
         host_error = "adapter host is not allowlisted"
+        if not _host_matches_policy(host, self._policy.allowed_https_domains):
+            raise RequestRejected("host is not in the global HTTPS domain allowlist")
         if not _host_matches_policy(host, allowed_hosts):
             raise RequestRejected(host_error)
         if not _port_allowed(host, request.port, self._policy.allowed_ports_by_host):

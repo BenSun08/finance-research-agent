@@ -520,6 +520,48 @@ def test_adapter_hosts_and_non_default_ports_are_policy_bound(source_policy: Sou
         )
 
 
+def test_source_policy_rejects_adapter_host_outside_global_allowlist(
+    source_policy: SourcePolicy,
+) -> None:
+    values = source_policy.model_dump(mode="python")
+    values["allowed_hosts_by_adapter"] = FrozenMap(
+        {"company_ir": ("example.test",), "sec": ("sec.test",)}
+    )
+
+    with pytest.raises(ValueError, match="global HTTPS domain"):
+        SourcePolicy.model_validate(values)
+
+
+def test_request_rejects_adapter_host_outside_global_allowlist_before_resolution(
+    source_policy: SourcePolicy,
+) -> None:
+    inconsistent_policy = source_policy.model_copy(
+        update={
+            "allowed_hosts_by_adapter": FrozenMap(
+                {"company_ir": ("example.test",), "sec": ("sec.test",)}
+            )
+        }
+    )
+    resolutions: list[tuple[str, int]] = []
+
+    def resolver(host: str, port: int) -> tuple[str, ...]:
+        resolutions.append((host, port))
+        return ("93.184.216.34",)
+
+    client = SafeHttpClient(inconsistent_policy, resolver=resolver)
+
+    with pytest.raises(RequestRejected, match="global HTTPS domain"):
+        client.validate(
+            AllowedRequest.for_adapter(
+                "sec",
+                "/submissions/CIK.json",
+                host="sec.test",
+            )
+        )
+
+    assert resolutions == []
+
+
 def test_client_rejects_requests_without_adapter_host_policy(
     source_policy: SourcePolicy,
 ) -> None:
