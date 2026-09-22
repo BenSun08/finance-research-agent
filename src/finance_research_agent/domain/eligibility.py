@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from decimal import Decimal
+from decimal import MAX_PREC, Decimal, localcontext
 
 from finance_research_agent.domain.enums import Capability, GateStatus
 from finance_research_agent.domain.errors import ErrorCode
@@ -23,6 +23,37 @@ def _gate(reason: ErrorCode, message: str, evidence_ids: Sequence[str] = ()) -> 
         capability=Capability.PLAN_DRAFT_AVAILABLE,
         rule_version=_RULE_VERSION,
     )
+
+
+def _median_dollar_volume(
+    snapshot: MarketSnapshot,
+    volumes: tuple[int, ...],
+) -> Decimal:
+    multiplication_precision = max(
+        len(bar.close.as_tuple().digits) + len(str(volume)) + 1
+        for bar, volume in zip(snapshot.completed_daily_bars, volumes, strict=True)
+    )
+    with localcontext() as context:
+        context.prec = min(MAX_PREC, multiplication_precision)
+        dollars = sorted(
+            bar.close * Decimal(volume)
+            for bar, volume in zip(snapshot.completed_daily_bars, volumes, strict=True)
+        )
+        middle = len(dollars) // 2
+        if len(dollars) % 2:
+            return dollars[middle]
+        lower, upper = dollars[middle - 1 : middle + 1]
+        lower_exponent = lower.as_tuple().exponent
+        upper_exponent = upper.as_tuple().exponent
+        assert isinstance(lower_exponent, int)
+        assert isinstance(upper_exponent, int)
+        exact_average_precision = (
+            max(lower.adjusted(), upper.adjusted())
+            - min(lower_exponent, upper_exponent)
+            + 2
+        )
+        context.prec = min(MAX_PREC, max(1, exact_average_precision))
+        return (lower + upper) / Decimal(2)
 
 
 def evaluate_instrument_eligibility(
@@ -94,11 +125,7 @@ def evaluate_instrument_eligibility(
             )
         else:
             present_volumes = tuple(volume for volume in volumes if volume is not None)
-            dollars = sorted(
-                Decimal(bar.close) * Decimal(volume)
-                for bar, volume in zip(snapshot.completed_daily_bars, present_volumes, strict=True)
-            )
-            median = dollars[len(dollars) // 2]
+            median = _median_dollar_volume(snapshot, present_volumes)
             if median < setup_policy.minimum_median_dollar_volume:
                 gates.append(
                     _gate(

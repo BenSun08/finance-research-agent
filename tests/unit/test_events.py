@@ -1,11 +1,20 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from finance_research_agent.domain.enums import GateStatus, PlanStatus
+from finance_research_agent.domain.enums import Capability, GateStatus, PlanStatus
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.events import EventEvidenceProjection, assess_event_risk
-from finance_research_agent.domain.models import EventRecord, InstrumentIdentity, SourceHealth
+from finance_research_agent.domain.events import (
+    EventAssessment,
+    EventEvidenceProjection,
+)
+from finance_research_agent.domain.events import assess_event_risk as _assess_event_risk
+from finance_research_agent.domain.models import (
+    EventRecord,
+    GateResult,
+    InstrumentIdentity,
+    SourceHealth,
+)
 
 NOW = datetime(2026, 9, 21, 12, tzinfo=UTC)
 INSTRUMENT = InstrumentIdentity(
@@ -29,6 +38,17 @@ def _projection(event_id: str, *, retrieved_at: datetime = NOW) -> EventEvidence
         retrieved_at=retrieved_at,
         supporting_authority_tier=1,
         conflicting_authority_tier=None,
+    )
+
+
+def _healthy_macro_source_health() -> tuple[SourceHealth, ...]:
+    return (SourceHealth(provider="macro-calendar", available=True, required=True),)
+
+
+def assess_event_risk(**kwargs: object) -> EventAssessment:
+    return _assess_event_risk(
+        source_health=kwargs.pop("source_health", _healthy_macro_source_health()),  # type: ignore[arg-type]
+        **kwargs,  # type: ignore[arg-type]
     )
 
 
@@ -451,3 +471,140 @@ def test_source_policy_can_escalate_unverified_material_event_to_block() -> None
     )
 
     assert assessment.plan_status is PlanStatus.BLOCKED
+
+
+@pytest.mark.parametrize("materiality", ("LOW", "MEDIUM", "UNKNOWN"))
+def test_conservative_material_events_require_projection_and_protect_cutoff(
+    materiality: str,
+) -> None:
+    event = EventRecord(
+        event_id=f"{materiality.lower()}-late",
+        event_type="FILING",
+        subject_symbol="MSFT",
+        event_time=NOW - timedelta(days=1),
+        verified=True,
+        materiality=materiality,  # type: ignore[arg-type]
+        supporting_evidence_ids=("ev-material",),
+        conflict_evidence_ids=(),
+    )
+    with pytest.raises(ValueError, match="missing event evidence projection"):
+        _assess_event_risk(
+            instrument=INSTRUMENT,
+            events=(event,),
+            plan_expires_at=NOW + timedelta(days=1),
+            evidence_cutoff_at=NOW,
+            source_health=_healthy_macro_source_health(),
+        )
+    assessment = _assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(event,),
+        plan_expires_at=NOW + timedelta(days=1),
+        evidence_cutoff_at=NOW,
+        source_health=_healthy_macro_source_health(),
+        event_evidence=(_projection(event.event_id, retrieved_at=NOW + timedelta(seconds=1)),),
+    )
+    assert assessment.plan_status is PlanStatus.BLOCKED
+    assert ErrorCode.EVIDENCE_CUTOFF_VIOLATION.value in assessment.quality_flags
+
+
+def test_incomplete_macro_health_snapshot_blocks_event_assessment() -> None:
+    assessment = _assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(),
+        plan_expires_at=NOW + timedelta(days=1),
+        evidence_cutoff_at=NOW,
+    )
+
+    assert assessment.plan_status is PlanStatus.BLOCKED
+    assert assessment.gates[0].reason_code == ErrorCode.CONFIGURATION_INVALID.value
+
+
+def test_nonrequired_macro_health_does_not_satisfy_required_snapshot() -> None:
+    assessment = _assess_event_risk(
+        instrument=INSTRUMENT,
+        events=(),
+        plan_expires_at=NOW + timedelta(days=1),
+        evidence_cutoff_at=NOW,
+        source_health=(
+            SourceHealth(provider="macro-calendar", available=True, required=False),
+        ),
+    )
+
+    assert assessment.plan_status is PlanStatus.BLOCKED
+    assert assessment.gates[0].reason_code == ErrorCode.CONFIGURATION_INVALID.value
+
+
+def test_event_evaluator_rejects_invalid_policy_times_windows_and_ids() -> None:
+    event = EventRecord(
+        event_id="duplicate",
+        event_type="FILING",
+        subject_symbol="MSFT",
+        event_time=NOW,
+        verified=True,
+        materiality="LOW",
+        supporting_evidence_ids=(),
+        conflict_evidence_ids=(),
+    )
+    base = dict(
+        instrument=INSTRUMENT,
+        events=(event,),
+        plan_expires_at=NOW + timedelta(days=1),
+        evidence_cutoff_at=NOW,
+        source_health=_healthy_macro_source_health(),
+    )
+    with pytest.raises(ValueError, match="enum"):
+        _assess_event_risk(**base, unverified_material_status="BLOCKED")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="plan expiry"):
+        _assess_event_risk(**{**base, "plan_expires_at": NOW})
+    with pytest.raises(ValueError, match="duplicate event id"):
+        _assess_event_risk(**{**base, "events": (event, event)})
+    with pytest.raises(ValueError, match="UTC"):
+        _assess_event_risk(**{**base, "evidence_cutoff_at": NOW.replace(tzinfo=None)})
+    with pytest.raises(ValueError, match="UTC"):
+        _assess_event_risk(
+            **{
+                **base,
+                "evidence_cutoff_at": NOW.astimezone(timezone(timedelta(hours=1))),
+            }
+        )
+    with pytest.raises(ValueError, match="timestamp"):
+        _assess_event_risk(**{**base, "evidence_cutoff_at": "2026-09-21T12:00:00Z"})
+
+    invalid_event = event.model_copy(update={"event_time": NOW.replace(tzinfo=None)})
+    with pytest.raises(ValueError, match="event time must be UTC"):
+        _assess_event_risk(**{**base, "events": (invalid_event,)})
+
+    invalid_projection = _projection(event.event_id).model_copy(
+        update={"retrieved_at": NOW.replace(tzinfo=None)}
+    )
+    event_with_evidence = event.model_copy(
+        update={"supporting_evidence_ids": ("ev-duplicate",)}
+    )
+    with pytest.raises(ValueError, match="evidence retrieval must be UTC"):
+        _assess_event_risk(
+            **{
+                **base,
+                "events": (event_with_evidence,),
+                "event_evidence": (invalid_projection,),
+            }
+        )
+
+
+def test_event_assessment_rejects_contradictory_status_and_gates() -> None:
+    blocking_gate = GateResult(
+        gate_id="blocked",
+        status=GateStatus.BLOCK,
+        reason_code=ErrorCode.PROVIDER_UNAVAILABLE.value,
+        message="blocked",
+        evidence_ids=(),
+        capability=Capability.PLAN_DRAFT_AVAILABLE,
+        rule_version="r5-events-1",
+    )
+    with pytest.raises(ValueError, match="DRAFT"):
+        EventAssessment(plan_status=PlanStatus.DRAFT, gates=(blocking_gate,))
+    with pytest.raises(ValueError, match="REVIEW_REQUIRED"):
+        EventAssessment(plan_status=PlanStatus.REVIEW_REQUIRED, gates=(blocking_gate,))
+    with pytest.raises(ValueError, match="BLOCKED"):
+        EventAssessment(plan_status=PlanStatus.BLOCKED, gates=())
+    with pytest.raises(ValueError, match="event assessment status"):
+        EventAssessment(plan_status=PlanStatus.EXPIRED, gates=())

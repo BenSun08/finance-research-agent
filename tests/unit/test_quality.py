@@ -3,11 +3,14 @@ from decimal import Decimal
 
 import pytest
 
-from finance_research_agent.domain.enums import Capability, DataQualityStatus
+from finance_research_agent.domain.enums import Capability, DataQualityStatus, PlanStatus
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import CapabilityState, ProviderFailure, SourceHealth
 from finance_research_agent.domain.policies import RiskPolicy
-from finance_research_agent.domain.quality import DataQualityResult, evaluate_data_quality
+from finance_research_agent.domain.quality import (
+    DataQualityResult,
+)
+from finance_research_agent.domain.quality import evaluate_data_quality as _evaluate_data_quality
 from finance_research_agent.domain.regime import Regime
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.market_data.historical import (
@@ -35,6 +38,41 @@ def _complete_risk_policy(*, sizing_enabled: bool = True) -> RiskPolicy:
         existing_portfolio_heat_pct="0.01" if sizing_enabled else None,
         quantity_increment="1",
         regime_risk_multipliers={regime.name: Decimal("1") for regime in Regime},
+    )
+
+
+def _complete_source_health(*overrides: SourceHealth) -> tuple[SourceHealth, ...]:
+    supplied = {health.provider: health for health in overrides}
+    baseline = (
+        SourceHealth(provider="alpaca", available=True, required=True),
+        SourceHealth(provider="market-calendar", available=True, required=True),
+        SourceHealth(provider="macro-calendar", available=True, required=True),
+        SourceHealth(provider="sec_edgar", available=True, required=True),
+    )
+    baseline_providers = {item.provider for item in baseline}
+    return tuple(supplied.get(health.provider, health) for health in baseline) + tuple(
+        health for health in overrides if health.provider not in baseline_providers
+    )
+
+
+def evaluate_data_quality(**kwargs: object) -> DataQualityResult:
+    source_health = kwargs.pop("source_health", ())
+    assert isinstance(source_health, tuple)
+    return _evaluate_data_quality(
+        source_health=_complete_source_health(*source_health),  # type: ignore[arg-type]
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def _states(*, disabled: Capability | None = None) -> tuple[CapabilityState, ...]:
+    return tuple(
+        CapabilityState(
+            capability=capability,
+            available=capability is not disabled,
+            reason_codes=() if capability is not disabled else (ErrorCode.PROVIDER_UNAVAILABLE,),
+            evidence_ids=(),
+        )
+        for capability in Capability
     )
 
 
@@ -296,3 +334,188 @@ def test_each_historical_failure_reason_blocks_only_its_symbol(
     state = result.symbol_capability("MSFT", Capability.PLAN_DRAFT_AVAILABLE)
     assert state.available is False
     assert state.reason_codes == (error_code,)
+    assert result.symbol_capability(
+        "MSFT", Capability.WATCHLIST_METRICS_AVAILABLE
+    ).available is False
+    assert result.symbol_capability(
+        "MSFT", Capability.SETUP_DETECTION_AVAILABLE
+    ).available is False
+    assert result.symbol_capability(
+        "MSFT", Capability.POSITION_SIZING_AVAILABLE
+    ).available is False
+    assert result.symbol_plan_status("MSFT") is PlanStatus.BLOCKED
+
+
+def test_incomplete_health_snapshot_fails_closed_with_stable_reason() -> None:
+    result = _evaluate_data_quality(
+        source_health=(SourceHealth(provider="alpaca", available=True, required=True),),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert result.status is DataQualityStatus.FAIL
+    assert result.capability(Capability.MARKET_SUMMARY_AVAILABLE).reason_codes == (
+        ErrorCode.CONFIGURATION_INVALID,
+    )
+
+
+def test_empty_health_snapshot_fails_closed_with_stable_reason() -> None:
+    result = _evaluate_data_quality(
+        source_health=(),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert result.status is DataQualityStatus.FAIL
+    assert result.capability(Capability.MARKET_SUMMARY_AVAILABLE).reason_codes == (
+        ErrorCode.CONFIGURATION_INVALID,
+    )
+
+
+def test_required_health_role_must_be_affirmatively_required() -> None:
+    health = tuple(
+        item.model_copy(update={"required": False}) if item.provider == "alpaca" else item
+        for item in _complete_source_health()
+    )
+
+    result = _evaluate_data_quality(
+        source_health=health,
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert result.status is DataQualityStatus.FAIL
+    assert result.capability(Capability.MARKET_SUMMARY_AVAILABLE).reason_codes == (
+        ErrorCode.CONFIGURATION_INVALID,
+    )
+
+
+def test_duplicate_source_health_provider_is_rejected_as_ambiguous() -> None:
+    health = _complete_source_health()
+
+    with pytest.raises(ValueError, match="source health providers must be unique"):
+        _evaluate_data_quality(
+            source_health=(*health, health[0]),
+            risk_policy=_complete_risk_policy(),
+        )
+
+
+def test_effective_symbol_capabilities_combine_global_and_symbol_restrictions() -> None:
+    result = _evaluate_data_quality(
+        source_health=_complete_source_health(
+            SourceHealth(
+                provider="macro-calendar",
+                available=False,
+                required=True,
+                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                message="unavailable",
+            )
+        ),
+        current_price_failures=(
+            ProviderFailure(
+                provider="alpaca", symbol="MSFT", error_code=ErrorCode.STALE_DATA, retryable=False
+            ),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    state = result.symbol_capability("MSFT", Capability.PLAN_DRAFT_AVAILABLE)
+    assert state.available is False
+    assert state.reason_codes == (ErrorCode.PROVIDER_UNAVAILABLE,)
+    sizing = result.symbol_capability("MSFT", Capability.POSITION_SIZING_AVAILABLE)
+    assert sizing.reason_codes == (
+        ErrorCode.PROVIDER_UNAVAILABLE,
+        ErrorCode.STALE_DATA,
+    )
+    assert result.symbol_plan_status("MSFT") is PlanStatus.BLOCKED
+
+
+def test_symbol_plan_status_keeps_strongest_restriction_independent_of_failure_order() -> None:
+    result = _evaluate_data_quality(
+        source_health=_complete_source_health(),
+        provider_failures=(
+            ProviderFailure(
+                provider="sec_edgar",
+                symbol="MSFT",
+                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                retryable=False,
+            ),
+            ProviderFailure(
+                provider="alpaca_news",
+                symbol="MSFT",
+                error_code=ErrorCode.PROVIDER_NO_DATA,
+                retryable=False,
+            ),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert result.symbol_plan_status("MSFT") is PlanStatus.BLOCKED
+    assert result.symbol_capability(
+        "MSFT", Capability.PLAN_DRAFT_AVAILABLE
+    ).reason_codes == (ErrorCode.PROVIDER_UNAVAILABLE,)
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected_disabled"),
+    (
+        ("alpaca_news", ()),
+        ("sec_edgar", (Capability.PLAN_DRAFT_AVAILABLE,)),
+    ),
+)
+def test_symbol_provider_failures_follow_source_role_dependencies(
+    provider: str, expected_disabled: tuple[Capability, ...]
+) -> None:
+    result = _evaluate_data_quality(
+        source_health=_complete_source_health(),
+        provider_failures=(
+            ProviderFailure(
+                provider=provider,
+                symbol="MSFT",
+                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                retryable=False,
+            ),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert (
+        result.symbol_capability("MSFT", Capability.WATCHLIST_METRICS_AVAILABLE).available is True
+    )
+    assert result.symbol_capability("MSFT", Capability.SETUP_DETECTION_AVAILABLE).available is True
+    assert (
+        result.symbol_capability("MSFT", Capability.PLAN_DRAFT_AVAILABLE).available
+        is (Capability.PLAN_DRAFT_AVAILABLE not in expected_disabled)
+    )
+    assert result.symbol_plan_status("MSFT") is (
+        PlanStatus.BLOCKED if expected_disabled else PlanStatus.DRAFT
+    )
+
+
+def test_quality_result_rejects_contradictory_aggregate_and_symbol_values() -> None:
+    with pytest.raises(ValueError, match="PASS requires"):
+        DataQualityResult(
+            status=DataQualityStatus.PASS,
+            capabilities=_states(disabled=Capability.PLAN_DRAFT_AVAILABLE),
+        )
+    with pytest.raises(ValueError, match="FAIL requires"):
+        DataQualityResult(
+            status=DataQualityStatus.FAIL,
+            capabilities=_states(),
+        )
+    with pytest.raises(ValueError, match="DEGRADED requires"):
+        DataQualityResult(
+            status=DataQualityStatus.DEGRADED,
+            capabilities=_states(),
+        )
+    with pytest.raises(ValueError, match="symbol plan status"):
+        DataQualityResult(
+            status=DataQualityStatus.DEGRADED,
+            capabilities=_states(),
+            symbol_capabilities=FrozenMap({"MSFT": _states()}),
+            symbol_plan_statuses=FrozenMap({"MSFT": PlanStatus.BLOCKED}),
+        )
+    with pytest.raises(ValueError, match="symbol keys"):
+        DataQualityResult(
+            status=DataQualityStatus.DEGRADED,
+            capabilities=_states(),
+            symbol_capabilities=FrozenMap({"bad symbol": _states()}),
+            symbol_plan_statuses=FrozenMap({"bad symbol": PlanStatus.DRAFT}),
+        )

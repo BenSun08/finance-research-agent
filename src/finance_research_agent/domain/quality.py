@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Self
 
@@ -34,6 +35,18 @@ _SIZING_INPUTS = (
     "max_position_pct",
     "minimum_reward_risk_ratio",
 )
+_HEALTH_ROLE_PROVIDERS = (
+    ("market-data", {"alpaca"}),
+    ("market-calendar", {"market-calendar"}),
+    ("macro-calendar", _MACRO_PROVIDERS),
+    ("official-verification", _OFFICIAL_VERIFICATION_PROVIDERS),
+)
+_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$")
+_PLAN_STATUS_STRENGTH = {
+    PlanStatus.DRAFT: 0,
+    PlanStatus.REVIEW_REQUIRED: 1,
+    PlanStatus.BLOCKED: 2,
+}
 
 
 class DataQualityResult(StrictModel):
@@ -57,20 +70,62 @@ class DataQualityResult(StrictModel):
                 raise ValueError(
                     "symbol capabilities require exactly one state for each exact capability"
                 )
-        if set(self.symbol_plan_statuses) - set(self.symbol_capabilities):
-            raise ValueError("symbol plan status requires symbol capabilities")
+        if set(self.symbol_plan_statuses) != set(self.symbol_capabilities):
+            raise ValueError("symbol plan status requires exactly the symbol capabilities")
+        for symbol, states in self.symbol_capabilities.items():
+            if not _SYMBOL_PATTERN.fullmatch(symbol):
+                raise ValueError("symbol keys must be valid symbols")
+            plan_available = next(
+                state.available
+                for state in states
+                if state.capability is Capability.PLAN_DRAFT_AVAILABLE
+            )
+            status = self.symbol_plan_statuses[symbol]
+            if not plan_available and status is not PlanStatus.BLOCKED:
+                raise ValueError("symbol plan status must block an unavailable plan capability")
+            if (
+                plan_available
+                and any(not state.available for state in states)
+                and status is not PlanStatus.REVIEW_REQUIRED
+            ):
+                raise ValueError("symbol plan status must require review for scoped restrictions")
+            if (
+                plan_available
+                and all(state.available for state in states)
+                and status is not PlanStatus.DRAFT
+            ):
+                raise ValueError(
+                    "symbol plan status must draft when all scoped capabilities are available"
+                )
+        all_available = all(state.available for state in self.capabilities)
+        if self.status is DataQualityStatus.PASS and (
+            not all_available or self.global_reason_codes or self.symbol_capabilities
+        ):
+            raise ValueError("PASS requires every capability and scoped result to be available")
+        if self.status is DataQualityStatus.FAIL and all_available:
+            raise ValueError("FAIL requires a disabled global capability")
+        if self.status is DataQualityStatus.DEGRADED and (
+            all_available and not self.global_reason_codes and not self.symbol_capabilities
+        ):
+            raise ValueError("DEGRADED requires a global or symbol-scoped restriction")
         return self
 
     def capability(self, capability: Capability) -> CapabilityState:
         return next(state for state in self.capabilities if state.capability is capability)
 
     def symbol_capability(self, symbol: str, capability: Capability) -> CapabilityState:
-        return next(
-            state for state in self.symbol_capabilities[symbol] if state.capability is capability
+        global_state = self.capability(capability)
+        local_states = self.symbol_capabilities.get(symbol, _states({}))
+        local_state = next(state for state in local_states if state.capability is capability)
+        return _state(
+            capability,
+            tuple(dict.fromkeys((*global_state.reason_codes, *local_state.reason_codes))),
         )
 
     def symbol_plan_status(self, symbol: str) -> PlanStatus:
-        return self.symbol_plan_statuses[symbol]
+        if not self.symbol_capability(symbol, Capability.PLAN_DRAFT_AVAILABLE).available:
+            return PlanStatus.BLOCKED
+        return self.symbol_plan_statuses.get(symbol, PlanStatus.DRAFT)
 
 
 def _state(capability: Capability, reasons: tuple[ErrorCode, ...] = ()) -> CapabilityState:
@@ -116,6 +171,43 @@ def _dependencies(provider: str, *, required: bool) -> tuple[Capability, ...]:
         Capability.POSITION_SIZING_AVAILABLE,
         Capability.PORTFOLIO_HEAT_CHECK_AVAILABLE,
     )
+
+
+def _incomplete_health_roles(source_health: Sequence[SourceHealth]) -> tuple[str, ...]:
+    return tuple(
+        role
+        for role, alternatives in _HEALTH_ROLE_PROVIDERS
+        if not any(
+            health.required and health.provider in alternatives for health in source_health
+        )
+    )
+
+
+def _validate_source_health(source_health: Sequence[SourceHealth]) -> None:
+    providers = tuple(health.provider for health in source_health)
+    if len(set(providers)) != len(providers):
+        raise ValueError("source health providers must be unique")
+
+
+def _missing_health_dependencies(
+    source_health: Sequence[SourceHealth],
+) -> dict[Capability, tuple[ErrorCode, ...]]:
+    incomplete_roles = set(_incomplete_health_roles(source_health))
+    disabled: dict[Capability, tuple[ErrorCode, ...]] = {}
+    for role, alternatives in _HEALTH_ROLE_PROVIDERS:
+        if role in incomplete_roles:
+            _disable(
+                disabled,
+                _dependencies(next(iter(alternatives)), required=True),
+                ErrorCode.CONFIGURATION_INVALID,
+            )
+    return disabled
+
+
+def _strongest_plan_status(current: PlanStatus | None, candidate: PlanStatus) -> PlanStatus:
+    if current is None or _PLAN_STATUS_STRENGTH[candidate] > _PLAN_STATUS_STRENGTH[current]:
+        return candidate
+    return current
 
 
 def _request_failure_code(failure: HistoricalBarsRequestFailure) -> ErrorCode:
@@ -174,7 +266,11 @@ def evaluate_capabilities(
 ) -> tuple[CapabilityState, ...]:
     """Evaluate global dependencies; per-symbol failures remain outside this result."""
 
+    _validate_source_health(source_health)
     disabled = _risk_dependencies(risk_policy)
+    for capability, reasons in _missing_health_dependencies(source_health).items():
+        for reason in reasons:
+            _disable(disabled, (capability,), reason)
     for health in source_health:
         if not health.available:
             assert health.error_code is not None
@@ -189,7 +285,7 @@ def evaluate_capabilities(
         if failure.symbol is None:
             _disable(
                 disabled,
-                _dependencies(failure.provider, required=False),
+                _dependencies(failure.provider, required=True),
                 failure.error_code,
             )
     return _states(disabled)
@@ -216,6 +312,9 @@ def evaluate_data_quality(
     global_reasons.extend(
         health.error_code for health in source_health if not health.available and health.error_code
     )
+    incomplete_health_roles = _incomplete_health_roles(source_health)
+    if incomplete_health_roles:
+        global_reasons.append(ErrorCode.CONFIGURATION_INVALID)
     if historical_request_failure is not None:
         global_reasons.append(_request_failure_code(historical_request_failure))
     symbol_disabled: dict[str, dict[Capability, tuple[ErrorCode, ...]]] = {}
@@ -229,8 +328,18 @@ def evaluate_data_quality(
     for failure in provider_failures:
         if failure.symbol is not None:
             disabled = symbol_disabled.setdefault(failure.symbol, {})
-            _disable(disabled, full_symbol_capabilities, failure.error_code)
-            symbol_status[failure.symbol] = PlanStatus.BLOCKED
+            dependencies = _dependencies(failure.provider, required=True)
+            _disable(disabled, dependencies, failure.error_code)
+            candidate_status = (
+                PlanStatus.BLOCKED
+                if Capability.PLAN_DRAFT_AVAILABLE in dependencies
+                else PlanStatus.REVIEW_REQUIRED
+                if dependencies
+                else PlanStatus.DRAFT
+            )
+            symbol_status[failure.symbol] = _strongest_plan_status(
+                symbol_status.get(failure.symbol), candidate_status
+            )
     for historical_failure in historical_failures:
         disabled = symbol_disabled.setdefault(historical_failure.symbol, {})
         _disable(
@@ -238,14 +347,17 @@ def evaluate_data_quality(
             full_symbol_capabilities,
             _historical_failure_code(historical_failure),
         )
-        symbol_status[historical_failure.symbol] = PlanStatus.BLOCKED
+        symbol_status[historical_failure.symbol] = _strongest_plan_status(
+            symbol_status.get(historical_failure.symbol), PlanStatus.BLOCKED
+        )
     for failure in current_price_failures:
         if failure.symbol is None:
             raise ValueError("current price failures require symbol scope")
         disabled = symbol_disabled.setdefault(failure.symbol, {})
         _disable(disabled, (Capability.POSITION_SIZING_AVAILABLE,), failure.error_code)
-        if symbol_status.get(failure.symbol) is not PlanStatus.BLOCKED:
-            symbol_status[failure.symbol] = PlanStatus.REVIEW_REQUIRED
+        symbol_status[failure.symbol] = _strongest_plan_status(
+            symbol_status.get(failure.symbol), PlanStatus.REVIEW_REQUIRED
+        )
     symbol_capabilities = FrozenMap(
         {symbol: _states(disabled) for symbol, disabled in symbol_disabled.items()}
     )
@@ -255,7 +367,7 @@ def evaluate_data_quality(
     ) or any(
         not health.available and health.provider in _MARKET_PREREQUISITES
         for health in source_health
-    )
+    ) or bool({"market-data", "market-calendar"}.intersection(incomplete_health_roles))
     status = (
         DataQualityStatus.FAIL
         if hard_global

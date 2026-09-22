@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime, timedelta
+from typing import Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from finance_research_agent.domain.enums import Capability, GateStatus, PlanStatus
 from finance_research_agent.domain.errors import ErrorCode
@@ -20,7 +22,7 @@ from finance_research_agent.domain.types import UtcDatetime
 
 _RULE_VERSION = "r5-events-1"
 _MACRO_TYPES = {"FED", "FOMC", "CPI", "PPI", "EMPLOYMENT", "GDP", "MACRO"}
-_LATE_MATERIAL_TYPES = {"GUIDANCE", "FILING", "CORPORATE_ACTION", "ANNOUNCEMENT"}
+_CONSERVATIVE_MATERIALITY = {"MEDIUM", "HIGH", "UNKNOWN"}
 
 
 class EventAssessment(StrictModel):
@@ -31,6 +33,24 @@ class EventAssessment(StrictModel):
     event_risks: tuple[str, ...] = Field(default=())
     no_trade_conditions: tuple[str, ...] = Field(default=())
     quality_flags: tuple[str, ...] = Field(default=())
+
+    @model_validator(mode="after")
+    def _consistent_status(self) -> Self:
+        if self.plan_status not in {
+            PlanStatus.DRAFT,
+            PlanStatus.REVIEW_REQUIRED,
+            PlanStatus.BLOCKED,
+        }:
+            raise ValueError("event assessment status must be draft, review required, or blocked")
+        has_block = any(gate.status is GateStatus.BLOCK for gate in self.gates)
+        has_warning = any(gate.status is GateStatus.WARNING for gate in self.gates)
+        if self.plan_status is PlanStatus.DRAFT and (has_block or has_warning):
+            raise ValueError("DRAFT cannot contain blocking or warning gates")
+        if self.plan_status is PlanStatus.REVIEW_REQUIRED and (has_block or not has_warning):
+            raise ValueError("REVIEW_REQUIRED requires warnings without blocks")
+        if self.plan_status is PlanStatus.BLOCKED and not has_block:
+            raise ValueError("BLOCKED requires a blocking gate")
+        return self
 
 
 class EventEvidenceProjection(StrictModel):
@@ -68,6 +88,24 @@ def _macro_unavailable(source_health: Sequence[SourceHealth]) -> bool:
     )
 
 
+def _has_required_macro_health(source_health: Sequence[SourceHealth]) -> bool:
+    return any(
+        health.required
+        and (
+            "macro" in health.provider
+            or health.provider in {"federal_reserve", "fed", "bls", "bea"}
+        )
+        for health in source_health
+    )
+
+
+def _utc(value: object, name: str) -> None:
+    if not isinstance(value, datetime):
+        raise ValueError(f"{name} must be a datetime timestamp")
+    if value.utcoffset() != timedelta(0):
+        raise ValueError(f"{name} must be UTC")
+
+
 def assess_event_risk(
     *,
     instrument: InstrumentIdentity,
@@ -84,6 +122,27 @@ def assess_event_risk(
     risks: list[str] = []
     no_trade: list[str] = []
     flags: list[str] = []
+    if type(unverified_material_status) is not PlanStatus:
+        raise ValueError("unverified material status must be an enum")
+    _utc(plan_expires_at, "plan expiry")
+    _utc(evidence_cutoff_at, "evidence cutoff")
+    if plan_expires_at <= evidence_cutoff_at:
+        raise ValueError("plan expiry must follow evidence cutoff")
+    if len({event.event_id for event in events}) != len(events):
+        raise ValueError("duplicate event id")
+    for event in events:
+        _utc(event.event_time, "event time")
+    for projection in event_evidence:
+        _utc(projection.retrieved_at, "evidence retrieval")
+    if not _has_required_macro_health(source_health):
+        gates.append(
+            _gate(
+                GateStatus.BLOCK,
+                ErrorCode.CONFIGURATION_INVALID,
+                "required macro calendar health is missing",
+                (),
+            )
+        )
     relevant_events = tuple(
         event for event in events if event.subject_symbol in {None, instrument.symbol}
     )
@@ -97,8 +156,7 @@ def assess_event_risk(
         projections[projection.event_id] = projection
     for event in relevant_events:
         if (
-            event.materiality == "HIGH"
-            and (event.supporting_evidence_ids or event.conflict_evidence_ids)
+            (event.supporting_evidence_ids or event.conflict_evidence_ids)
             and event.event_id not in projections
         ):
             raise ValueError("missing event evidence projection")
@@ -127,7 +185,7 @@ def assess_event_risk(
                 or event_projection.conflicting_authority_tier
                 <= event_projection.supporting_authority_tier
             )
-            if event.materiality == "HIGH" and unresolved:
+            if event.materiality in _CONSERVATIVE_MATERIALITY and unresolved:
                 gates.append(
                     _gate(
                         GateStatus.BLOCK,
@@ -137,8 +195,7 @@ def assess_event_risk(
                     )
                 )
         if (
-            event.materiality == "HIGH"
-            and event_projection is not None
+            event_projection is not None
             and event_projection.retrieved_at > evidence_cutoff_at
         ):
             flags.append(ErrorCode.EVIDENCE_CUTOFF_VIOLATION.value)
@@ -146,7 +203,7 @@ def assess_event_risk(
                 _gate(
                     GateStatus.BLOCK,
                     ErrorCode.EVIDENCE_CUTOFF_VIOLATION,
-                    "post-cutoff material evidence requires a new revision",
+                    "post-cutoff evidence requires a new revision",
                     evidence_ids,
                 )
             )
@@ -172,7 +229,7 @@ def assess_event_risk(
                     evidence_ids,
                 )
             )
-        elif not event.verified and event.materiality in {"MEDIUM", "HIGH", "UNKNOWN"}:
+        elif not event.verified and event.materiality in _CONSERVATIVE_MATERIALITY:
             gates.append(
                 _gate(
                     (
