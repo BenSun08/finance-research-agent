@@ -1,0 +1,7 @@
+{
+  "input_symbols": ["FFF", "CCC", "EEE", "AAA", "DDD", "BBB"],
+  "quality": "0.80",
+  "expected_symbols": ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"],
+  "expected_selected": [true, true, true, true, true, false],
+  "expected_highlights": [true, true, true, false, false, false]
+}
