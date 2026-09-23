@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from finance_research_agent.domain.plans import TradePlanDraft
 
 _CONTEXT = Context(prec=28)
-_MAX_PRICE_AGE = timedelta(days=1)
 
 
 class SizingStatus(StrEnum):
@@ -76,12 +75,18 @@ class PositionSizing(StrictModel):
         return self
 
 
-def _fresh(price: PriceObservation | None, now_utc: datetime) -> bool:
+def _fresh(price: PriceObservation | None, now_utc: datetime, max_age_seconds: int | None) -> bool:
     return (
         price is not None
+        and max_age_seconds is not None
+        and max_age_seconds > 0
         and price.observed_at <= now_utc
-        and now_utc - price.observed_at <= _MAX_PRICE_AGE
-        and not any("STALE" in flag or "CONFLICT" in flag for flag in price.quality_flags)
+        and price.retrieved_at <= now_utc
+        and now_utc - price.observed_at <= timedelta(seconds=max_age_seconds)
+        and not any(
+            any(problem in flag.upper() for problem in ("STALE", "CONFLICT", "UNRELIABLE"))
+            for flag in price.quality_flags
+        )
     )
 
 
@@ -116,12 +121,16 @@ def calculate_position_sizing(
         reasons.append("RISK_POLICY_INCOMPLETE")
     if stop >= entry:
         reasons.append("STOP_NOT_BELOW_ENTRY")
-    if not _fresh(current_price, now_utc) or (
+    if plan.current_price_freshness_seconds is None:
+        reasons.append("CURRENT_PRICE_FRESHNESS_UNAVAILABLE")
+    if plan.stop_freshness_seconds is None:
+        reasons.append("STOP_FRESHNESS_UNAVAILABLE")
+    if not _fresh(current_price, now_utc, plan.current_price_freshness_seconds) or (
         current_price is not None
         and current_price.instrument_id != plan.entry_zone.upper.instrument_id
     ):
         reasons.append("CURRENT_PRICE_STALE")
-    if not _fresh(plan.candidate_stop, now_utc):
+    if not _fresh(plan.candidate_stop, now_utc, plan.stop_freshness_seconds):
         reasons.append("STOP_EVIDENCE_STALE")
     if minimum_rr is not None and max(plan.reward_risk_by_target, default=Decimal(0)) < minimum_rr:
         reasons.append("REWARD_RISK_BELOW_POLICY")

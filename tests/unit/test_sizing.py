@@ -118,3 +118,21 @@ def test_sizing_model_rejects_available_without_positive_quantity(inputs):
                 "suggested_units": None,
             }
         )
+
+
+def test_twenty_hour_quote_is_unavailable_under_frozen_price_policy(inputs):
+    from finance_research_agent.domain.plans import build_trade_plan
+
+    plan = build_trade_plan(**inputs)
+    old = plan.generated_at - timedelta(hours=20)
+    old_quote = inputs["current_price"].model_copy(
+        update={
+            "observed_at": old,
+            "retrieved_at": old,
+        }
+    )
+    sizing = calculate_position_sizing(
+        plan, inputs["risk_policy"], plan.market_regime, old_quote, plan.generated_at
+    )
+    assert sizing.status is SizingStatus.SIZING_UNAVAILABLE
+    assert "CURRENT_PRICE_STALE" in sizing.unavailable_reasons

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
-from datetime import datetime, time, timedelta
+from collections.abc import Mapping, Sequence
+from datetime import UTC, date, datetime, timedelta
 from decimal import Context, Decimal, localcontext
+from functools import lru_cache
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
@@ -15,11 +16,12 @@ from finance_research_agent.domain.enums import (
     DataQualityStatus,
     DeliveryStatus,
     GateStatus,
+    InvocationType,
     PlanStatus,
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.events import EventAssessment
-from finance_research_agent.domain.market_calendar import NEW_YORK
+from finance_research_agent.domain.market_calendar import TradingCalendar, resolve_run_window
 from finance_research_agent.domain.models import (
     CapabilityState,
     GateResult,
@@ -41,6 +43,7 @@ from finance_research_agent.domain.setups import CalculatedPrice, EntryZone, Set
 from finance_research_agent.domain.sizing import (
     PositionSizing,
     SizingStatus,
+    _fresh,
     calculate_position_sizing,
 )
 from finance_research_agent.domain.types import UtcDatetime
@@ -105,6 +108,8 @@ class TradePlanDraft(StrictModel):
     setup_policy_version: str
     risk_policy_version: str
     regime_policy_version: str
+    current_price_freshness_seconds: Annotated[int, Field(gt=0)] | None = None
+    stop_freshness_seconds: Annotated[int, Field(gt=0)] | None = None
     expiry_reasons: tuple[Identifier, ...] = ()
 
     @model_validator(mode="after")
@@ -139,27 +144,76 @@ class TradePlanDraft(StrictModel):
         return self
 
 
-def _expiry_time(start: datetime, sessions: int) -> datetime:
-    try:
-        import exchange_calendars as xcals  # type: ignore[import-untyped]
+class _XNYSCalendar:
+    """Deterministic session bridge shared by R7 validity and run-window checks."""
 
-        calendar = xcals.get_calendar("XNYS")
-    except Exception as error:
-        raise RuntimeError(
-            f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}: calendar unavailable"
-        ) from error
-    current = start
-    remaining = sessions
-    while remaining:
-        current += timedelta(days=1)
+    def __init__(self) -> None:
         try:
-            if calendar.is_session(current.date().isoformat()):
-                remaining -= 1
+            import exchange_calendars as xcals  # type: ignore[import-untyped]
+
+            self._calendar = xcals.get_calendar("XNYS")
         except Exception as error:
             raise RuntimeError(
                 f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}: calendar unavailable"
             ) from error
+
+    def is_trading_day(self, market_date: date) -> bool:
+        try:
+            return bool(self._calendar.is_session(market_date.isoformat()))
+        except Exception as error:
+            raise RuntimeError(
+                f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}: calendar unavailable"
+            ) from error
+
+    def session_open_close(self, market_date: date) -> tuple[datetime, datetime]:
+        try:
+            session = self._calendar.schedule.loc[market_date.isoformat()]
+            return (
+                session["open"].to_pydatetime().astimezone(UTC),
+                session["close"].to_pydatetime().astimezone(UTC),
+            )
+        except Exception as error:
+            raise RuntimeError(
+                f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}: calendar unavailable"
+            ) from error
+
+
+@lru_cache(maxsize=1)
+def _plan_calendar() -> TradingCalendar:
+    return _XNYSCalendar()
+
+
+def _expiry_time(start: datetime, sessions: int) -> datetime:
+    calendar = _plan_calendar()
+    current = start
+    remaining = sessions
+    while remaining:
+        current += timedelta(days=1)
+        if calendar.is_trading_day(current.date()):
+            remaining -= 1
     return current
+
+
+def _frozen_price_freshness(run: RunContext) -> tuple[int | None, int | None]:
+    """Read only the two R7 limits from the run's frozen source-policy copy."""
+
+    policies = run.configuration_snapshot.policies
+    if policies is None:
+        return None, None
+    source = policies.get("source")
+    if not isinstance(source, Mapping):
+        return None, None
+    if source.get("version") != run.configuration_snapshot.source_policy_version:
+        return None, None
+    freshness = source.get("freshness_by_data_type")
+    if not isinstance(freshness, Mapping):
+        return None, None
+
+    def positive_seconds(key: str) -> int | None:
+        value = freshness.get(key)
+        return value if type(value) is int and value > 0 else None
+
+    return positive_seconds("market_current_price"), positive_seconds("market_daily_bars")
 
 
 def _status(
@@ -168,6 +222,7 @@ def _status(
     gates: tuple[GateResult, ...],
     capabilities: tuple[CapabilityState, ...],
     risk: RiskPolicy,
+    regime: Regime,
 ) -> PlanStatus:
     if (
         candidate.plan_status is PlanStatus.BLOCKED
@@ -179,6 +234,7 @@ def _status(
             for state in capabilities
         )
         or risk.max_total_portfolio_heat_pct is None
+        or regime in (Regime.DEFENSIVE, Regime.UNKNOWN)
     ):
         return PlanStatus.BLOCKED
     if (
@@ -212,9 +268,19 @@ def build_trade_plan(
         raise ValueError("candidate and watchlist symbol differ")
     if watchlist_item.role != "SATELLITE_ELIGIBLE":
         raise ValueError("only SATELLITE_ELIGIBLE watchlist items may receive plans")
-    local_invoked = run.invoked_at.astimezone(NEW_YORK).time()
-    if run.delivery_status is DeliveryStatus.MISSED_WINDOW or local_invoked >= time(9, 30):
-        raise ValueError("missed premarket run cannot create a plan")
+    generated_at = max(run.invoked_at, run.evidence_cutoff_at)
+    if run.delivery_status is DeliveryStatus.MISSED_WINDOW:
+        raise ValueError("run window forbids a plan after a missed premarket run")
+    invocation = (
+        InvocationType.MANUAL
+        if run.delivery_status is DeliveryStatus.MANUAL
+        else InvocationType.SCHEDULED
+    )
+    window = resolve_run_window(generated_at, _plan_calendar(), run.market_date, invocation)
+    if not window.should_run or not window.allow_normal_plan:
+        raise ValueError(
+            f"run window forbids a normal plan (missed or delayed): {window.reason_code}"
+        )
     if run.data_quality_status is DataQualityStatus.FAIL:
         raise ValueError("failed run data quality cannot create a plan")
     if candidate.event_assessment != event_assessment:
@@ -231,8 +297,8 @@ def build_trade_plan(
     states = tuple(capability_states)
     if len(states) != len(Capability) or {state.capability for state in states} != set(Capability):
         raise ValueError("capability states must cover each Product A capability exactly once")
-    generated_at = max(run.invoked_at, run.evidence_cutoff_at)
-    late_review = local_invoked >= time(9, 25)
+    late_review = window.force_review_required
+    price_freshness_seconds, stop_freshness_seconds = _frozen_price_freshness(run)
     with localcontext(_CONTEXT):
         entry = candidate.levels.entry_zone.upper.value
         stop = candidate.levels.candidate_stop.value
@@ -280,7 +346,9 @@ def build_trade_plan(
                 )
             )
         )
-        status = _status(candidate, event_assessment, gate_results, states, risk_policy)
+        status = _status(
+            candidate, event_assessment, gate_results, states, risk_policy, regime.regime
+        )
         if status is PlanStatus.DRAFT and (
             late_review or run.data_quality_status is DataQualityStatus.DEGRADED
         ):
@@ -352,6 +420,8 @@ def build_trade_plan(
             setup_policy_version=setup_policy.version,
             risk_policy_version=risk_policy.version,
             regime_policy_version=regime.policy_version,
+            current_price_freshness_seconds=price_freshness_seconds,
+            stop_freshness_seconds=stop_freshness_seconds,
         )
         sizing = calculate_position_sizing(
             draft, risk_policy, regime.regime, current_price, generated_at
@@ -397,7 +467,9 @@ def expire_plan(
     if current_price is not None:
         if current_price.instrument_id != plan.entry_zone.upper.instrument_id:
             raise ValueError("price instrument differs from plan")
-        if not entry_trigger_satisfied and not (
+        if not _fresh(current_price, now_utc, plan.current_price_freshness_seconds):
+            reasons.append("DATA_STALE_OR_CONFLICTING")
+        elif not entry_trigger_satisfied and not (
             plan.entry_zone.lower.value <= current_price.value <= plan.entry_zone.upper.value
         ):
             reasons.append("ENTRY_ZONE_DEPARTED")

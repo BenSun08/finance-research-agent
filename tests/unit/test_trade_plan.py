@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -14,6 +14,7 @@ from finance_research_agent.domain.models import CapabilityState, GateResult, Pr
 from finance_research_agent.domain.plans import TradePlanDraft, _expiry_time, build_trade_plan
 from finance_research_agent.domain.policies import RiskPolicy, WatchlistItem
 from finance_research_agent.domain.regime import Regime
+from finance_research_agent.domain.types import FrozenMap
 from tests.unit.test_filesystem_store import _context
 from tests.unit.test_scoring import _candidate, _regime
 
@@ -25,8 +26,27 @@ def inputs():
         update={
             "run_id": "premarket-2026-09-22-r1",
             "market_date": date(2026, 9, 22),
-            "invoked_at": candidate.evidence_cutoff_at,
+            "invoked_at": candidate.evidence_cutoff_at + timedelta(minutes=45),
             "evidence_cutoff_at": candidate.evidence_cutoff_at,
+        }
+    )
+    run = run.model_copy(
+        update={
+            "configuration_snapshot": run.configuration_snapshot.model_copy(
+                update={
+                    "policies": FrozenMap(
+                        {
+                            "source": {
+                                "version": "1",
+                                "freshness_by_data_type": {
+                                    "market_current_price": 7200,
+                                    "market_daily_bars": 86400,
+                                },
+                            }
+                        }
+                    ),
+                }
+            ),
         }
     )
     price = PriceObservation(
@@ -196,6 +216,51 @@ def test_after_open_window_rejects_new_plan(inputs):
     )
     with pytest.raises(ValueError, match="missed"):
         build_trade_plan(**inputs)
+
+
+@pytest.mark.parametrize("regime", [Regime.DEFENSIVE, Regime.UNKNOWN])
+def test_current_incompatible_regime_blocks_stale_selection(inputs, regime):
+    inputs["regime"] = _regime(regime)
+    plan = build_trade_plan(**inputs)
+    assert plan.plan_status is PlanStatus.BLOCKED
+    assert plan.position_sizing.suggested_units is None
+
+
+def test_delayed_catchup_window_forbids_normal_plan(inputs):
+    inputs["run"] = inputs["run"].model_copy(
+        update={
+            "invoked_at": datetime(2026, 9, 22, 13, 10, tzinfo=UTC),
+            "delivery_status": DeliveryStatus.DELAYED,
+        }
+    )
+    with pytest.raises(ValueError, match="run window"):
+        build_trade_plan(**inputs)
+
+
+def test_cutoff_time_can_move_generation_past_plan_window(inputs):
+    late_cutoff = datetime(2026, 9, 22, 13, 31, tzinfo=UTC)
+    inputs["run"] = inputs["run"].model_copy(update={"evidence_cutoff_at": late_cutoff})
+    inputs["candidate"] = inputs["candidate"].model_copy(
+        update={
+            "evidence_cutoff_at": late_cutoff,
+        }
+    )
+    with pytest.raises(ValueError, match="run window"):
+        build_trade_plan(**inputs)
+
+
+def test_missing_frozen_price_freshness_blocks_sizing(inputs):
+    run = inputs["run"]
+    inputs["run"] = run.model_copy(
+        update={
+            "configuration_snapshot": run.configuration_snapshot.model_copy(
+                update={"policies": None}
+            ),
+        }
+    )
+    plan = build_trade_plan(**inputs)
+    assert plan.plan_status is PlanStatus.BLOCKED
+    assert "CURRENT_PRICE_FRESHNESS_UNAVAILABLE" in plan.position_sizing.unavailable_reasons
 
 
 @pytest.mark.parametrize(

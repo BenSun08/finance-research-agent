@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Self
 
 from pydantic import Field, model_validator
 
 from finance_research_agent.domain.enums import ObservationOutcome
+from finance_research_agent.domain.market_calendar import NEW_YORK
 from finance_research_agent.domain.models import CompletedDailyBar, Identifier, StrictModel
-from finance_research_agent.domain.plans import TradePlanDraft
+from finance_research_agent.domain.plans import TradePlanDraft, _plan_calendar
 from finance_research_agent.domain.types import UtcDatetime
 
 
@@ -59,8 +60,32 @@ def observe_prior_plan(
         raise ValueError("completed bars require unique increasing dates")
     if any(day > observed_through for day in dates):
         raise ValueError("completed bar is after observed-through close")
-    if any(bar.quality_flags for bar in bars):
-        raise ValueError("uncertain completed bars cannot establish plan path")
+    calendar = _plan_calendar()
+    if not calendar.is_trading_day(observed_through):
+        raise ValueError("observation coverage requires a completed trading session")
+    start_date = plan.valid_from.astimezone(NEW_YORK).date()
+    end_date = min(observed_through, plan.expires_at.astimezone(NEW_YORK).date())
+    expected: list[date] = []
+    session_close: dict[date, datetime] = {}
+    day = start_date
+    while day <= end_date:
+        if calendar.is_trading_day(day):
+            opened, closed = calendar.session_open_close(day)
+            if opened >= plan.valid_from and closed <= plan.expires_at:
+                expected.append(day)
+                session_close[day] = closed
+        day += timedelta(days=1)
+    if not expected:
+        raise ValueError("observation coverage has no fully eligible completed sessions")
+    by_date = {bar.session_date: bar for bar in bars}
+    if any(day not in by_date for day in expected):
+        raise ValueError("observation coverage has missing completed sessions")
+    eligible_bars = tuple(by_date[day] for day in expected)
+    if any(
+        bar.quality_flags or bar.source_timestamp < session_close[bar.session_date]
+        for bar in eligible_bars
+    ):
+        raise ValueError("observation coverage has incomplete or unreliable bars")
     reference = plan.entry_zone.upper.value
     entry_lower = plan.entry_zone.lower.value
     stop = plan.candidate_stop.value
@@ -71,18 +96,13 @@ def observe_prior_plan(
     mfe = None
     mae = None
     ambiguous = False
-    evidence: list[str] = []
-    for bar in bars:
-        if bar.session_date <= plan.valid_from.date():
-            continue
-        if bar.session_date > plan.expires_at.date():
-            break
+    evidence: list[str] = [bar.evidence_id for bar in eligible_bars]
+    for bar in eligible_bars:
         entry_this_bar = bar.low <= reference and bar.high >= entry_lower
         if entry_at is None and not entry_this_bar:
             continue
         if entry_at is None:
             entry_at = bar.source_timestamp
-        evidence.append(bar.evidence_id)
         high_excursion = max(Decimal(0), bar.high - reference)
         low_excursion = min(Decimal(0), bar.low - reference)
         mfe = high_excursion if mfe is None else max(mfe, high_excursion)
