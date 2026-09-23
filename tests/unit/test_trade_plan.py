@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime, timedelta
+from decimal import Inexact, localcontext
 
 import pytest
 from pydantic import ValidationError
@@ -10,6 +11,7 @@ from finance_research_agent.domain.enums import (
     GateStatus,
     PlanStatus,
 )
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import CapabilityState, GateResult, PriceObservation
 from finance_research_agent.domain.plans import TradePlanDraft, _expiry_time, build_trade_plan
 from finance_research_agent.domain.policies import RiskPolicy, WatchlistItem
@@ -143,6 +145,31 @@ def test_r5_block_cannot_be_compensated_by_selection(inputs):
     plan = build_trade_plan(**inputs)
     assert plan.plan_status is PlanStatus.BLOCKED
     assert plan.position_sizing.status.value == "SIZING_UNAVAILABLE"
+
+
+def test_r5_unavailable_sizing_capability_suppresses_units(inputs):
+    inputs["capability_states"] = tuple(
+        state.model_copy(
+            update={"available": False, "reason_codes": (ErrorCode.SIZING_UNAVAILABLE,)}
+        )
+        if state.capability is Capability.POSITION_SIZING_AVAILABLE
+        else state
+        for state in inputs["capability_states"]
+    )
+    plan = build_trade_plan(**inputs)
+    assert plan.plan_status is PlanStatus.BLOCKED
+    assert plan.position_sizing.status.value == "SIZING_UNAVAILABLE"
+    assert plan.position_sizing.suggested_units is None
+    assert "SIZING_UNAVAILABLE" in plan.position_sizing.unavailable_reasons
+
+
+def test_plan_json_roundtrip_ignores_ambient_decimal_context(inputs):
+    plan = build_trade_plan(**inputs)
+    with localcontext() as context:
+        context.prec = 2
+        context.traps[Inexact] = True
+        restored = TradePlanDraft.model_validate_json(plan.model_dump_json())
+    assert restored == plan
 
 
 def test_missing_heat_requires_review(inputs):

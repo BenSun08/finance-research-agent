@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 from typing import Self
 
 from pydantic import Field, model_validator
@@ -14,6 +14,22 @@ from finance_research_agent.domain.market_calendar import NEW_YORK
 from finance_research_agent.domain.models import CompletedDailyBar, Identifier, StrictModel
 from finance_research_agent.domain.plans import TradePlanDraft, _plan_calendar
 from finance_research_agent.domain.types import UtcDatetime
+
+_CONTEXT = Context(prec=28)
+_DISCLOSURE_FLAGS = frozenset(
+    {
+        "ADJUSTMENT_RAW",
+        "ADJUSTMENT_SPLIT",
+        "ADJUSTMENT_DIVIDEND",
+        "ADJUSTMENT_ALL",
+        "FEED_IEX_SINGLE_EXCHANGE",
+        "FEED_SIP_CONSOLIDATED_US",
+    }
+)
+
+
+def _disqualifying_quality(flags: tuple[str, ...]) -> bool:
+    return any(flag not in _DISCLOSURE_FLAGS for flag in flags)
 
 
 class PlanObservation(StrictModel):
@@ -64,14 +80,20 @@ def observe_prior_plan(
     if not calendar.is_trading_day(observed_through):
         raise ValueError("observation coverage requires a completed trading session")
     start_date = plan.valid_from.astimezone(NEW_YORK).date()
-    end_date = min(observed_through, plan.expires_at.astimezone(NEW_YORK).date())
+    cutoff = plan.effective_expiry_at or plan.expires_at
+    cutoff_date = cutoff.astimezone(NEW_YORK).date()
+    if observed_through >= cutoff_date and calendar.is_trading_day(cutoff_date):
+        opened, closed = calendar.session_open_close(cutoff_date)
+        if opened < cutoff < closed:
+            raise ValueError("observation coverage cannot resolve intraday expiry from daily bars")
+    end_date = min(observed_through, cutoff_date)
     expected: list[date] = []
     session_close: dict[date, datetime] = {}
     day = start_date
     while day <= end_date:
         if calendar.is_trading_day(day):
             opened, closed = calendar.session_open_close(day)
-            if opened >= plan.valid_from and closed <= plan.expires_at:
+            if opened >= plan.valid_from and closed <= cutoff:
                 expected.append(day)
                 session_close[day] = closed
         day += timedelta(days=1)
@@ -82,7 +104,9 @@ def observe_prior_plan(
         raise ValueError("observation coverage has missing completed sessions")
     eligible_bars = tuple(by_date[day] for day in expected)
     if any(
-        bar.quality_flags or bar.source_timestamp < session_close[bar.session_date]
+        _disqualifying_quality(bar.quality_flags)
+        or bar.retrieved_at < session_close[bar.session_date]
+        or bar.evidence_cutoff_at < session_close[bar.session_date]
         for bar in eligible_bars
     ):
         raise ValueError("observation coverage has incomplete or unreliable bars")
@@ -97,25 +121,27 @@ def observe_prior_plan(
     mae = None
     ambiguous = False
     evidence: list[str] = [bar.evidence_id for bar in eligible_bars]
-    for bar in eligible_bars:
-        entry_this_bar = bar.low <= reference and bar.high >= entry_lower
-        if entry_at is None and not entry_this_bar:
-            continue
-        if entry_at is None:
-            entry_at = bar.source_timestamp
-        high_excursion = max(Decimal(0), bar.high - reference)
-        low_excursion = min(Decimal(0), bar.low - reference)
-        mfe = high_excursion if mfe is None else max(mfe, high_excursion)
-        mae = low_excursion if mae is None else min(mae, low_excursion)
-        stop_hit = bar.low <= stop
-        target_hit = any(bar.high >= target for target in targets)
-        if (entry_this_bar and (stop_hit or target_hit)) or (stop_hit and target_hit):
-            ambiguous = True
-            continue
-        if stop_hit and stop_at is None:
-            stop_at = bar.source_timestamp
-        if target_hit and target_at is None:
-            target_at = bar.source_timestamp
+    with localcontext(_CONTEXT):
+        for bar in eligible_bars:
+            entry_this_bar = bar.low <= reference and bar.high >= entry_lower
+            if entry_at is None and not entry_this_bar:
+                continue
+            confirmed_at = session_close[bar.session_date]
+            if entry_at is None:
+                entry_at = confirmed_at
+            high_excursion = max(Decimal(0), bar.high - reference)
+            low_excursion = min(Decimal(0), bar.low - reference)
+            mfe = high_excursion if mfe is None else max(mfe, high_excursion)
+            mae = low_excursion if mae is None else min(mae, low_excursion)
+            stop_hit = bar.low <= stop
+            target_hit = any(bar.high >= target for target in targets)
+            if (entry_this_bar and (stop_hit or target_hit)) or (stop_hit and target_hit):
+                ambiguous = True
+                continue
+            if stop_hit and stop_at is None:
+                stop_at = confirmed_at
+            if target_hit and target_at is None:
+                target_at = confirmed_at
     outcomes: list[ObservationOutcome] = []
     if entry_at is None:
         outcomes.append(ObservationOutcome.ENTRY_ZONE_NOT_OBSERVED)
@@ -127,7 +153,7 @@ def observe_prior_plan(
         outcomes.append(ObservationOutcome.TARGET_OBSERVED)
     if ambiguous:
         outcomes.append(ObservationOutcome.AMBIGUOUS_SEQUENCE)
-    if observed_through >= plan.expires_at.date():
+    if observed_through >= cutoff_date:
         outcomes.append(ObservationOutcome.OBSERVATION_WINDOW_ENDED)
     return PlanObservation(
         plan_id=plan.plan_id,

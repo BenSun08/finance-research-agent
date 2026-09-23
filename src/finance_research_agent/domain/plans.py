@@ -111,11 +111,20 @@ class TradePlanDraft(StrictModel):
     current_price_freshness_seconds: Annotated[int, Field(gt=0)] | None = None
     stop_freshness_seconds: Annotated[int, Field(gt=0)] | None = None
     expiry_reasons: tuple[Identifier, ...] = ()
+    effective_expiry_at: UtcDatetime | None = None
 
     @model_validator(mode="after")
     def valid_conditional_plan(self) -> Self:
         if self.expires_at <= self.valid_from or self.generated_at < self.evidence_cutoff_at:
             raise ValueError("plan requires ordered generation, validity, and expiry times")
+        if self.plan_status is PlanStatus.EXPIRED and self.effective_expiry_at is None:
+            raise ValueError("expired plans require an effective expiry timestamp")
+        if self.plan_status is not PlanStatus.EXPIRED and self.effective_expiry_at is not None:
+            raise ValueError("only expired plans may have an effective expiry timestamp")
+        if self.effective_expiry_at is not None and not (
+            self.valid_from <= self.effective_expiry_at <= self.expires_at
+        ):
+            raise ValueError("effective expiry must be within plan validity")
         if self.plan_status in (PlanStatus.BLOCKED, PlanStatus.EXPIRED) and (
             self.position_sizing.status is not SizingStatus.SIZING_UNAVAILABLE
         ):
@@ -128,19 +137,20 @@ class TradePlanDraft(StrictModel):
             raise ValueError("no-trade conditions must be nonblank")
         if self.candidate_stop.value >= self.entry_zone.lower.value:
             raise ValueError("analytical stop must be below long entry zone")
-        if self.risk_per_unit != self.entry_zone.upper.value - self.candidate_stop.value:
-            raise ValueError("risk per unit must use the upper entry reference")
-        if len(self.target_scenarios) != len(self.reward_risk_by_target):
-            raise ValueError("every target requires a reward-risk value")
-        for target, ratio in zip(self.target_scenarios, self.reward_risk_by_target):
-            if target.price.value <= self.entry_zone.upper.value:
-                raise ValueError("long targets must exceed the entry zone")
-            if target.distance != target.price.value - self.entry_zone.upper.value:
-                raise ValueError("target distance must use upper entry reference")
-            if target.potential_reward != target.distance or target.r_multiple != ratio:
-                raise ValueError("target reward and R multiple must match calculated values")
-            if ratio != target.distance / self.risk_per_unit:
-                raise ValueError("target R multiple must match risk per unit")
+        with localcontext(_CONTEXT):
+            if self.risk_per_unit != self.entry_zone.upper.value - self.candidate_stop.value:
+                raise ValueError("risk per unit must use the upper entry reference")
+            if len(self.target_scenarios) != len(self.reward_risk_by_target):
+                raise ValueError("every target requires a reward-risk value")
+            for target, ratio in zip(self.target_scenarios, self.reward_risk_by_target):
+                if target.price.value <= self.entry_zone.upper.value:
+                    raise ValueError("long targets must exceed the entry zone")
+                if target.distance != target.price.value - self.entry_zone.upper.value:
+                    raise ValueError("target distance must use upper entry reference")
+                if target.potential_reward != target.distance or target.r_multiple != ratio:
+                    raise ValueError("target reward and R multiple must match calculated values")
+                if ratio != target.distance / self.risk_per_unit:
+                    raise ValueError("target R multiple must match risk per unit")
         return self
 
 
@@ -230,7 +240,9 @@ def _status(
         or candidate.data_quality.status is DataQualityStatus.FAIL
         or any(gate.status is GateStatus.BLOCK for gate in gates)
         or any(
-            not state.available and state.capability is Capability.PLAN_DRAFT_AVAILABLE
+            not state.available
+            and state.capability
+            in (Capability.PLAN_DRAFT_AVAILABLE, Capability.POSITION_SIZING_AVAILABLE)
             for state in capabilities
         )
         or risk.max_total_portfolio_heat_pct is None
@@ -430,6 +442,26 @@ def build_trade_plan(
         sizing = calculate_position_sizing(
             draft, risk_policy, regime.regime, current_price, generated_at
         )
+        sizing_capability = next(
+            state for state in states if state.capability is Capability.POSITION_SIZING_AVAILABLE
+        )
+        if not sizing_capability.available:
+            status = PlanStatus.BLOCKED
+            sizing = sizing.model_copy(
+                update={
+                    "status": SizingStatus.SIZING_UNAVAILABLE,
+                    "unavailable_reasons": tuple(
+                        dict.fromkeys(
+                            (
+                                *sizing.unavailable_reasons,
+                                *(reason.value for reason in sizing_capability.reason_codes),
+                            )
+                        )
+                    )
+                    or ("SIZING_UNAVAILABLE",),
+                    "suggested_units": None,
+                }
+            )
         if sizing.status is SizingStatus.SIZING_UNAVAILABLE:
             status = PlanStatus.BLOCKED
         elif (
@@ -465,6 +497,8 @@ def expire_plan(
 
     if now_utc.tzinfo is None or now_utc.utcoffset() != timedelta(0):
         raise ValueError("now_utc must be UTC")
+    if now_utc < plan.valid_from:
+        raise ValueError("expiry time cannot predate plan validity")
     reasons: list[str] = []
     if now_utc >= plan.expires_at:
         reasons.append("EXPIRES_AT_PASSED")
@@ -493,6 +527,9 @@ def expire_plan(
         update={
             "plan_status": PlanStatus.EXPIRED,
             "expiry_reasons": tuple(dict.fromkeys((*plan.expiry_reasons, *reasons))),
+            "effective_expiry_at": min(
+                now_utc, plan.expires_at, plan.effective_expiry_at or plan.expires_at
+            ),
             "position_sizing": plan.position_sizing.model_copy(
                 update={
                     "status": SizingStatus.SIZING_UNAVAILABLE,
