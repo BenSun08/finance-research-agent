@@ -169,7 +169,7 @@ def evaluate_components(
     del event_assessment, data_quality
     with localcontext(NUMERIC_CONTEXT):
         best_reward_to_risk = max(target.reward_to_risk for target in setup.target_scenarios)
-        reward_denom = setup.policy.minimum_reward_to_risk + Decimal(1)
+        reward_denom = best_reward_to_risk + Decimal(1)
         qualities = {
             ScoreComponentName.SETUP_QUALITY: _clamp_quality(Decimal(1) - setup.extension),
             ScoreComponentName.TREND_QUALITY: _clamp_quality(
@@ -179,7 +179,7 @@ def evaluate_components(
                 setup.relative_strength * Decimal(25)
             ),
             ScoreComponentName.REWARD_RISK_QUALITY: _clamp_quality(
-                setup.policy.minimum_reward_to_risk / reward_denom
+                best_reward_to_risk / reward_denom
             ),
             ScoreComponentName.LIQUIDITY_QUALITY: _clamp_quality(
                 setup.median_dollar_volume / (setup.policy.minimum_median_dollar_volume * 5)
@@ -199,8 +199,8 @@ def evaluate_components(
             ScoreComponentName.TREND_QUALITY: "Positive intermediate and primary trend metrics",
             ScoreComponentName.RELATIVE_STRENGTH: "Benchmark and sector relative strength",
             ScoreComponentName.REWARD_RISK_QUALITY: (
-                f"Minimum reward/risk {setup.policy.minimum_reward_to_risk} "
-                f"against best scenario {best_reward_to_risk}"
+                f"best scenario {best_reward_to_risk} reward/risk "
+                f"normalized against denominator {reward_denom}"
             ),
             ScoreComponentName.LIQUIDITY_QUALITY: "Median dollar volume versus setup policy",
             ScoreComponentName.CATALYST_EVIDENCE_QUALITY: (

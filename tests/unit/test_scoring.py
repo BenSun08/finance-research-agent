@@ -362,10 +362,17 @@ def test_default_components_are_calculated_and_no_catalyst_is_not_invented():
     setup = _setup()
     candidate = score_candidate(setup, **_score_context(setup))
     assert candidate.components[-1].quality == Decimal(0)
-    assert candidate.components[3].quality == Decimal("0.6666666666666666666666666667")
+    assert candidate.components[3].quality == Decimal("0.75")
     assert all(c.calculation and c.metric_ids for c in candidate.components[:-1])
     assert candidate.total_score > 0
     assert type(candidate).model_validate_json(candidate.model_dump_json()) == candidate
+
+
+def test_reward_risk_quality_uses_the_best_target_scenario():
+    candidate = score_candidate(_setup(), **_score_context(_setup()))
+    reward_risk = candidate.components[3]
+    assert reward_risk.quality == Decimal("0.75")
+    assert "best scenario 3" in reward_risk.calculation
 
 
 def test_nonfinite_or_missing_component_cannot_create_a_score():
