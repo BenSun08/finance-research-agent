@@ -259,6 +259,7 @@ def build_trade_plan(
     capability_states: Sequence[CapabilityState],
     setup_policy: SetupPolicy,
     risk_policy: RiskPolicy,
+    generated_at: datetime,
 ) -> TradePlanDraft:
     """Project a selected, evidence-bounded candidate into one conditional plan."""
 
@@ -268,7 +269,10 @@ def build_trade_plan(
         raise ValueError("candidate and watchlist symbol differ")
     if watchlist_item.role != "SATELLITE_ELIGIBLE":
         raise ValueError("only SATELLITE_ELIGIBLE watchlist items may receive plans")
-    generated_at = max(run.invoked_at, run.evidence_cutoff_at)
+    if not isinstance(generated_at, datetime) or generated_at.utcoffset() != timedelta(0):
+        raise ValueError("generated_at must be a UTC datetime")
+    if generated_at < run.invoked_at or generated_at < run.evidence_cutoff_at:
+        raise ValueError("generated_at cannot predate the run or evidence cutoff")
     if run.delivery_status is DeliveryStatus.MISSED_WINDOW:
         raise ValueError("run window forbids a plan after a missed premarket run")
     invocation = (

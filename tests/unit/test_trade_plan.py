@@ -90,6 +90,7 @@ def inputs():
         ),
         setup_policy=_setup_policy(candidate),
         risk_policy=risk,
+        generated_at=run.invoked_at,
     )
 
 
@@ -195,6 +196,7 @@ def test_lifetime_sessions_skip_xnys_holiday():
 
 def test_late_window_requires_review_and_uses_actual_generation_time(inputs):
     late = datetime(2026, 9, 22, 13, 27, tzinfo=UTC)
+    inputs["generated_at"] = late
     inputs["run"] = inputs["run"].model_copy(
         update={
             "invoked_at": late,
@@ -208,14 +210,40 @@ def test_late_window_requires_review_and_uses_actual_generation_time(inputs):
 
 
 def test_after_open_window_rejects_new_plan(inputs):
+    inputs["generated_at"] = datetime(2026, 9, 22, 13, 31, tzinfo=UTC)
     inputs["run"] = inputs["run"].model_copy(
         update={
-            "invoked_at": datetime(2026, 9, 22, 13, 31, tzinfo=UTC),
+            "invoked_at": inputs["generated_at"],
             "delivery_status": DeliveryStatus.DELAYED,
         }
     )
     with pytest.raises(ValueError, match="missed"):
         build_trade_plan(**inputs)
+
+
+def test_late_generation_rejects_early_run_timestamps(inputs):
+    actual_generation = datetime(2026, 9, 22, 13, 31, tzinfo=UTC)
+    assert inputs["run"].invoked_at < actual_generation
+    assert inputs["run"].evidence_cutoff_at < actual_generation
+    with pytest.raises(ValueError, match="run window"):
+        build_trade_plan(**{**inputs, "generated_at": actual_generation})
+
+
+def test_builder_records_explicit_generation_time(inputs):
+    generated_at = inputs["run"].invoked_at + timedelta(minutes=5)
+    plan = build_trade_plan(**{**inputs, "generated_at": generated_at})
+    assert plan.generated_at == generated_at
+    assert plan.valid_from == generated_at
+    assert plan.position_sizing.calculated_at == generated_at
+
+
+@pytest.mark.parametrize(
+    "generated_at",
+    [datetime(2026, 9, 22, 12, 50), datetime(2026, 9, 22, 12, 40, tzinfo=UTC)],
+)
+def test_builder_rejects_invalid_generation_time(inputs, generated_at):
+    with pytest.raises(ValueError, match="generated_at"):
+        build_trade_plan(**{**inputs, "generated_at": generated_at})
 
 
 @pytest.mark.parametrize("regime", [Regime.DEFENSIVE, Regime.UNKNOWN])
@@ -227,9 +255,10 @@ def test_current_incompatible_regime_blocks_stale_selection(inputs, regime):
 
 
 def test_delayed_catchup_window_forbids_normal_plan(inputs):
+    inputs["generated_at"] = datetime(2026, 9, 22, 13, 10, tzinfo=UTC)
     inputs["run"] = inputs["run"].model_copy(
         update={
-            "invoked_at": datetime(2026, 9, 22, 13, 10, tzinfo=UTC),
+            "invoked_at": inputs["generated_at"],
             "delivery_status": DeliveryStatus.DELAYED,
         }
     )
@@ -239,6 +268,7 @@ def test_delayed_catchup_window_forbids_normal_plan(inputs):
 
 def test_cutoff_time_can_move_generation_past_plan_window(inputs):
     late_cutoff = datetime(2026, 9, 22, 13, 31, tzinfo=UTC)
+    inputs["generated_at"] = late_cutoff
     inputs["run"] = inputs["run"].model_copy(update={"evidence_cutoff_at": late_cutoff})
     inputs["candidate"] = inputs["candidate"].model_copy(
         update={
