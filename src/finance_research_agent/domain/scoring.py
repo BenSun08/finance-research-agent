@@ -517,6 +517,50 @@ def _correlation_lookup(
     return result
 
 
+def _correlation_group_assignments(
+    candidates: tuple[SetupCandidate, ...],
+    correlations: dict[tuple[str, str], CorrelationEvidence],
+) -> tuple[dict[str, str], dict[str, CorrelationEvidence]]:
+    """Resolve correlated symbols into groups rooted at the pre-penalty leader."""
+
+    symbol_rank: dict[str, int] = {}
+    for index, candidate in enumerate(candidates):
+        symbol_rank.setdefault(candidate.symbol, index)
+    adjacency: dict[str, list[tuple[str, CorrelationEvidence]]] = {
+        symbol: [] for symbol in symbol_rank
+    }
+    for (left_symbol, right_symbol), correlation in correlations.items():
+        if (
+            left_symbol not in adjacency
+            or right_symbol not in adjacency
+            or abs(correlation.coefficient) < CORRELATION_THRESHOLD
+        ):
+            continue
+        adjacency[left_symbol].append((right_symbol, correlation))
+        adjacency[right_symbol].append((left_symbol, correlation))
+
+    primary_by_symbol: dict[str, str] = {}
+    connecting_evidence: dict[str, CorrelationEvidence] = {}
+    for candidate in candidates:
+        primary_symbol = candidate.symbol
+        if primary_symbol in primary_by_symbol:
+            continue
+        primary_by_symbol[primary_symbol] = primary_symbol
+        pending = [primary_symbol]
+        while pending:
+            current_symbol = pending.pop(0)
+            for connected_symbol, correlation in sorted(
+                adjacency[current_symbol],
+                key=lambda item: (symbol_rank[item[0]], item[0]),
+            ):
+                if connected_symbol in primary_by_symbol:
+                    continue
+                primary_by_symbol[connected_symbol] = primary_symbol
+                connecting_evidence[connected_symbol] = correlation
+                pending.append(connected_symbol)
+    return primary_by_symbol, connecting_evidence
+
+
 def _correlation_penalties(
     candidate: SetupCandidate, correlation: CorrelationEvidence | None
 ) -> tuple[ScorePenalty, ...]:
@@ -561,29 +605,18 @@ def rank_candidates(
     )
     threshold = _threshold(regime.regime)
     correlation_lookup = _correlation_lookup(correlation_values)
+    primary_by_symbol, connecting_evidence = _correlation_group_assignments(
+        sorted_candidates, correlation_lookup
+    )
     prepared: list[tuple[SetupCandidate, bool, str | None]] = []
+    seen_group_primaries: set[str] = set()
     for candidate in sorted_candidates:
-        duplicate_primary: str | None = None
-        duplicate_correlation: CorrelationEvidence | None = None
-        for primary, _, primary_symbol in prepared:
-            if primary_symbol is not None:
-                continue
-            candidate_correlation = correlation_lookup.get(
-                _correlation_pair_key(primary.symbol, candidate.symbol)
-            )
-            if (
-                candidate_correlation is not None
-                and abs(candidate_correlation.coefficient) >= CORRELATION_THRESHOLD
-            ):
-                duplicate_primary = primary.symbol
-                duplicate_correlation = candidate_correlation
-                break
-        if any(primary.symbol == candidate.symbol for primary, _, _ in prepared):
-            duplicate_primary = candidate.symbol
-            duplicate_correlation = None
-        if duplicate_primary is None:
+        group_primary = primary_by_symbol[candidate.symbol]
+        if candidate.symbol == group_primary and group_primary not in seen_group_primaries:
+            seen_group_primaries.add(group_primary)
             prepared.append((candidate, False, None))
         else:
+            duplicate_correlation = connecting_evidence.get(candidate.symbol)
             penalized = _correlation_penalties(candidate, duplicate_correlation)
             prepared.append(
                 (
@@ -596,7 +629,7 @@ def rank_candidates(
                         }
                     ),
                     True,
-                    duplicate_primary,
+                    group_primary,
                 )
             )
 

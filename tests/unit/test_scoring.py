@@ -307,6 +307,49 @@ def test_highly_correlated_qualifiers_remain_visible_as_secondary_alternatives()
     assert rank_candidates(ranked, _regime(), RegimePolicy(), correlations=(correlation,)) == ranked
 
 
+def test_connected_correlation_group_has_one_pre_penalty_primary():
+    correlations = (
+        CorrelationEvidence(
+            left_symbol="AAA",
+            right_symbol="BBB",
+            coefficient=Decimal("0.95"),
+            evidence_ids=("ev-aaa-bbb",),
+            observed_at=_CUTOFF,
+            method_version="fixture-1",
+            exposure_description="AAA and BBB share factor exposure",
+        ),
+        CorrelationEvidence(
+            left_symbol="BBB",
+            right_symbol="CCC",
+            coefficient=Decimal("0.95"),
+            evidence_ids=("ev-bbb-ccc",),
+            observed_at=_CUTOFF,
+            method_version="fixture-1",
+            exposure_description="BBB and CCC share factor exposure",
+        ),
+    )
+    ranked = rank_candidates(
+        (_candidate("CCC", "0.95"), _candidate("BBB", "0.99"), _candidate("AAA", "1")),
+        _regime(),
+        RegimePolicy(),
+        correlations=correlations,
+    )
+
+    assert [candidate.symbol for candidate in ranked] == ["AAA", "BBB", "CCC"]
+    assert [candidate.positive_score for candidate in ranked] == list(map(Decimal, (100, 99, 95)))
+    assert [candidate.total_score for candidate in ranked] == list(map(Decimal, (100, 89, 85)))
+    assert [candidate.selected_for_plan for candidate in ranked] == [True, False, False]
+    assert ranked[0].secondary_alternative is False
+    assert ranked[0].primary_symbol is None
+    assert all(candidate.secondary_alternative for candidate in ranked[1:])
+    assert all(candidate.primary_symbol == "AAA" for candidate in ranked[1:])
+    assert all("DUPLICATE_EXPOSURE" in candidate.selection_reasons for candidate in ranked[1:])
+    assert [candidate.penalties[2].evidence_ids for candidate in ranked[1:]] == [
+        ("ev-aaa-bbb",),
+        ("ev-bbb-ccc",),
+    ]
+
+
 def test_correlation_penalties_are_applied_before_final_ordering():
     correlation = CorrelationEvidence(
         left_symbol="AAA",
