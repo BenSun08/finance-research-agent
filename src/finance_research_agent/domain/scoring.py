@@ -27,6 +27,7 @@ from finance_research_agent.domain.setups import (
     RawSetup,
     SetupType,
     required_gate_failures,
+    validate_setup_policy,
 )
 from finance_research_agent.domain.types import UtcDatetime
 
@@ -113,20 +114,21 @@ class SetupCandidate(StrictModel):
 
     @model_validator(mode="after")
     def coherent_score(self) -> Self:
-        if tuple(component.name for component in self.components) != tuple(ScoreComponentName):
-            raise ValueError("score components must use canonical order")
-        if tuple(penalty.name for penalty in self.penalties) != tuple(PenaltyName):
-            raise ValueError("score penalties must use canonical order")
-        positive = sum((component.points for component in self.components), Decimal(0))
-        penalty_total = sum((penalty.points for penalty in self.penalties), Decimal(0))
-        if self.positive_score != positive:
-            raise ValueError("positive score must equal component points")
-        if self.total_score != max(Decimal(0), positive - penalty_total):
-            raise ValueError("total score must equal positive score less visible penalties")
-        if self.secondary_alternative and self.primary_symbol is None:
-            raise ValueError("secondary alternatives require a primary symbol")
-        if self.selected_for_plan and self.selection_reasons:
-            raise ValueError("selected candidates must not carry rejection reasons")
+        with localcontext(NUMERIC_CONTEXT):
+            if tuple(component.name for component in self.components) != tuple(ScoreComponentName):
+                raise ValueError("score components must use canonical order")
+            if tuple(penalty.name for penalty in self.penalties) != tuple(PenaltyName):
+                raise ValueError("score penalties must use canonical order")
+            positive = sum((component.points for component in self.components), Decimal(0))
+            penalty_total = sum((penalty.points for penalty in self.penalties), Decimal(0))
+            if self.positive_score != positive:
+                raise ValueError("positive score must equal component points")
+            if self.total_score != max(Decimal(0), positive - penalty_total):
+                raise ValueError("total score must equal positive score less visible penalties")
+            if self.secondary_alternative and self.primary_symbol is None:
+                raise ValueError("secondary alternatives require a primary symbol")
+            if self.selected_for_plan and self.selection_reasons:
+                raise ValueError("selected candidates must not carry rejection reasons")
         return self
 
 
@@ -334,6 +336,7 @@ def score_candidate(
 ) -> SetupCandidate:
     """Score one setup only after unchanged R5 gates have passed."""
 
+    validate_setup_policy(setup.policy)
     if setup_policy != setup.policy:
         raise ValueError("score_candidate requires the setup policy frozen into the setup")
     if event_assessment != setup.event_assessment:
@@ -511,9 +514,12 @@ def _correlation_lookup(
 ) -> dict[tuple[str, str], CorrelationEvidence]:
     result: dict[tuple[str, str], CorrelationEvidence] = {}
     for correlation in correlations:
-        result[_correlation_pair_key(correlation.left_symbol, correlation.right_symbol)] = (
-            correlation
-        )
+        if correlation.left_symbol == correlation.right_symbol:
+            raise ValueError("correlation pair must contain distinct symbols")
+        pair_key = _correlation_pair_key(correlation.left_symbol, correlation.right_symbol)
+        if pair_key in result:
+            raise ValueError("duplicate unordered correlation pair")
+        result[pair_key] = correlation
     return result
 
 
@@ -579,7 +585,7 @@ def _correlation_penalties(
     return tuple(penalties)
 
 
-def rank_candidates(
+def _rank_candidates(
     candidates: Sequence[SetupCandidate],
     regime: RegimeResult,
     regime_policy: RegimePolicy,
@@ -668,3 +674,21 @@ def rank_candidates(
             )
         )
     return tuple(output)
+
+
+def rank_candidates(
+    candidates: Sequence[SetupCandidate],
+    regime: RegimeResult,
+    regime_policy: RegimePolicy,
+    *,
+    correlations: Sequence[CorrelationEvidence] = (),
+) -> tuple[SetupCandidate, ...]:
+    """Rank candidates using the versioned numeric context, independent of callers."""
+
+    with localcontext(NUMERIC_CONTEXT):
+        return _rank_candidates(
+            candidates,
+            regime,
+            regime_policy,
+            correlations=correlations,
+        )

@@ -225,6 +225,22 @@ def test_exact_positive_weights_and_separately_visible_penalties():
     assert all(c.evidence_cutoff_at == _CUTOFF and c.evidence_ids for c in candidate.components)
 
 
+def test_altered_positive_setup_weights_fail_closed_at_scoring_boundary():
+    setup = _setup()
+    altered_policy = setup.policy.model_copy(
+        update={"score_weights": tuple(map(Decimal, (30, 15, 20, 15, 10, 10)))}
+    )
+    altered_setup = setup.model_copy(
+        update={"policy": altered_policy, "policy_hash": setup.policy_hash}
+    )
+
+    with pytest.raises(ValueError, match="unsupported R6 setup policy"):
+        score_candidate(
+            altered_setup,
+            **{**_score_context(altered_setup), "setup_policy": altered_policy},
+        )
+
+
 @pytest.mark.parametrize(
     "regime,quality,selected",
     [
@@ -305,6 +321,61 @@ def test_highly_correlated_qualifiers_remain_visible_as_secondary_alternatives()
     penalty = ranked[1].penalties[2]
     assert penalty.points == Decimal("10") and penalty.evidence_ids == ("ev-correlation",)
     assert rank_candidates(ranked, _regime(), RegimePolicy(), correlations=(correlation,)) == ranked
+
+
+@pytest.mark.parametrize(
+    "correlations",
+    [
+        (
+            ("AAA", "BBB"),
+            ("BBB", "AAA"),
+        ),
+        (
+            ("BBB", "AAA"),
+            ("AAA", "BBB"),
+        ),
+    ],
+)
+def test_conflicting_duplicate_unordered_correlations_fail_closed(correlations):
+    evidence = tuple(
+        CorrelationEvidence(
+            left_symbol=left,
+            right_symbol=right,
+            coefficient=Decimal(coefficient),
+            evidence_ids=(f"ev-{index}",),
+            observed_at=_CUTOFF,
+            method_version="fixture-1",
+            exposure_description="Conflicting pair record",
+        )
+        for index, ((left, right), coefficient) in enumerate(
+            zip(correlations, ("0.95", "0.91"), strict=True)
+        )
+    )
+
+    with pytest.raises(ValueError, match="duplicate unordered correlation pair"):
+        rank_candidates(
+            (_candidate("AAA"), _candidate("BBB")),
+            _regime(),
+            RegimePolicy(),
+            correlations=evidence,
+        )
+
+
+def test_self_correlation_pair_is_rejected():
+    correlation = CorrelationEvidence(
+        left_symbol="AAA",
+        right_symbol="AAA",
+        coefficient=Decimal("0.95"),
+        evidence_ids=("ev-self",),
+        observed_at=_CUTOFF,
+        method_version="fixture-1",
+        exposure_description="Self-correlation is invalid",
+    )
+
+    with pytest.raises(ValueError, match="correlation pair must contain distinct symbols"):
+        rank_candidates(
+            (_candidate("AAA"),), _regime(), RegimePolicy(), correlations=(correlation,)
+        )
 
 
 def test_connected_correlation_group_has_one_pre_penalty_primary():
@@ -485,3 +556,38 @@ def test_numeric_results_do_not_depend_on_ambient_decimal_context():
         actual = _candidate()
         assert actual == expected
         assert rank_candidates((actual,), _regime(), RegimePolicy())[0].total_score == Decimal("80")
+
+
+def test_ranking_arithmetic_is_independent_of_ambient_precision_and_traps():
+    candidate = _candidate()
+    component = candidate.components[0].model_copy(
+        update={"quality": Decimal("0.80000000000000000000000000001")}
+    )
+    candidate = candidate.model_copy(update={"components": (component, *candidate.components[1:])})
+    correlation = CorrelationEvidence(
+        left_symbol="AAA",
+        right_symbol="BBB",
+        coefficient=Decimal("0.95000000000000000000000000001"),
+        evidence_ids=("ev-context",),
+        observed_at=_CUTOFF,
+        method_version="fixture-1",
+        exposure_description="Context-invariance fixture",
+    )
+    expected = rank_candidates(
+        (candidate, _candidate("BBB")),
+        _regime(),
+        RegimePolicy(),
+        correlations=(correlation,),
+    )
+
+    with localcontext() as context:
+        context.prec = 6
+        context.traps[Inexact] = True
+        actual = rank_candidates(
+            (candidate, _candidate("BBB")),
+            _regime(),
+            RegimePolicy(),
+            correlations=(correlation,),
+        )
+
+    assert actual == expected
