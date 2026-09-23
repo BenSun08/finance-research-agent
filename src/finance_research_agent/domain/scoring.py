@@ -329,19 +329,25 @@ def score_candidate(
     eligibility_gates: tuple[GateResult, ...],
     event_assessment: EventAssessment,
     data_quality: DataQualityResult,
+    regime_policy_version: str,
     component_evaluator: ComponentEvaluator = evaluate_components,
 ) -> SetupCandidate:
     """Score one setup only after unchanged R5 gates have passed."""
 
     if setup_policy != setup.policy:
         raise ValueError("score_candidate requires the setup policy frozen into the setup")
-    effective_data_quality = (
-        setup.data_quality if data_quality == setup.data_quality else data_quality
-    )
+    if event_assessment != setup.event_assessment:
+        raise ValueError("score_candidate requires the event assessment frozen into the setup")
+    if data_quality != setup.data_quality:
+        raise ValueError("score_candidate requires the data quality frozen into the setup")
+    effective_data_quality = setup.data_quality
+    effective_event_assessment = setup.event_assessment
+    if not regime_policy_version:
+        raise ValueError("regime policy version must not be empty")
     gates = required_gate_failures(
         setup.symbol,
         tuple(dict.fromkeys((*setup.eligibility_gates, *eligibility_gates))),
-        event_assessment,
+        effective_event_assessment,
         effective_data_quality,
     )
     if gates:
@@ -355,10 +361,10 @@ def score_candidate(
         )
     with localcontext(NUMERIC_CONTEXT):
         components = _weighted_components(
-            component_evaluator(setup, event_assessment, effective_data_quality),
+            component_evaluator(setup, effective_event_assessment, effective_data_quality),
             setup.policy,
         )
-        penalties = _visible_penalties(setup, event_assessment, effective_data_quality)
+        penalties = _visible_penalties(setup, effective_event_assessment, effective_data_quality)
         positive = sum((component.points for component in components), Decimal(0))
         total = max(
             Decimal(0), positive - sum((penalty.points for penalty in penalties), Decimal(0))
@@ -369,18 +375,20 @@ def score_candidate(
             setup_type=setup.setup_type,
             policy_version=setup.policy.version,
             policy_hash=setup.policy_hash,
-            regime_policy_version=RegimePolicy().version,
+            regime_policy_version=regime_policy_version,
             evidence_cutoff_at=setup.evidence_cutoff_at,
             levels=setup.levels,
             entry_condition=setup.entry_condition,
             invalidation_condition=setup.invalidation_condition,
-            event_assessment=event_assessment,
+            event_assessment=effective_event_assessment,
             data_quality=effective_data_quality,
             components=components,
             penalties=penalties,
             positive_score=positive,
             total_score=total,
-            plan_status=_plan_status(event_assessment, effective_data_quality, setup.symbol),
+            plan_status=_plan_status(
+                effective_event_assessment, effective_data_quality, setup.symbol
+            ),
             data_quality_rank=Decimal(1),
             liquidity_rank=_clamp_quality(
                 setup.median_dollar_volume / (setup.policy.minimum_median_dollar_volume * 10)
@@ -406,21 +414,46 @@ def _candidate_total(candidate: SetupCandidate) -> Decimal:
     )
 
 
+def _sort_key(candidate: SetupCandidate) -> tuple[Decimal, ...] | tuple[object, ...]:
+    return (
+        -_candidate_total(candidate),
+        -_component(candidate, ScoreComponentName.SETUP_QUALITY).quality,
+        -_component(candidate, ScoreComponentName.RELATIVE_STRENGTH).quality,
+        -_component(candidate, ScoreComponentName.REWARD_RISK_QUALITY).quality,
+        -candidate.data_quality_rank,
+        -candidate.liquidity_rank,
+        candidate.symbol,
+        candidate.candidate_id,
+    )
+
+
 def _sorted(candidates: tuple[SetupCandidate, ...]) -> tuple[SetupCandidate, ...]:
-    return tuple(
-        sorted(
-            candidates,
-            key=lambda candidate: (
-                -_candidate_total(candidate),
-                -_component(candidate, ScoreComponentName.SETUP_QUALITY).quality,
-                -_component(candidate, ScoreComponentName.RELATIVE_STRENGTH).quality,
-                -_component(candidate, ScoreComponentName.REWARD_RISK_QUALITY).quality,
-                -candidate.data_quality_rank,
-                -candidate.liquidity_rank,
-                candidate.symbol,
-                candidate.candidate_id,
-            ),
-        )
+    return tuple(sorted(candidates, key=_sort_key))
+
+
+def _without_correlation_penalty(candidate: SetupCandidate) -> SetupCandidate:
+    """Normalize a prior ranking result before recomputing correlation exposure."""
+    penalty = candidate.penalties[2].model_copy(
+        update={
+            "points": Decimal(0),
+            "reason": "Duplicate-exposure review has not applied a penalty",
+            "evidence_ids": (),
+        }
+    )
+    penalties = (*candidate.penalties[:2], penalty, *candidate.penalties[3:])
+    positive = _candidate_positive(candidate)
+    total = max(Decimal(0), positive - sum((item.points for item in penalties), Decimal(0)))
+    return candidate.model_copy(
+        update={
+            "penalties": penalties,
+            "positive_score": positive,
+            "total_score": total,
+            "selected_for_plan": False,
+            "executive_highlight": False,
+            "secondary_alternative": False,
+            "primary_symbol": None,
+            "selection_reasons": (),
+        }
     )
 
 
@@ -513,6 +546,8 @@ def rank_candidates(
 
     if regime.policy_version != regime_policy.version:
         raise ValueError("regime result and policy versions must match")
+    if any(candidate.regime_policy_version != regime_policy.version for candidate in candidates):
+        raise ValueError("candidate regime policy versions must match the regime policy")
     correlation_values = tuple(correlations)
     for correlation in correlation_values:
         if any(
@@ -521,55 +556,69 @@ def rank_candidates(
             for candidate in candidates
         ):
             raise ValueError("correlation evidence must not be after candidate cutoff")
-    sorted_candidates = _sorted(tuple(candidates))
+    sorted_candidates = _sorted(
+        tuple(_without_correlation_penalty(candidate) for candidate in candidates)
+    )
     threshold = _threshold(regime.regime)
+    correlation_lookup = _correlation_lookup(correlation_values)
+    prepared: list[tuple[SetupCandidate, bool, str | None]] = []
+    for candidate in sorted_candidates:
+        duplicate_primary: str | None = None
+        duplicate_correlation: CorrelationEvidence | None = None
+        for primary, _, primary_symbol in prepared:
+            if primary_symbol is not None:
+                continue
+            candidate_correlation = correlation_lookup.get(
+                _correlation_pair_key(primary.symbol, candidate.symbol)
+            )
+            if (
+                candidate_correlation is not None
+                and abs(candidate_correlation.coefficient) >= CORRELATION_THRESHOLD
+            ):
+                duplicate_primary = primary.symbol
+                duplicate_correlation = candidate_correlation
+                break
+        if any(primary.symbol == candidate.symbol for primary, _, _ in prepared):
+            duplicate_primary = candidate.symbol
+            duplicate_correlation = None
+        if duplicate_primary is None:
+            prepared.append((candidate, False, None))
+        else:
+            penalized = _correlation_penalties(candidate, duplicate_correlation)
+            prepared.append(
+                (
+                    candidate.model_copy(
+                        update={
+                            "penalties": penalized,
+                            "total_score": _candidate_total(
+                                candidate.model_copy(update={"penalties": penalized})
+                            ),
+                        }
+                    ),
+                    True,
+                    duplicate_primary,
+                )
+            )
+
     selected_count = 0
     highlight_count = 0
-    primaries: dict[str, str] = {}
-    correlation_lookup = _correlation_lookup(correlation_values)
     output: list[SetupCandidate] = []
-    for candidate in sorted_candidates:
+    for candidate, secondary, primary_symbol in sorted(
+        prepared, key=lambda item: _sort_key(item[0])
+    ):
         reasons: list[str] = []
-        secondary = False
-        primary_symbol: str | None = None
-        penalties: tuple[ScorePenalty, ...] | None = None
         if threshold is None:
             reasons.append("REGIME_BLOCK")
         elif _candidate_total(candidate) < threshold:
             reasons.append("SCORE_BELOW_THRESHOLD")
-        if candidate.symbol in primaries:
-            secondary = True
-            primary_symbol = primaries[candidate.symbol]
+        if secondary:
             reasons.append("DUPLICATE_EXPOSURE")
-            penalties = _correlation_penalties(candidate, None)
-        else:
-            duplicate = next(
-                (
-                    (primary, correlation)
-                    for primary in output
-                    for correlation in (
-                        correlation_lookup.get(
-                            _correlation_pair_key(primary.symbol, candidate.symbol)
-                        ),
-                    )
-                    if correlation is not None
-                    and abs(correlation.coefficient) >= CORRELATION_THRESHOLD
-                ),
-                None,
-            )
-            if duplicate is not None:
-                primary, correlation = duplicate
-                secondary = True
-                primary_symbol = primary.symbol
-                reasons.append("DUPLICATE_EXPOSURE")
-                penalties = _correlation_penalties(candidate, correlation)
         selected = False
         highlighted = False
         if not reasons:
             if selected_count < PLAN_CAP:
                 selected = True
                 selected_count += 1
-                primaries[candidate.symbol] = candidate.symbol
                 if highlight_count < HIGHLIGHT_CAP:
                     highlighted = True
                     highlight_count += 1
@@ -583,7 +632,6 @@ def rank_candidates(
                 secondary=secondary,
                 primary_symbol=primary_symbol,
                 reasons=tuple(dict.fromkeys(reasons)),
-                penalties=penalties,
             )
         )
     return tuple(output)

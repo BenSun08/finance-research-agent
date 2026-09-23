@@ -5,8 +5,9 @@ from decimal import ROUND_DOWN, Decimal, Inexact, localcontext
 
 import pytest
 
-from finance_research_agent.domain.enums import GateStatus, PlanStatus
+from finance_research_agent.domain.enums import DataQualityStatus, GateStatus, PlanStatus
 from finance_research_agent.domain.events import EventAssessment
+from finance_research_agent.domain.quality import evaluate_data_quality
 from finance_research_agent.domain.regime import (
     Regime,
     RegimeComponentReason,
@@ -43,6 +44,7 @@ def _score_context(setup):
         eligibility_gates=setup.eligibility_gates,
         event_assessment=setup.event_assessment,
         data_quality=setup.data_quality,
+        regime_policy_version=RegimePolicy().version,
     )
 
 
@@ -138,8 +140,68 @@ def test_blocked_candidate_is_rejected_before_any_score_component():
 
 def test_original_gate_block_cannot_be_replaced_by_new_empty_gates():
     setup = _setup().model_copy(update={"eligibility_gates": (_block(),)})
+    calls = []
+
+    def never(*args):
+        calls.append(args)
+        raise AssertionError("component evaluation must not run")
+
     with pytest.raises(BlockedBeforeScoring):
-        score_candidate(setup, **{**_score_context(setup), "eligibility_gates": ()})
+        score_candidate(
+            setup,
+            **{**_score_context(setup), "eligibility_gates": ()},
+            component_evaluator=never,
+        )
+    assert calls == []
+
+
+def test_frozen_blocked_event_cannot_be_replaced_before_component_evaluation():
+    setup = _setup().model_copy(
+        update={
+            "event_assessment": EventAssessment(
+                plan_status=PlanStatus.BLOCKED,
+                gates=(_block(),),
+            )
+        }
+    )
+    calls = []
+
+    def never(*args):
+        calls.append(args)
+        raise AssertionError("component evaluation must not run")
+
+    with pytest.raises(ValueError, match="event assessment"):
+        score_candidate(
+            setup,
+            **{
+                **_score_context(setup),
+                "event_assessment": EventAssessment(plan_status=PlanStatus.DRAFT, gates=()),
+            },
+            component_evaluator=never,
+        )
+    assert calls == []
+
+
+def test_frozen_failed_data_quality_cannot_be_replaced_before_component_evaluation():
+    failed_quality = evaluate_data_quality(source_health=())
+    assert failed_quality.status is DataQualityStatus.FAIL
+    setup = _setup().model_copy(update={"data_quality": failed_quality})
+    calls = []
+
+    def never(*args):
+        calls.append(args)
+        raise AssertionError("component evaluation must not run")
+
+    with pytest.raises(ValueError, match="data quality"):
+        score_candidate(
+            setup,
+            **{
+                **_score_context(setup),
+                "data_quality": _score_context(_setup())["data_quality"],
+            },
+            component_evaluator=never,
+        )
+    assert calls == []
 
 
 def test_exact_positive_weights_and_separately_visible_penalties():
@@ -245,6 +307,30 @@ def test_highly_correlated_qualifiers_remain_visible_as_secondary_alternatives()
     assert rank_candidates(ranked, _regime(), RegimePolicy(), correlations=(correlation,)) == ranked
 
 
+def test_correlation_penalties_are_applied_before_final_ordering():
+    correlation = CorrelationEvidence(
+        left_symbol="AAA",
+        right_symbol="BBB",
+        coefficient=Decimal("0.95"),
+        evidence_ids=("ev-correlation",),
+        observed_at=_CUTOFF,
+        method_version="fixture-1",
+        exposure_description="Shared technology factor exposure",
+    )
+    ranked = rank_candidates(
+        (_candidate("BBB", "0.99"), _candidate("CCC", "0.95"), _candidate("AAA", "1")),
+        _regime(),
+        RegimePolicy(),
+        correlations=(correlation,),
+    )
+    assert [candidate.symbol for candidate in ranked] == ["AAA", "CCC", "BBB"]
+    assert ranked[2].secondary_alternative
+    assert ranked[2].primary_symbol == "AAA"
+    assert ranked[0].selected_for_plan and ranked[1].selected_for_plan
+    assert not ranked[2].selected_for_plan
+    assert ranked[2].total_score == Decimal("89")
+
+
 def test_same_symbol_is_never_selected_twice():
     candidate = _candidate()
     ranked = rank_candidates((candidate, candidate), _regime(), RegimePolicy())
@@ -260,9 +346,10 @@ def test_optional_event_warning_is_preserved_and_penalized():
     setup = _setup()
     warning = _block().model_copy(update={"status": GateStatus.WARNING})
     assessment = EventAssessment(plan_status=PlanStatus.REVIEW_REQUIRED, gates=(warning,))
+    setup = setup.model_copy(update={"event_assessment": assessment})
     candidate = score_candidate(
         setup,
-        **{**_score_context(setup), "event_assessment": assessment},
+        **_score_context(setup),
         component_evaluator=_uniform("0.8"),
     )
     assert candidate.plan_status is PlanStatus.REVIEW_REQUIRED
@@ -314,6 +401,29 @@ def test_wrong_policy_or_regime_version_and_late_correlations_rejected():
         rank_candidates(
             (_candidate(), _candidate("BBB")), _regime(), RegimePolicy(), correlations=(late,)
         )
+
+
+def test_candidate_regime_policy_version_must_match_rank_inputs():
+    candidate = _candidate().model_copy(update={"regime_policy_version": "other"})
+    with pytest.raises(ValueError, match="regime policy"):
+        rank_candidates((candidate,), _regime(), RegimePolicy())
+
+
+def test_score_candidate_records_the_supplied_regime_policy_version():
+    candidate = score_candidate(
+        _setup(),
+        **{**_score_context(_setup()), "regime_policy_version": "regime-policy-v2"},
+    )
+    assert candidate.regime_policy_version == "regime-policy-v2"
+
+
+def test_score_candidate_requires_a_frozen_regime_policy_version():
+    setup = _setup()
+    context = _score_context(setup)
+    del context["regime_policy_version"]
+
+    with pytest.raises(TypeError, match="regime_policy_version"):
+        score_candidate(setup, **context)
 
 
 def test_numeric_results_do_not_depend_on_ambient_decimal_context():
