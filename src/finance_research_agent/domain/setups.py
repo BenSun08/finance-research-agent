@@ -449,14 +449,25 @@ def assess_setups(
             or any(
                 b.source_timestamp > evidence_cutoff_at
                 or b.evidence_cutoff_at > evidence_cutoff_at
+                or b.retrieved_at > evidence_cutoff_at
                 or b.session_date >= evidence_cutoff_at.date()
                 for b in source.completed_daily_bars
             )
+            or any(
+                observation.retrieved_at > evidence_cutoff_at
+                for observation in source.source_observations
+            )
             or (
                 source.latest_price is not None
-                and source.latest_price.observed_at > evidence_cutoff_at
+                and (
+                    source.latest_price.observed_at > evidence_cutoff_at
+                    or source.latest_price.retrieved_at > evidence_cutoff_at
+                )
             )
-            or any(b.end_at > evidence_cutoff_at for b in source.current_session_bars)
+            or any(
+                b.end_at > evidence_cutoff_at or b.retrieved_at > evidence_cutoff_at
+                for b in source.current_session_bars
+            )
         ):
             return _exclusion(
                 symbol, (setup_gate("INVALID_EVIDENCE", "invalid currency or future evidence"),)

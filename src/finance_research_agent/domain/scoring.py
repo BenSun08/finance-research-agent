@@ -9,7 +9,12 @@ from typing import Annotated, Self
 
 from pydantic import Field, model_validator
 
-from finance_research_agent.domain.enums import Capability, GateStatus, PlanStatus
+from finance_research_agent.domain.enums import (
+    Capability,
+    DataQualityStatus,
+    GateStatus,
+    PlanStatus,
+)
 from finance_research_agent.domain.events import EventAssessment
 from finance_research_agent.domain.models import (
     EvidenceIds,
@@ -75,6 +80,21 @@ class ScorePenalty(StrictModel):
     formula_version: str = FORMULA_VERSION
 
 
+def _data_quality_rank(data_quality: DataQualityResult, symbol: str) -> Decimal:
+    """Map frozen global and symbol quality states to the documented tie-break rank."""
+    global_rank = {
+        DataQualityStatus.PASS: Decimal(1),
+        DataQualityStatus.DEGRADED: Decimal("0.5"),
+        DataQualityStatus.FAIL: Decimal(0),
+    }[data_quality.status]
+    symbol_rank = {
+        PlanStatus.DRAFT: Decimal(1),
+        PlanStatus.REVIEW_REQUIRED: Decimal("0.5"),
+        PlanStatus.BLOCKED: Decimal(0),
+    }[data_quality.symbol_plan_status(symbol)]
+    return global_rank * symbol_rank
+
+
 class CorrelationEvidence(StrictModel):
     left_symbol: Symbol
     right_symbol: Symbol
@@ -125,6 +145,8 @@ class SetupCandidate(StrictModel):
                 raise ValueError("positive score must equal component points")
             if self.total_score != max(Decimal(0), positive - penalty_total):
                 raise ValueError("total score must equal positive score less visible penalties")
+            if self.data_quality_rank != _data_quality_rank(self.data_quality, self.symbol):
+                raise ValueError("data quality rank must match frozen data quality")
             if self.secondary_alternative and self.primary_symbol is None:
                 raise ValueError("secondary alternatives require a primary symbol")
             if self.selected_for_plan and self.selection_reasons:
@@ -392,7 +414,7 @@ def score_candidate(
             plan_status=_plan_status(
                 effective_event_assessment, effective_data_quality, setup.symbol
             ),
-            data_quality_rank=Decimal(1),
+            data_quality_rank=_data_quality_rank(effective_data_quality, setup.symbol),
             liquidity_rank=_clamp_quality(
                 setup.median_dollar_volume / (setup.policy.minimum_median_dollar_volume * 10)
             ),

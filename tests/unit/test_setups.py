@@ -344,6 +344,27 @@ def test_invalid_required_history_is_excluded(breakout_context, change):
     assert result.exclusions
 
 
+def test_live_setup_assessment_excludes_completed_bars_retrieved_after_cutoff(
+    breakout_context,
+):
+    snapshot = breakout_context["snapshot"]
+    late_retrieval = _CUTOFF + timedelta(hours=4)
+    bars = tuple(
+        bar.model_copy(update={"retrieved_at": late_retrieval})
+        for bar in snapshot.completed_daily_bars
+    )
+
+    result = assess_setups(
+        **{
+            **breakout_context,
+            "snapshot": snapshot.model_copy(update={"completed_daily_bars": bars}),
+        }
+    )
+
+    assert result.setups == ()
+    assert "INVALID_EVIDENCE" in result.exclusions[0].reason_codes
+
+
 def test_negative_benchmark_relative_strength_excludes_breakout(breakout_context):
     fast = _snapshot("SPY", tuple(str(20 + 10 * i) for i in range(11)), volume=1000000)
     result = assess_setups(**{**breakout_context, "benchmark": fast})

@@ -7,6 +7,8 @@ import pytest
 
 from finance_research_agent.domain.enums import DataQualityStatus, GateStatus, PlanStatus
 from finance_research_agent.domain.events import EventAssessment
+from finance_research_agent.domain.models import SourceHealth
+from finance_research_agent.domain.policies import RiskPolicy
 from finance_research_agent.domain.quality import evaluate_data_quality
 from finance_research_agent.domain.regime import (
     Regime,
@@ -45,6 +47,32 @@ def _score_context(setup):
         event_assessment=setup.event_assessment,
         data_quality=setup.data_quality,
         regime_policy_version=RegimePolicy().version,
+    )
+
+
+def _pass_quality():
+    return evaluate_data_quality(
+        source_health=tuple(
+            SourceHealth(provider=name, available=True, required=True)
+            for name in ("alpaca", "market-calendar", "macro-calendar", "sec_edgar")
+        ),
+        risk_policy=RiskPolicy(
+            version="1",
+            sizing_enabled=True,
+            planning_capital_usd="100000",
+            max_risk_per_trade_pct="0.01",
+            max_position_pct="0.10",
+            minimum_reward_risk_ratio="2",
+            max_total_portfolio_heat_pct="0.06",
+            existing_portfolio_heat_pct="0.01",
+            quantity_increment="1",
+            regime_risk_multipliers={
+                Regime.PERMISSIVE.name: "1.00",
+                Regime.NEUTRAL.name: "0.50",
+                Regime.DEFENSIVE.name: "0.00",
+                Regime.UNKNOWN.name: "0.00",
+            },
+        ),
     )
 
 
@@ -225,6 +253,61 @@ def test_exact_positive_weights_and_separately_visible_penalties():
     assert all(c.evidence_cutoff_at == _CUTOFF and c.evidence_ids for c in candidate.components)
 
 
+def test_score_candidate_derives_data_quality_rank_without_changing_score_or_gates():
+    pass_quality = _pass_quality()
+    assert pass_quality.status is DataQualityStatus.PASS
+    degraded_setup = _setup("AAA")
+    assert degraded_setup.data_quality.status is DataQualityStatus.DEGRADED
+    pass_setup = _setup("BBB").model_copy(update={"data_quality": pass_quality})
+
+    degraded = score_candidate(
+        degraded_setup,
+        **_score_context(degraded_setup),
+        component_evaluator=_uniform("0.8"),
+    )
+    passed = score_candidate(
+        pass_setup,
+        **{**_score_context(pass_setup), "data_quality": pass_quality},
+        component_evaluator=_uniform("0.8"),
+    )
+
+    assert passed.data_quality_rank > degraded.data_quality_rank
+    assert passed.total_score == degraded.total_score
+    assert passed.plan_status is degraded.plan_status is PlanStatus.DRAFT
+    assert tuple(g.status for g in pass_setup.eligibility_gates) == tuple(
+        g.status for g in degraded_setup.eligibility_gates
+    )
+
+
+def test_data_quality_rank_breaks_ties_before_ticker():
+    pass_quality = _pass_quality()
+    degraded_setup = _setup("AAA")
+    pass_setup = _setup("ZZZ").model_copy(update={"data_quality": pass_quality})
+    degraded = score_candidate(
+        degraded_setup,
+        **_score_context(degraded_setup),
+        component_evaluator=_uniform("0.8"),
+    )
+    passed = score_candidate(
+        pass_setup,
+        **{**_score_context(pass_setup), "data_quality": pass_quality},
+        component_evaluator=_uniform("0.8"),
+    )
+
+    ranked = rank_candidates((degraded, passed), _regime(), RegimePolicy())
+
+    assert tuple(candidate.symbol for candidate in ranked) == ("ZZZ", "AAA")
+
+
+def test_supplied_data_quality_rank_must_match_authoritative_quality():
+    candidate = _candidate()
+    payload = candidate.model_dump()
+    payload["data_quality_rank"] = Decimal("1")
+
+    with pytest.raises(ValueError, match="data quality rank"):
+        type(candidate).model_validate(payload)
+
+
 def test_altered_positive_setup_weights_fail_closed_at_scoring_boundary():
     setup = _setup()
     altered_policy = setup.policy.model_copy(
@@ -291,7 +374,13 @@ def test_every_tie_break_precedes_alphabetical_ticker(field):
         )
         high = high.model_copy(update={"components": tuple(components)})
     elif field == "data":
-        low = low.model_copy(update={"data_quality_rank": Decimal("0.5")})
+        pass_quality = _pass_quality()
+        pass_setup = _setup("ZZZ").model_copy(update={"data_quality": pass_quality})
+        high = score_candidate(
+            pass_setup,
+            **{**_score_context(pass_setup), "data_quality": pass_quality},
+            component_evaluator=_uniform("0.8"),
+        )
     else:
         high = high.model_copy(update={"liquidity_rank": high.liquidity_rank + 1})
     ranked = rank_candidates((low, high), _regime(), RegimePolicy())
