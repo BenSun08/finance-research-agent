@@ -19,6 +19,7 @@ from finance_research_agent.domain.packets import (
     PacketBudgetExceeded,
     ResearchPacket,
     SynthesisConstraints,
+    validate_packet_cutoff,
 )
 from finance_research_agent.domain.plans import TradePlanDraft
 from finance_research_agent.domain.scoring import SetupCandidate
@@ -108,35 +109,6 @@ def _validated(packet: ResearchPacket) -> ResearchPacket:
     return ResearchPacket.model_validate(packet, strict=True)
 
 
-def _check_cutoff(
-    run: RunContext,
-    evidence: tuple[EvidenceItem, ...],
-    market: FrozenMap[str, MarketSnapshot],
-    metrics: tuple[MetricResult, ...],
-) -> None:
-    cutoff = run.evidence_cutoff_at
-    for item in evidence:
-        if item.source.retrieved_at > cutoff or item.source.observed_at > cutoff:
-            raise ValueError("source observation is after evidence cutoff")
-        if item.published_time is not None and item.published_time > cutoff:
-            raise ValueError("evidence was published after evidence cutoff")
-    for snapshot in market.values():
-        for source in snapshot.source_observations:
-            if source.retrieved_at > cutoff or source.observed_at > cutoff:
-                raise ValueError("market source observation is after evidence cutoff")
-        price = snapshot.latest_price
-        if price is not None and (price.observed_at > cutoff or price.retrieved_at > cutoff):
-            raise ValueError("market price observation is after evidence cutoff")
-        for current_bar in snapshot.current_session_bars:
-            if current_bar.end_at > cutoff or current_bar.retrieved_at > cutoff:
-                raise ValueError("current market bar is after evidence cutoff")
-        for daily_bar in snapshot.completed_daily_bars:
-            if daily_bar.retrieved_at > cutoff:
-                raise ValueError("completed market bar is after evidence cutoff")
-    if any(metric.calculated_at > cutoff for metric in metrics):
-        raise ValueError("metric was calculated after evidence cutoff")
-
-
 def build_research_packet(
     run: RunContext,
     evidence: Sequence[EvidenceItem],
@@ -168,7 +140,7 @@ def build_research_packet(
     plan_values = tuple(sorted(plans, key=lambda item: item.plan_id))
     capability_values = tuple(sorted(capabilities, key=lambda item: item.capability.value))
     observation_values = tuple(sorted(observations, key=lambda item: item.plan_id))
-    _check_cutoff(run, evidence_values, market_values, metric_values)
+    validate_packet_cutoff(run, evidence_values, market_values, metric_values)
 
     trimmed = list(evidence_values)
     omitted: dict[str, int] = {}

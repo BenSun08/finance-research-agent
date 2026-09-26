@@ -321,9 +321,11 @@ def _evidence_relevant(claim: Claim, evidence: EvidenceItem) -> bool:
     times = tuple(
         value for value in (evidence.event_time, evidence.published_time) if value is not None
     )
-    if claim.time_start and times and max(times) < claim.time_start:
+    if (claim.time_start or claim.time_end) and not times:
         return False
-    if claim.time_end and times and min(times) > claim.time_end:
+    if claim.time_start and all(value < claim.time_start for value in times):
+        return False
+    if claim.time_end and all(value > claim.time_end for value in times):
         return False
     return True
 
@@ -358,31 +360,93 @@ def _same_quantized_decimal(left: Decimal, right: Decimal) -> bool:
     return left == right and left.as_tuple().exponent == right.as_tuple().exponent
 
 
-def _plan_numeric_values(plan: TradePlanDraft) -> set[Decimal]:
-    return _decimal_values(plan.model_dump(mode="python"))
+def _plan_numeric_binding(
+    claim: Claim, plan: TradePlanDraft
+) -> tuple[Decimal, str] | None:
+    field = claim.field
+    if field in {"position_size", "suggested_units"}:
+        value = plan.position_sizing.suggested_units
+        return (value, "shares") if value is not None else None
+    if field == "candidate_score":
+        return plan.candidate_score, "score"
+    if field == "risk_per_unit":
+        return plan.risk_per_unit, "price"
+    if field in {"entry_zone_lower", "entry_zone.lower.value"}:
+        return plan.entry_zone.lower.value, plan.entry_zone.lower.currency
+    if field in {"entry_zone_upper", "entry_zone.upper.value"}:
+        return plan.entry_zone.upper.value, plan.entry_zone.upper.currency
+    if field in {"candidate_stop", "candidate_stop.value"}:
+        return plan.candidate_stop.value, plan.candidate_stop.currency
+    return None
 
 
-def _supporting_text_values(
+def _numeric_bindings(
     claim: Claim,
     packet: ResearchPacket,
     metric_map: Mapping[str, MetricResult],
     plan_map: dict[str, TradePlanDraft],
     claim_map: dict[str, Claim],
-) -> set[Decimal]:
-    values: set[Decimal] = set()
+    visited: set[str] | None = None,
+    root_field: str | None = None,
+    root_unit: str | None = None,
+) -> set[tuple[Decimal, str]]:
+    if visited is None:
+        visited = set()
+        root_field = claim.field
+        root_unit = claim.unit
+    if claim.claim_id in visited:
+        return set()
+    visited.add(claim.claim_id)
+    if claim.field != root_field or claim.unit != root_unit:
+        return set()
+
+    bindings: set[tuple[Decimal, str]] = set()
     for evidence_id in _reachable_sources(claim, claim_map):
         item = next(
-            (evidence for evidence in packet.evidence if evidence.evidence_id == evidence_id), None
+            (evidence for evidence in packet.evidence if evidence.evidence_id == evidence_id),
+            None,
         )
-        if item is not None:
-            values.update(_decimal_values(item.structured_fields))
+        if item is None or claim.field is None:
+            continue
+        fields = item.structured_fields
+        if fields.get("field") == claim.field:
+            raw_value = fields.get("value")
+            raw_unit = fields.get("unit")
+        else:
+            raw_value = fields.get(claim.field)
+            raw_unit = fields.get(f"{claim.field}_unit")
+        if raw_unit is None:
+            continue
+        for value in _decimal_values(raw_value):
+            bindings.add((value, str(raw_unit)))
     for metric_id in claim.metric_ids:
         metric = metric_map.get(metric_id)
-        if metric is not None and metric.value is not None:
-            values.add(metric.value)
+        if (
+            metric is not None
+            and metric.value is not None
+            and claim.field == metric.name.value
+        ):
+            bindings.add((metric.value, metric.unit.value))
     if claim.plan_id in plan_map:
-        values.update(_plan_numeric_values(plan_map[claim.plan_id]))
-    return values
+        binding = _plan_numeric_binding(claim, plan_map[claim.plan_id])
+        if binding is not None:
+            bindings.add(binding)
+    for supporting_id in claim.supports_claim_ids:
+        supporting = claim_map.get(supporting_id)
+        if supporting is not None:
+            bindings.update(
+                _numeric_bindings(
+                    supporting,
+                    packet,
+                    metric_map,
+                    plan_map,
+                    claim_map,
+                    visited,
+                    root_field,
+                    root_unit,
+                )
+            )
+    return bindings
 
 
 def _validate_claims(
@@ -547,14 +611,39 @@ def _validate_claims(
             )
         plan = plan_map.get(claim.plan_id) if claim.plan_id else None
         if plan is not None:
-            if claim.plan_status is not None and claim.plan_status is not plan.plan_status:
+            if claim.plan_status is not plan.plan_status:
                 issues.append(
                     _issue(
                         ValidationCode.INVALID_PLAN_STATE,
                         f"/claims/{claim.claim_id}/plan_status",
-                        "claim changes the deterministic plan status",
+                        "plan-linked claim must preserve the deterministic plan status",
                         expected=plan.plan_status.value,
-                        actual=str(claim.plan_status),
+                        actual=getattr(claim.plan_status, "value", str(claim.plan_status)),
+                    )
+                )
+            if claim.counter_evidence_ids != plan.counter_evidence:
+                issues.append(
+                    _issue(
+                        ValidationCode.COUNTER_EVIDENCE_OMITTED,
+                        f"/claims/{claim.claim_id}/counter_evidence_ids",
+                        "plan-linked claim must preserve the plan's counter-evidence IDs",
+                        expected=", ".join(plan.counter_evidence),
+                        actual=", ".join(claim.counter_evidence_ids),
+                        evidence_ids=plan.counter_evidence,
+                    )
+                )
+            expected_expiry = plan.effective_expiry_at or plan.expires_at
+            if (
+                claim.invalidation != plan.invalidation_condition
+                or claim.expires_at != expected_expiry
+            ):
+                issues.append(
+                    _issue(
+                        ValidationCode.EXPIRY_INVALIDATION_MISSING,
+                        f"/claims/{claim.claim_id}",
+                        "plan-linked claim must preserve deterministic invalidation and expiry",
+                        expected=f"{plan.invalidation_condition}; {expected_expiry.isoformat()}",
+                        actual=f"{claim.invalidation}; {claim.expires_at}",
                     )
                 )
             if claim.field and "siz" in claim.field.lower():
@@ -626,6 +715,31 @@ def _validate_claims(
                         evidence_ids=(evidence_id,),
                     )
                 )
+            elif item is not None and claim.claim_type is not ClaimType.CALCULATION:
+                relevant_packet_evidence = tuple(
+                    candidate
+                    for candidate in packet.evidence
+                    if _evidence_relevant(claim, candidate)
+                )
+                if relevant_packet_evidence and item.authority_tier > min(
+                    candidate.authority_tier for candidate in relevant_packet_evidence
+                ):
+                    issues.append(
+                        _issue(
+                            ValidationCode.IRRELEVANT_CITATION,
+                            f"/claims/{claim.claim_id}/evidence_ids",
+                            "claim cites lower-authority evidence while stronger "
+                            "evidence is available",
+                            expected=str(
+                                min(
+                                    candidate.authority_tier
+                                    for candidate in relevant_packet_evidence
+                                )
+                            ),
+                            actual=str(item.authority_tier),
+                            evidence_ids=(evidence_id,),
+                        )
+                    )
         if claim.counter_evidence_ids:
             for evidence_id in claim.counter_evidence_ids:
                 item = evidence_map.get(evidence_id)
@@ -680,23 +794,54 @@ def _validate_claims(
                     "draft introduces a URL not present in its cited packet evidence",
                 )
             )
-        allowed_numbers = _supporting_text_values(claim, packet, metric_map, plan_map, claim_map)
-        for token in _NUMERIC_TEXT.findall(claim.text):
+        numeric_tokens = _NUMERIC_TEXT.findall(claim.text)
+        numeric_bindings = _numeric_bindings(claim, packet, metric_map, plan_map, claim_map)
+        numeric_issue_code = (
+            ValidationCode.UNSUPPORTED_SIZING_VALUE
+            if claim.field and "siz" in claim.field.lower()
+            else ValidationCode.DETERMINISTIC_VALUE_MISMATCH
+        )
+        if numeric_tokens or claim.numeric_value is not None:
+            claimed_binding = (
+                (claim.numeric_value, claim.unit)
+                if claim.numeric_value is not None and claim.unit is not None
+                else None
+            )
+            if claimed_binding is None or claimed_binding not in numeric_bindings:
+                issues.append(
+                    _issue(
+                        numeric_issue_code,
+                        f"/claims/{claim.claim_id}/numeric_value",
+                        "numeric claim value, field, or unit differs from its deterministic source",
+                    )
+                )
+            if claim.unit is None or claim.unit.casefold() not in claim.text.casefold():
+                issues.append(
+                    _issue(
+                        numeric_issue_code,
+                        f"/claims/{claim.claim_id}/unit",
+                        "numeric narrative must state the validated unit",
+                        expected=claim.unit,
+                    )
+                )
+        for token in numeric_tokens:
             try:
                 number = Decimal(token.replace("$", "").removesuffix("%"))
             except InvalidOperation:
                 continue
-            if not any(_same_quantized_decimal(number, expected) for expected in allowed_numbers):
-                code = (
-                    ValidationCode.UNSUPPORTED_SIZING_VALUE
-                    if claim.field and "siz" in claim.field.lower()
-                    else ValidationCode.UNSUPPORTED_CLAIM
-                )
+            if claim.numeric_value is None or not _same_quantized_decimal(
+                number, claim.numeric_value
+            ):
                 issues.append(
                     _issue(
-                        code,
+                        numeric_issue_code,
                         f"/claims/{claim.claim_id}/text",
-                        "narrative number is not present in referenced deterministic inputs",
+                        "narrative number must exactly match the claim's field-bound value",
+                        expected=(
+                            format(claim.numeric_value, "f")
+                            if claim.numeric_value is not None
+                            else None
+                        ),
                         actual=token,
                     )
                 )

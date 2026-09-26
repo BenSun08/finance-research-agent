@@ -641,10 +641,10 @@ Adapters and surfaces: constrained HTTP, official evidence adapters, broader Alp
 
 **Implementation steps:**
 
-- [ ] Build one canonical packet from frozen run/evidence/deterministic outputs.
-- [ ] Implement deterministic size budgeting that never removes risks/provenance/gates.
-- [ ] Add one canonical prompt source and independent digest.
-- [ ] Implement schema-first structured validation with no fuzzy numeric truth.
+- [x] Build one canonical packet from frozen run/evidence/deterministic outputs.
+- [x] Implement deterministic size budgeting that never removes risks/provenance/gates.
+- [x] Add one canonical prompt source and independent digest.
+- [x] Implement schema-first structured validation with no fuzzy numeric truth.
 
 **Migration compatibility:** generic `FinalAnswer`/`ModelResponse` remain unchanged but are not accepted as Product A drafts.
 

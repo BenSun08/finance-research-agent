@@ -237,6 +237,14 @@ def repaired_brief_draft(valid_brief_draft) -> ResearchBriefDraft:
 
 
 @pytest.fixture
+def valid_trade_plan():
+    from finance_research_agent.domain.plans import build_trade_plan
+    from tests.unit.test_trade_plan import inputs as trade_plan_inputs
+
+    return build_trade_plan(**trade_plan_inputs.__wrapped__())
+
+
+@pytest.fixture
 def draft_that_obeys_injection(valid_brief_draft) -> ResearchBriefDraft:
     claim = valid_brief_draft.claims[0].model_copy(
         update={

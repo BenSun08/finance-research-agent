@@ -135,6 +135,18 @@ def test_packet_rejects_content_replacement_with_stale_hash(packet_inputs) -> No
         ResearchPacket.model_validate(altered, strict=True)
 
 
+def test_packet_model_rejects_late_evidence_even_outside_the_builder(packet_inputs) -> None:
+    packet = build_research_packet(
+        **packet_inputs["as_kwargs"](), max_serialized_bytes=250_000
+    )
+    late = packet_inputs["evidence"](0).model_copy(
+        update={"published_time": packet.run.evidence_cutoff_at + timedelta(seconds=1)}
+    )
+    altered = packet.model_copy(update={"evidence": (late,)})
+    with pytest.raises(ValidationError, match="after evidence cutoff"):
+        ResearchPacket.model_validate(altered, strict=True)
+
+
 def test_budget_trims_low_authority_discovery_excerpts_but_keeps_provenance(
     packet_inputs,
 ) -> None:
