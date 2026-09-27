@@ -64,7 +64,9 @@ _IMPERATIVE = re.compile(
     r"exit\s+now|guaranteed\s+upside|safe\s+trade|approved|executed)\b",
     re.IGNORECASE,
 )
-_NUMERIC_TEXT = re.compile(r"(?<![A-Za-z])\$?-?\d+(?:\.\d+)?%?(?![A-Za-z])")
+_NUMERIC_TEXT = re.compile(
+    r"(?<![A-Za-z0-9_])\$?-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?%?(?![A-Za-z0-9_])"
+)
 _URL_TEXT = re.compile(r"https?://\S+", re.IGNORECASE)
 _FULL_MARKET_CLAIM = re.compile(
     r"\b(?:full[- ]market|consolidated\s+(?:market|volume|activity)|"

@@ -259,6 +259,19 @@ def test_fact_cannot_borrow_a_number_from_a_different_structured_field(
     assert "DETERMINISTIC_VALUE_MISMATCH" in {issue.code.value for issue in report.issues}
 
 
+def test_scientific_notation_in_claim_text_is_checked_against_numeric_value(
+    valid_packet,
+    valid_brief_draft,
+) -> None:
+    headline, sma = valid_brief_draft.claims
+    scientific_text = sma.model_copy(update={"text": "AAPL two-session SMA is 1e1103.00 price."})
+    draft = valid_brief_draft.model_copy(update={"claims": (headline, scientific_text)})
+
+    report = validate_research_brief(valid_packet, draft, validation_attempt=1)
+
+    assert "DETERMINISTIC_VALUE_MISMATCH" in {issue.code.value for issue in report.issues}
+
+
 def test_time_bounded_claim_rejects_evidence_without_fact_timestamp(
     valid_packet,
     valid_brief_draft,
