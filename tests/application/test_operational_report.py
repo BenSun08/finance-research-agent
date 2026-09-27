@@ -4,7 +4,10 @@ from datetime import timedelta
 
 import pytest
 
-from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+from finance_research_agent.adapters.filesystem import (
+    FileSystemRunRepository,
+    PublicationError,
+)
 from finance_research_agent.application import publication_service
 from finance_research_agent.domain.enums import DataQualityStatus, ExecutionStatus
 from finance_research_agent.domain.errors import ErrorCode
@@ -225,3 +228,84 @@ def test_direct_operational_checkpoint_rejects_uncheckpointed_packet_bytes(
             artifact_hashes=FrozenMap({"operational_reason": reason_hash}),
             resumable=False,
         ))
+
+
+def test_operational_publication_rejects_changed_prior_staged_artifact(
+    tmp_path, valid_packet
+) -> None:
+    run = valid_packet.run.model_copy(update={
+        "execution_status": ExecutionStatus.CREATED,
+        "data_quality_status": DataQualityStatus.FAIL,
+    })
+    repository = FileSystemRunRepository(tmp_path)
+    repository.create(run)
+    digest = repository.stage_artifact(run.run_id, "collection_manifest", b"original")
+    repository.checkpoint(run.run_id, RunCheckpoint(
+        run_id=run.run_id,
+        stage="CREATED",
+        execution_status=ExecutionStatus.CREATED,
+        data_quality_status=DataQualityStatus.FAIL,
+        delivery_status=run.delivery_status,
+        written_at=run.invoked_at,
+        evidence_cutoff_at=None,
+        artifact_hashes=FrozenMap({"collection_manifest": digest}),
+        resumable=True,
+    ))
+    staged = (
+        tmp_path / "runs" / "2026" / "2026-08-26" / ".staging" /
+        run.run_id / "artifacts" / "collection_manifest.bin"
+    )
+    staged.write_bytes(b"changed")
+
+    with pytest.raises(ValueError, match="artifact|publication"):
+        publication_service.publish_operational_report(
+            repository, run, ErrorCode.PROVIDER_UNAVAILABLE,
+            run.invoked_at + timedelta(seconds=1),
+        )
+    assert repository.load(run.run_id) is not None
+    assert repository.get_report(run.run_id) is None
+
+
+def test_operational_publication_recovers_only_with_same_failure_code(
+    tmp_path, valid_packet
+) -> None:
+    run = valid_packet.run.model_copy(update={
+        "execution_status": ExecutionStatus.CREATED,
+        "data_quality_status": DataQualityStatus.FAIL,
+    })
+    repository = FileSystemRunRepository(tmp_path)
+    repository.create(run)
+    repository.checkpoint(run.run_id, RunCheckpoint(
+        run_id=run.run_id,
+        stage="CREATED",
+        execution_status=ExecutionStatus.CREATED,
+        data_quality_status=DataQualityStatus.FAIL,
+        delivery_status=run.delivery_status,
+        written_at=run.invoked_at,
+        evidence_cutoff_at=None,
+        artifact_hashes=FrozenMap({}),
+        resumable=True,
+    ))
+    at = run.invoked_at + timedelta(seconds=1)
+    repository.inject_failure_before_rename = True
+    with pytest.raises(PublicationError, match="injected failure"):
+        publication_service.publish_operational_report(
+            repository, run, ErrorCode.CONFIGURATION_INVALID, at
+        )
+    assert repository.get_report(run.run_id) is None
+    stored = repository.load(run.run_id)
+    assert stored is not None and stored.checkpoints[-1].stage == "PUBLISHED"
+    with pytest.raises(ValueError, match="another operational reason"):
+        publication_service.publish_operational_report(
+            repository, run, ErrorCode.CREDENTIALS_MISSING, at
+        )
+
+    repository.inject_failure_before_rename = False
+    receipt = publication_service.publish_operational_report(
+        repository, run, ErrorCode.CONFIGURATION_INVALID, at
+    )
+    assert receipt.run_id == run.run_id
+    assert repository.get_report(run.run_id) is not None
+    stored = repository.load(run.run_id)
+    assert stored is not None
+    assert [item.stage for item in stored.checkpoints].count("PUBLISHED") == 1

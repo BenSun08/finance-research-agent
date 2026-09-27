@@ -452,6 +452,11 @@ class FileSystemRunRepository:
                 checkpoint.artifact_hashes[name] != digest
                 for name, digest in previous.artifact_hashes.items()
             )
+            or any(
+                not (artifact := self._staged_artifact_path(run_id, name)).is_file()
+                or _sha256(artifact.read_bytes()) != digest
+                for name, digest in checkpoint.artifact_hashes.items()
+            )
         ):
             return False
         staged = self._staged_artifact_path(run_id, "operational_reason")
