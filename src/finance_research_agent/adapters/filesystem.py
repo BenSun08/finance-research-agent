@@ -472,14 +472,46 @@ class FileSystemRunRepository:
                 and not checkpoint.resumable
                 and not checkpoint.artifact_hashes
             )
+            staged_hashes_valid = all(
+                (
+                    staged := self._staged_artifact_path(run_id, name)).is_file()
+                    and _sha256(staged.read_bytes()) == digest
+                for name, digest in checkpoint.artifact_hashes.items()
+            )
+            validation_artifacts = (
+                sum(name.startswith("brief_draft_") for name in checkpoint.artifact_hashes) == 1
+                and sum(
+                    name.startswith("validation_report_")
+                    for name in checkpoint.artifact_hashes
+                ) == 1
+                and len(checkpoint.artifact_hashes) == 3
+            )
             valid_retry = (
                 checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
                 and checkpoint.execution_status.value == checkpoint.stage
                 and not checkpoint.resumable
-                and tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                and (
+                    checkpoint.stage == "AWAITING_SYNTHESIS"
+                    and tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                    or checkpoint.stage == "VALIDATING"
+                    and (
+                        tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                        or validation_artifacts
+                    )
+                )
+                and staged_hashes_valid
                 and current_packet_hash is not None
                 and checkpoint.artifact_hashes["research_packet"] == current_packet_hash
                 and bool(stored.checkpoints)
+                and (
+                    checkpoint.data_quality_status,
+                    checkpoint.delivery_status,
+                ) == previous_statuses[1:]
+                and (
+                    checkpoint.stage != "VALIDATING"
+                    or not validation_artifacts
+                    or sum(c.stage == "VALIDATING" for c in stored.checkpoints) < 3
+                )
                 and (
                     checkpoint.stage == "AWAITING_SYNTHESIS"
                     and stored.checkpoints[-1].stage == "EVIDENCE_FROZEN"
