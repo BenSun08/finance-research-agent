@@ -76,6 +76,7 @@ _FULL_MARKET_CLAIM = re.compile(
 _ACTIONABLE = re.compile(
     r"\b(?:actionable|ready\s+to\s+trade|eligible\s+to\s+trade)\b", re.IGNORECASE
 )
+_MAX_VALIDATION_ISSUES = 2000
 
 
 class Claim(StrictModel):
@@ -189,6 +190,20 @@ class ValidationReport(StrictModel):
         if self.repairable != (not self.is_valid and self.validation_attempt < 3):
             raise ValueError("repairable must match validity and the bounded repair limit")
         return self
+
+
+class _BoundedIssues(list[ValidationIssue]):
+    """Keep malformed drafts from producing unbounded diagnostic memory."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dropped = 0
+
+    def append(self, issue: ValidationIssue) -> None:
+        if len(self) < _MAX_VALIDATION_ISSUES:
+            super().append(issue)
+        else:
+            self.dropped += 1
 
 
 class RepairContext(StrictModel):
@@ -885,7 +900,7 @@ def _validate_watchlist_coverage(
     for candidate in packet.candidates:
         represented = any(
             claim.subject_symbol == candidate.symbol
-            and candidate.plan_status.value.casefold() in claim.text.casefold()
+            and claim.text == f"{candidate.symbol}: {candidate.plan_status.value}"
             for claim in dashboard
         )
         if not represented:
@@ -902,7 +917,7 @@ def _validate_watchlist_coverage(
         represented = any(
             claim.subject_symbol == candidate_exclusion.symbol
             and any(
-                reason.casefold() in claim.text.casefold()
+                claim.text == f"{candidate_exclusion.symbol}: {reason}"
                 for reason in candidate_exclusion.reason_codes
             )
             for claim in excluded
@@ -929,7 +944,7 @@ def validate_research_brief(
     """Validate a structured draft without mutating or rebuilding its frozen packet."""
     if type(validation_attempt) is not int or validation_attempt not in {1, 2, 3}:
         raise ValueError("validation_attempt must be 1, 2, or at most two repair attempts")
-    issues: list[ValidationIssue] = []
+    issues = _BoundedIssues()
     if draft.run_id != packet.run.run_id:
         issues.append(
             _issue(
@@ -1037,15 +1052,16 @@ def validate_research_brief(
     ordered = tuple(
         sorted(issues, key=lambda item: (item.json_pointer, item.code.value, item.issue_id))
     )
-    if len(ordered) > 2000:
+    total_issue_count = len(ordered) + issues.dropped
+    if issues.dropped or len(ordered) > _MAX_VALIDATION_ISSUES:
         ordered = (
-            *ordered[:1999],
+            *ordered[: _MAX_VALIDATION_ISSUES - 1],
             _issue(
                 ValidationCode.VALIDATION_ISSUES_TRUNCATED,
                 "/issues",
                 "validation findings exceeded the report limit; additional findings are omitted",
                 expected="2000 or fewer findings",
-                actual=str(len(ordered)),
+                actual=str(total_issue_count),
             ),
         )
     is_valid = not any(issue.severity is ValidationSeverity.ERROR for issue in ordered)

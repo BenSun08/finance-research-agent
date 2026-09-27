@@ -11,6 +11,11 @@ and disabled state. Do not fetch, infer, recalculate, recommend execution, or
 alter any deterministic value or state. Refreshing evidence, inferring missing
 deterministic truth, or rounding any value is also prohibited.
 
+In `Watchlist Dashboard`, include each deterministic candidate with one exact
+state entry in the form `<SYMBOL>: <PLAN_STATUS>`. In `Blocked and Excluded
+Candidates`, include each exclusion with one exact reason entry in the form
+`<SYMBOL>: <REASON_CODE>`. Keep these entries exact and concise.
+
 Cite `evidence_ids` for every factual claim and both `metric_ids` and their
 input `evidence_ids` for every calculated claim. Include `counter_evidence_ids`
 and invalidation text wherever the packet provides them. Keep the distinction
