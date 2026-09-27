@@ -452,7 +452,7 @@ class FileSystemRunRepository:
             if checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at:
                 raise ValueError(f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required")
             stored_packet_hash = self._stored_packet_hash(stored)
-            if checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}:
+            if checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}:
                 staged_packet = self._staged_artifact_path(run_id, "research_packet")
                 current_packet_hash = (
                     _sha256(staged_packet.read_bytes()) if staged_packet.is_file() else None
@@ -487,15 +487,16 @@ class FileSystemRunRepository:
                 and len(checkpoint.artifact_hashes) == 3
             )
             valid_retry = (
-                checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
+                checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}
                 and checkpoint.execution_status.value == checkpoint.stage
                 and not checkpoint.resumable
                 and (
                     checkpoint.stage == "AWAITING_SYNTHESIS"
                     and tuple(checkpoint.artifact_hashes) == ("research_packet",)
-                    or checkpoint.stage == "VALIDATING"
+                    or checkpoint.stage in {"VALIDATING", "PUBLISHED"}
                     and (
-                        tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                        checkpoint.stage == "VALIDATING"
+                        and tuple(checkpoint.artifact_hashes) == ("research_packet",)
                         or validation_artifacts
                     )
                 )
@@ -518,6 +519,9 @@ class FileSystemRunRepository:
                     or checkpoint.stage == "VALIDATING"
                     and stored.checkpoints[-1].stage
                     in {"AWAITING_SYNTHESIS", "VALIDATING"}
+                    or checkpoint.stage == "PUBLISHED"
+                    and stored.checkpoints[-1].stage == "VALIDATING"
+                    and checkpoint.artifact_hashes == stored.checkpoints[-1].artifact_hashes
                 )
             )
             if not (valid_freeze or valid_retry):

@@ -8,6 +8,7 @@ from finance_research_agent.adapters.filesystem import FileSystemRunRepository
 from finance_research_agent.application.packet_service import build_research_packet
 from finance_research_agent.application.preparation_service import stage_research_packet
 from finance_research_agent.application.publication_service import (
+    publish_validated_brief,
     validate_staged_brief,
 )
 from finance_research_agent.domain.enums import ExecutionStatus
@@ -85,3 +86,58 @@ def test_validation_limits_repair_to_two_attempts(tmp_path, valid_packet, valid_
         assert (repair is not None) == (attempt < 3)
     with pytest.raises(ValueError, match="repair|attempt"):
         validate_staged_brief(repo, packet, valid_brief_draft, at + timedelta(seconds=4))
+
+
+def test_publication_requires_valid_recorded_attempt_and_is_replayable(
+    tmp_path, valid_packet, valid_brief_draft
+):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    with pytest.raises(ValueError, match="valid"):
+        publish_validated_brief(repo, packet, at)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": ExecutionStatus.AWAITING_SYNTHESIS}
+    )
+    report, _ = validate_staged_brief(repo, packet, draft, at)
+    assert report.is_valid
+
+    artifact = publish_validated_brief(repo, packet, at + timedelta(seconds=1))
+
+    assert artifact.run_id == packet.run.run_id
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None and stored.published
+    assert stored.checkpoints[-1].stage == "PUBLISHED"
+    bundle = repo.load_published_bundle(packet.run.run_id)
+    assert bundle is not None and bundle.run.execution_status is ExecutionStatus.PUBLISHED
+    assert bundle.model_dump(mode="json")["bundle"]["research_packet"] == packet.model_dump(
+        mode="json"
+    )
+    assert repo.get_report(packet.run.run_id).startswith("# Premarket Research Brief")
+    assert publish_validated_brief(repo, packet, at + timedelta(seconds=2)) == artifact
+
+
+def test_invalid_attempt_cannot_publish(tmp_path, valid_packet, valid_brief_draft):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    bad = valid_brief_draft.model_copy(update={"run_id": "premarket-2026-01-01-r2"})
+    validate_staged_brief(repo, packet, bad, at)
+    with pytest.raises(ValueError, match="valid"):
+        publish_validated_brief(repo, packet, at + timedelta(seconds=1))
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None and stored.checkpoints[-1].stage == "VALIDATING"
+
+
+def test_publication_retries_after_atomic_failure(tmp_path, valid_packet, valid_brief_draft):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": ExecutionStatus.AWAITING_SYNTHESIS}
+    )
+    validate_staged_brief(repo, packet, draft, at)
+    repo.inject_failure_before_rename = True
+    with pytest.raises(Exception, match="injected failure"):
+        publish_validated_brief(repo, packet, at + timedelta(seconds=1))
+    repo.inject_failure_before_rename = False
+
+    artifact = publish_validated_brief(repo, packet, at + timedelta(seconds=2))
+
+    assert artifact.run_id == packet.run.run_id
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None and [c.stage for c in stored.checkpoints].count("PUBLISHED") == 1
