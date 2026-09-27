@@ -74,7 +74,10 @@ def test_validation_records_attempt_and_retry_without_using_repair(
     stored = repo.load(packet.run.run_id)
     assert stored is not None
     assert [c.stage for c in stored.checkpoints].count("VALIDATING") == 1
-    assert len(stored.checkpoints[-1].artifact_hashes) == 3
+    assert len(stored.checkpoints[-1].artifact_hashes) == 4
+    assert stored.checkpoints[-1].artifact_hashes["reduced_report"] == (
+        stored.checkpoints[-2].artifact_hashes["reduced_report"]
+    )
 
 
 def test_validation_limits_repair_to_two_attempts(tmp_path, valid_packet, valid_brief_draft):

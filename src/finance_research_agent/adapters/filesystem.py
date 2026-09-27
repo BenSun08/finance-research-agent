@@ -499,7 +499,7 @@ class FileSystemRunRepository:
                     name.startswith("validation_report_")
                     for name in checkpoint.artifact_hashes
                 ) == 1
-                and len(checkpoint.artifact_hashes) == 3
+                and len(checkpoint.artifact_hashes) in {3, 4}
             )
             valid_retry = (
                 checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}
@@ -507,11 +507,17 @@ class FileSystemRunRepository:
                 and not checkpoint.resumable
                 and (
                     checkpoint.stage == "AWAITING_SYNTHESIS"
-                    and tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                    and set(checkpoint.artifact_hashes) in (
+                        {"research_packet"},
+                        {"research_packet", "reduced_report"},
+                    )
                     or checkpoint.stage in {"VALIDATING", "PUBLISHED"}
                     and (
                         checkpoint.stage == "VALIDATING"
-                        and tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                        and set(checkpoint.artifact_hashes) in (
+                            {"research_packet"},
+                            {"research_packet", "reduced_report"},
+                        )
                         or validation_artifacts
                     )
                 )

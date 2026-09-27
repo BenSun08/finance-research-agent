@@ -128,6 +128,14 @@ def validate_staged_brief(
     report_name = "validation_report_" + sha256(report_payload).hexdigest()
     draft_hash = repository.stage_artifact(packet.run.run_id, draft_name, draft_payload)
     report_hash = repository.stage_artifact(packet.run.run_id, report_name, report_payload)
+    reduced_hash = stored.checkpoints[-1].artifact_hashes.get("reduced_report")
+    checkpoint_hashes = {
+        "research_packet": packet_hash,
+        draft_name: draft_hash,
+        report_name: report_hash,
+    }
+    if reduced_hash is not None:
+        checkpoint_hashes["reduced_report"] = reduced_hash
     repository.checkpoint_if_current(
         packet.run.run_id,
         RunCheckpoint(
@@ -138,11 +146,7 @@ def validate_staged_brief(
             delivery_status=packet.run.delivery_status,
             written_at=checkpointed_at,
             evidence_cutoff_at=packet.run.evidence_cutoff_at,
-            artifact_hashes=FrozenMap({
-                "research_packet": packet_hash,
-                draft_name: draft_hash,
-                report_name: report_hash,
-            }),
+            artifact_hashes=FrozenMap(checkpoint_hashes),
             resumable=False,
         ),
         expected_count=len(stored.checkpoints),

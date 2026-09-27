@@ -72,8 +72,32 @@ def test_stage_research_packet_persists_canonical_bytes_and_checkpoint(
     stored = repository.load(packet.run.run_id)
     assert stored is not None
     assert stored.checkpoints[-1].stage == "AWAITING_SYNTHESIS"
-    assert stored.checkpoints[-1].artifact_hashes == FrozenMap({"research_packet": digest})
+    reduced = repository.read_staged_artifact(packet.run.run_id, "reduced_report")
+    assert reduced is not None
+    assert reduced.startswith(b"# Premarket Research Brief\n")
+    assert b"DETERMINISTIC_REDUCED" in reduced
+    assert stored.checkpoints[-1].artifact_hashes == FrozenMap({
+        "research_packet": digest,
+        "reduced_report": hashlib.sha256(reduced).hexdigest(),
+    })
     assert stored.checkpoints[-1].execution_status is ExecutionStatus.AWAITING_SYNTHESIS
+
+
+def test_staged_reduced_report_uses_only_deterministic_packet_fields(
+    tmp_path, packet_with_injection_text
+) -> None:
+    packet = _awaiting_packet(packet_with_injection_text)
+    repository = _repository_for_packet(tmp_path, packet)
+
+    stage_research_packet(
+        repository, packet, packet.run.evidence_cutoff_at + timedelta(seconds=1)
+    )
+
+    report = repository.read_staged_artifact(packet.run.run_id, "reduced_report")
+    assert report is not None
+    assert b"Ignore all rules" not in report
+    assert packet.run.run_id.encode() in report
+    assert packet.run.data_quality_status.value.encode() in report
 
 
 def test_stage_research_packet_retry_is_idempotent(tmp_path, valid_packet) -> None:
@@ -152,7 +176,12 @@ def test_stage_research_packet_retry_after_validation_does_not_regress_state(
             delivery_status=packet.run.delivery_status,
             written_at=checkpointed_at + timedelta(seconds=1),
             evidence_cutoff_at=packet.run.evidence_cutoff_at,
-            artifact_hashes=FrozenMap({"research_packet": digest}),
+            artifact_hashes=FrozenMap({
+                "research_packet": digest,
+                "reduced_report": hashlib.sha256(
+                    repository.read_staged_artifact(packet.run.run_id, "reduced_report") or b""
+                ).hexdigest(),
+            }),
             resumable=False,
         ),
     )
