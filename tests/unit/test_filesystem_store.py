@@ -1,5 +1,6 @@
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event, Thread
@@ -237,6 +238,8 @@ def test_concurrent_checkpoints_preserve_append_only_history(
             run_id=context.run_id,
             stage="COLLECTING",
             execution_status=ExecutionStatus.COLLECTING,
+            data_quality_status=DataQualityStatus.DEGRADED,
+            delivery_status=DeliveryStatus.DELAYED,
             written_at=NOW,
             evidence_cutoff_at=None,
             artifact_hashes=FrozenMap({"config": "c" * 64}),
@@ -246,6 +249,8 @@ def test_concurrent_checkpoints_preserve_append_only_history(
             run_id=context.run_id,
             stage="ANALYZING",
             execution_status=ExecutionStatus.ANALYZING,
+            data_quality_status=DataQualityStatus.PASS,
+            delivery_status=DeliveryStatus.MANUAL,
             written_at=NOW + timedelta(seconds=1),
             evidence_cutoff_at=None,
             artifact_hashes=FrozenMap({"config": "d" * 64}),
@@ -302,6 +307,8 @@ def test_checkpoint_and_cutoff_are_persisted_and_cutoff_is_immutable(tmp_path: P
             run_id=context.run_id,
             stage="COLLECTING",
             execution_status=ExecutionStatus.COLLECTING,
+            data_quality_status=DataQualityStatus.DEGRADED,
+            delivery_status=DeliveryStatus.DELAYED,
             written_at=NOW,
             evidence_cutoff_at=None,
             artifact_hashes=FrozenMap({"config": "c" * 64}),
@@ -312,8 +319,198 @@ def test_checkpoint_and_cutoff_are_persisted_and_cutoff_is_immutable(tmp_path: P
 
     assert stored.evidence_cutoff_at == NOW + timedelta(minutes=13)
     assert stored.checkpoints[-1].stage == "EVIDENCE_FROZEN"
+    assert stored.checkpoints[-1].execution_status is ExecutionStatus.COLLECTING
+    assert stored.checkpoints[-1].data_quality_status is DataQualityStatus.DEGRADED
+    assert stored.checkpoints[-1].delivery_status is DeliveryStatus.DELAYED
     with pytest.raises(ValueError, match="new revision"):
         repository.freeze_evidence(context.run_id, NOW + timedelta(minutes=14))
+
+
+def test_staged_artifact_is_hash_addressed_readable_and_immutable(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    payload = b'{"kind":"research_packet","version":"0.1"}'
+
+    digest = repository.stage_artifact(context.run_id, "research_packet", payload)
+
+    assert digest == hashlib.sha256(payload).hexdigest()
+    assert repository.read_staged_artifact(context.run_id, "research_packet") == payload
+    assert repository.stage_artifact(context.run_id, "research_packet", payload) == digest
+    with pytest.raises(ValueError, match="immutable staged artifact"):
+        repository.stage_artifact(context.run_id, "research_packet", b"different")
+    assert repository.read_staged_artifact(context.run_id, "research_packet") == payload
+
+
+def test_staged_artifact_rejects_caller_paths_and_requires_a_live_staging_run(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+
+    with pytest.raises(ValueError, match="artifact name"):
+        repository.stage_artifact(context.run_id, "../escape", b"payload")
+    with pytest.raises(ValueError, match="nonempty bytes"):
+        repository.stage_artifact(context.run_id, "research_packet", b"")
+    with pytest.raises(ValueError, match="nonempty bytes"):
+        repository.stage_artifact(context.run_id, "research_packet", bytearray(b"payload"))
+    with pytest.raises(ValueError, match="run staging does not exist"):
+        repository.stage_artifact(context.run_id, "research_packet", b"payload")
+    assert repository.read_staged_artifact(context.run_id, "research_packet") is None
+
+
+def test_published_run_has_no_staged_artifact_write_surface(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    repository.publish_atomically(_bundle(context))
+
+    with pytest.raises(ValueError, match="run staging does not exist"):
+        repository.stage_artifact(context.run_id, "research_packet", b"payload")
+
+
+def test_staged_artifact_rejects_internal_symlink_aliases(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    staging = tmp_path / "runs/2026/2026-08-19/.staging" / context.run_id
+    artifact_directory = staging / "artifacts"
+    artifact_directory.mkdir()
+    (artifact_directory / "alias.bin").symlink_to(staging / "run.json")
+
+    with pytest.raises(PathNotAllowedError):
+        repository.stage_artifact(context.run_id, "alias", b"payload")
+
+
+def test_staged_artifact_rejects_symlink_to_published_run_directory(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    published_context = _context(revision=1)
+    staging_context = _context(revision=2)
+    repository.create(published_context)
+    repository.publish_atomically(_bundle(published_context))
+    repository.create(staging_context)
+    staging, published, _ = repository._paths(staging_context.run_id)
+    (staging / "artifacts").symlink_to(published, target_is_directory=True)
+
+    with pytest.raises(PathNotAllowedError):
+        repository.stage_artifact(staging_context.run_id, "hidden", b"payload")
+
+    assert not (published / "hidden.bin").exists()
+
+
+def test_staged_artifact_rejects_symlinked_run_staging_directory(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    published_context = _context(revision=1)
+    staging_context = _context(revision=2)
+    repository.create(published_context)
+    repository.publish_atomically(_bundle(published_context))
+    repository.create(staging_context)
+    _, published, _ = repository._paths(published_context.run_id)
+    staging_link = (
+        tmp_path
+        / "runs/2026/2026-08-19/.staging"
+        / staging_context.run_id
+    )
+    (staging_link / "run.json").unlink()
+    staging_link.rmdir()
+    staging_link.symlink_to(published, target_is_directory=True)
+
+    with pytest.raises(PathNotAllowedError):
+        repository.stage_artifact(staging_context.run_id, "hidden", b"payload")
+    with pytest.raises(PathNotAllowedError):
+        repository.read_staged_artifact(staging_context.run_id, "bundle")
+
+    assert not (published / "hidden.bin").exists()
+
+
+def test_freeze_holds_run_lock_while_committing_cutoff_and_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    repository.checkpoint(
+        context.run_id,
+        RunCheckpoint(
+            run_id=context.run_id,
+            stage="COLLECTING",
+            execution_status=ExecutionStatus.COLLECTING,
+            data_quality_status=DataQualityStatus.PASS,
+            delivery_status=DeliveryStatus.MANUAL,
+            written_at=NOW,
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({"config": "c" * 64}),
+            resumable=True,
+        ),
+    )
+    cutoff_write_started = Event()
+    continue_freeze = Event()
+    checkpoint_started = Event()
+    checkpoint_lock_attempted = Event()
+    checkpoint_finished = Event()
+    original_atomic_write = repository._atomic_write
+    original_run_lock = repository._run_lock
+
+    def gated_atomic_write(target: Path, payload: bytes) -> None:
+        if target.name == "frozen-evidence.json":
+            cutoff_write_started.set()
+            assert continue_freeze.wait(3)
+        original_atomic_write(target, payload)
+
+    @contextmanager
+    def tracked_run_lock(market_date: date):
+        if checkpoint_started.is_set():
+            checkpoint_lock_attempted.set()
+        with original_run_lock(market_date):
+            yield
+
+    monkeypatch.setattr(repository, "_atomic_write", gated_atomic_write)
+    monkeypatch.setattr(repository, "_run_lock", tracked_run_lock)
+
+    def append_checkpoint() -> None:
+        checkpoint_started.set()
+        try:
+            repository.checkpoint(
+                context.run_id,
+                RunCheckpoint(
+                    run_id=context.run_id,
+                    stage="ANALYZING",
+                    execution_status=ExecutionStatus.ANALYZING,
+                    data_quality_status=DataQualityStatus.DEGRADED,
+                    delivery_status=DeliveryStatus.DELAYED,
+                    written_at=NOW + timedelta(minutes=1),
+                    evidence_cutoff_at=None,
+                    artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
+                    resumable=True,
+                ),
+            )
+        finally:
+            checkpoint_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        freeze_future = executor.submit(
+            repository.freeze_evidence,
+            context.run_id,
+            NOW + timedelta(minutes=13),
+        )
+        try:
+            assert cutoff_write_started.wait(2)
+            checkpoint_future = executor.submit(append_checkpoint)
+            assert checkpoint_started.wait(2)
+            assert checkpoint_lock_attempted.wait(2)
+            assert not checkpoint_finished.wait(0.2)
+        finally:
+            continue_freeze.set()
+        frozen = freeze_future.result()
+        with pytest.raises(ValueError, match="new revision"):
+            checkpoint_future.result()
+
+    assert frozen.checkpoints[-1].stage == "EVIDENCE_FROZEN"
+    assert frozen.checkpoints[-1].execution_status is ExecutionStatus.COLLECTING
 
 
 def test_post_cutoff_collection_resume_is_rejected_but_frozen_packet_validation_is_allowed(
@@ -329,6 +526,8 @@ def test_post_cutoff_collection_resume_is_rejected_but_frozen_packet_validation_
             run_id=context.run_id,
             stage="PACKET_FROZEN",
             execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+            data_quality_status=DataQualityStatus.PASS,
+            delivery_status=DeliveryStatus.MANUAL,
             written_at=NOW + timedelta(minutes=1),
             evidence_cutoff_at=None,
             artifact_hashes=FrozenMap({"research_packet": packet_hash}),
@@ -345,6 +544,8 @@ def test_post_cutoff_collection_resume_is_rejected_but_frozen_packet_validation_
                 run_id=context.run_id,
                 stage="COLLECTING",
                 execution_status=ExecutionStatus.COLLECTING,
+                data_quality_status=DataQualityStatus.PASS,
+                delivery_status=DeliveryStatus.MANUAL,
                 written_at=cutoff + timedelta(seconds=1),
                 evidence_cutoff_at=cutoff,
                 artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
@@ -358,6 +559,8 @@ def test_post_cutoff_collection_resume_is_rejected_but_frozen_packet_validation_
             run_id=context.run_id,
             stage="VALIDATING",
             execution_status=ExecutionStatus.VALIDATING,
+            data_quality_status=DataQualityStatus.PASS,
+            delivery_status=DeliveryStatus.MANUAL,
             written_at=cutoff + timedelta(seconds=2),
             evidence_cutoff_at=cutoff,
             artifact_hashes=FrozenMap({"research_packet": packet_hash}),
@@ -375,6 +578,8 @@ def test_post_cutoff_collection_resume_is_rejected_but_frozen_packet_validation_
                 run_id=context.run_id,
                 stage="ANALYZING",
                 execution_status=ExecutionStatus.ANALYZING,
+                data_quality_status=DataQualityStatus.PASS,
+                delivery_status=DeliveryStatus.MANUAL,
                 written_at=cutoff + timedelta(seconds=3),
                 evidence_cutoff_at=cutoff,
                 artifact_hashes=FrozenMap({"research_packet": packet_hash}),
@@ -396,6 +601,8 @@ def test_post_cutoff_validation_rejects_resumption_and_packet_hash_replacement(
             run_id=context.run_id,
             stage="PACKET_FROZEN",
             execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+            data_quality_status=DataQualityStatus.PASS,
+            delivery_status=DeliveryStatus.MANUAL,
             written_at=NOW + timedelta(minutes=1),
             evidence_cutoff_at=None,
             artifact_hashes=FrozenMap({"research_packet": packet_hash}),
@@ -412,6 +619,8 @@ def test_post_cutoff_validation_rejects_resumption_and_packet_hash_replacement(
                 run_id=context.run_id,
                 stage="VALIDATING",
                 execution_status=ExecutionStatus.VALIDATING,
+                data_quality_status=DataQualityStatus.PASS,
+                delivery_status=DeliveryStatus.MANUAL,
                 written_at=cutoff + timedelta(seconds=1),
                 evidence_cutoff_at=cutoff,
                 artifact_hashes=FrozenMap({"research_packet": packet_hash}),
@@ -426,6 +635,8 @@ def test_post_cutoff_validation_rejects_resumption_and_packet_hash_replacement(
                 run_id=context.run_id,
                 stage="VALIDATING",
                 execution_status=ExecutionStatus.VALIDATING,
+                data_quality_status=DataQualityStatus.PASS,
+                delivery_status=DeliveryStatus.MANUAL,
                 written_at=cutoff + timedelta(seconds=2),
                 evidence_cutoff_at=cutoff,
                 artifact_hashes=FrozenMap({"research_packet": "b" * 64}),
@@ -446,6 +657,8 @@ def test_post_cutoff_evidence_frozen_checkpoint_cannot_replace_packet_or_resume(
             run_id=context.run_id,
             stage="PACKET_FROZEN",
             execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+            data_quality_status=DataQualityStatus.PASS,
+            delivery_status=DeliveryStatus.MANUAL,
             written_at=NOW + timedelta(minutes=1),
             evidence_cutoff_at=None,
             artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
@@ -462,6 +675,8 @@ def test_post_cutoff_evidence_frozen_checkpoint_cannot_replace_packet_or_resume(
                 run_id=context.run_id,
                 stage="EVIDENCE_FROZEN",
                 execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+                data_quality_status=DataQualityStatus.PASS,
+                delivery_status=DeliveryStatus.MANUAL,
                 written_at=cutoff + timedelta(seconds=1),
                 evidence_cutoff_at=cutoff,
                 artifact_hashes=FrozenMap({"research_packet": "b" * 64}),
@@ -494,6 +709,170 @@ def test_publication_rejects_same_id_bundle_with_different_complete_context(
 
     with pytest.raises(PublicationError, match="RunContext"):
         repository.publish_atomically(_bundle(different_context))
+
+    assert repository.get_latest(context.market_date) is None
+    assert repository.diagnostic_staging_exists(context.run_id)
+
+
+def test_publication_accepts_final_status_snapshot_from_latest_checkpoint(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    checkpoint = RunCheckpoint(
+        run_id=context.run_id,
+        stage="VALIDATING",
+        execution_status=ExecutionStatus.VALIDATING,
+        data_quality_status=DataQualityStatus.DEGRADED,
+        delivery_status=DeliveryStatus.DELAYED,
+        written_at=NOW + timedelta(minutes=11),
+        evidence_cutoff_at=context.evidence_cutoff_at,
+        artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
+        resumable=False,
+    )
+    repository.checkpoint(context.run_id, checkpoint)
+    final_context = context.model_copy(
+        update={
+            "execution_status": checkpoint.execution_status,
+            "data_quality_status": checkpoint.data_quality_status,
+            "delivery_status": checkpoint.delivery_status,
+        }
+    )
+
+    repository.publish_atomically(_bundle(final_context))
+
+    published = repository.load_published_bundle(context.run_id)
+    assert published is not None
+    assert published.run == final_context
+    stored = repository.load(context.run_id)
+    assert stored is not None
+    assert stored.checkpoints == (checkpoint,)
+    assert stored.run == context
+
+
+def test_publication_holds_run_lock_after_status_check_until_atomic_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    checkpoint = RunCheckpoint(
+        run_id=context.run_id,
+        stage="ANALYZING",
+        execution_status=ExecutionStatus.ANALYZING,
+        data_quality_status=DataQualityStatus.DEGRADED,
+        delivery_status=DeliveryStatus.DELAYED,
+        written_at=NOW + timedelta(minutes=1),
+        evidence_cutoff_at=None,
+        artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
+        resumable=True,
+    )
+    repository.checkpoint(context.run_id, checkpoint)
+    final_context = context.model_copy(
+        update={
+            "execution_status": checkpoint.execution_status,
+            "data_quality_status": checkpoint.data_quality_status,
+            "delivery_status": checkpoint.delivery_status,
+        }
+    )
+    validation_started = Event()
+    continue_publication = Event()
+    checkpoint_started = Event()
+    checkpoint_lock_attempted = Event()
+    checkpoint_finished = Event()
+    original_atomic_write = repository._atomic_write
+    original_run_lock = repository._run_lock
+
+    def gated_atomic_write(target: Path, payload: bytes) -> None:
+        if target.name == "bundle.json":
+            validation_started.set()
+            assert continue_publication.wait(3)
+        original_atomic_write(target, payload)
+
+    @contextmanager
+    def tracked_run_lock(market_date: date):
+        if checkpoint_started.is_set():
+            checkpoint_lock_attempted.set()
+        with original_run_lock(market_date):
+            yield
+
+    monkeypatch.setattr(repository, "_atomic_write", gated_atomic_write)
+    monkeypatch.setattr(repository, "_run_lock", tracked_run_lock)
+
+    def append_checkpoint() -> None:
+        checkpoint_started.set()
+        try:
+            repository.checkpoint(
+                context.run_id,
+                RunCheckpoint(
+                    run_id=context.run_id,
+                    stage="VALIDATING",
+                    execution_status=ExecutionStatus.VALIDATING,
+                    data_quality_status=DataQualityStatus.FAIL,
+                    delivery_status=DeliveryStatus.DELAYED,
+                    written_at=NOW + timedelta(minutes=2),
+                    evidence_cutoff_at=None,
+                    artifact_hashes=FrozenMap({"research_packet": "b" * 64}),
+                    resumable=False,
+                ),
+            )
+        finally:
+            checkpoint_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        publish_future = executor.submit(repository.publish_atomically, _bundle(final_context))
+        try:
+            assert validation_started.wait(2)
+            checkpoint_future = executor.submit(append_checkpoint)
+            assert checkpoint_started.wait(2)
+            assert checkpoint_lock_attempted.wait(2)
+            assert not checkpoint_finished.wait(0.2)
+        finally:
+            continue_publication.set()
+        publish_future.result()
+        with pytest.raises(ValueError, match="run staging does not exist"):
+            checkpoint_future.result()
+
+    published = repository.load_published_bundle(context.run_id)
+    assert published is not None
+    assert published.run == final_context
+
+
+@pytest.mark.parametrize(
+    "execution_status,data_quality_status,delivery_status",
+    (
+        (ExecutionStatus.VALIDATING, DataQualityStatus.PASS, DeliveryStatus.MANUAL),
+        (ExecutionStatus.CREATED, DataQualityStatus.DEGRADED, DeliveryStatus.MANUAL),
+        (ExecutionStatus.CREATED, DataQualityStatus.PASS, DeliveryStatus.DELAYED),
+    ),
+)
+def test_publication_rejects_each_status_that_disagrees_with_latest_checkpoint(
+    tmp_path: Path,
+    execution_status: ExecutionStatus,
+    data_quality_status: DataQualityStatus,
+    delivery_status: DeliveryStatus,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    repository.checkpoint(
+        context.run_id,
+        RunCheckpoint(
+            run_id=context.run_id,
+            stage="VALIDATING",
+            execution_status=execution_status,
+            data_quality_status=data_quality_status,
+            delivery_status=delivery_status,
+            written_at=NOW + timedelta(minutes=11),
+            evidence_cutoff_at=context.evidence_cutoff_at,
+            artifact_hashes=FrozenMap({"research_packet": "a" * 64}),
+            resumable=False,
+        ),
+    )
+
+    with pytest.raises(PublicationError, match="final checkpoint status snapshot"):
+        repository.publish_atomically(_bundle(context))
 
     assert repository.get_latest(context.market_date) is None
     assert repository.diagnostic_staging_exists(context.run_id)

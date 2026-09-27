@@ -37,6 +37,7 @@ from finance_research_agent.domain.models import (
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes, utc_datetime
 
 _RUN_ID = re.compile(r"^premarket-(\d{4}-\d{2}-\d{2})-r([1-9]\d*)$")
+_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _LEASE_DURATION = timedelta(minutes=15)
 _LEASE_PROCESS_LOCK = RLock()
 _RUN_PROCESS_LOCK = RLock()
@@ -115,6 +116,39 @@ class FileSystemRunRepository:
         final = self._safe_path("runs", year, day, run_id)
         lease = self._safe_path("runs", year, day, ".lease.json")
         return staging, final, lease
+
+    def _staged_artifact_path(self, run_id: str, artifact_name: str) -> Path:
+        if not isinstance(artifact_name, str) or not _ARTIFACT_NAME.fullmatch(artifact_name):
+            raise ValueError("artifact name must be a bounded identifier, not a caller path")
+        market_date, _ = self._validated_run_id(run_id)
+        expected_staging = self.root.joinpath(
+            "runs",
+            f"{market_date.year:04d}",
+            market_date.isoformat(),
+            ".staging",
+            run_id,
+        )
+        parent = self.root
+        for component in expected_staging.relative_to(self.root).parts:
+            parent = parent / component
+            if parent.is_symlink():
+                raise _path_error()
+        staging, _, _ = self._paths(run_id)
+        if staging != expected_staging.resolve():
+            raise _path_error()
+        artifact_directory = staging / "artifacts"
+        target = artifact_directory / f"{artifact_name}.bin"
+        if artifact_directory.is_symlink() or target.is_symlink():
+            raise _path_error()
+        resolved_staging = staging.resolve()
+        resolved_directory = artifact_directory.resolve()
+        resolved_target = target.resolve()
+        try:
+            resolved_directory.relative_to(resolved_staging)
+            resolved_target.relative_to(resolved_directory)
+        except ValueError as error:
+            raise _path_error() from error
+        return resolved_target
 
     def _lease_lock_path(self, market_date: date) -> Path:
         return self._safe_path(
@@ -291,6 +325,40 @@ class FileSystemRunRepository:
         with self._run_lock(context.market_date):
             self._create_unlocked(context)
 
+    def stage_artifact(self, run_id: str, artifact_name: str, payload: bytes) -> str:
+        """Write one immutable named byte artifact inside an unpublished run."""
+        market_date, _ = self._validated_run_id(run_id)
+        if not isinstance(artifact_name, str) or not _ARTIFACT_NAME.fullmatch(artifact_name):
+            raise ValueError("artifact name must be a bounded identifier, not a caller path")
+        if not isinstance(payload, bytes) or not payload:
+            raise ValueError("staged artifact payload must be nonempty bytes")
+        digest = _sha256(payload)
+        with self._run_lock(market_date):
+            staging, _, _ = self._paths(run_id)
+            if not staging.is_dir():
+                raise ValueError("run staging does not exist")
+            target = self._staged_artifact_path(run_id, artifact_name)
+            if target.exists():
+                if self._read_confined(staging, "artifacts", f"{artifact_name}.bin") != payload:
+                    raise ValueError(
+                        "immutable staged artifact already exists with different bytes"
+                    )
+                return digest
+            self._atomic_write(target, payload)
+            return digest
+
+    def read_staged_artifact(self, run_id: str, artifact_name: str) -> bytes | None:
+        """Read one named artifact only while its run remains in staging."""
+        market_date, _ = self._validated_run_id(run_id)
+        if not isinstance(artifact_name, str) or not _ARTIFACT_NAME.fullmatch(artifact_name):
+            raise ValueError("artifact name must be a bounded identifier, not a caller path")
+        with self._run_lock(market_date):
+            staging, _, _ = self._paths(run_id)
+            target = self._staged_artifact_path(run_id, artifact_name)
+            if not staging.is_dir() or not target.is_file():
+                return None
+            return self._read_confined(staging, "artifacts", f"{artifact_name}.bin")
+
     def _create_unlocked(self, context: RunContext) -> None:
         staging, final, _ = self._paths(context.run_id)
         if final.exists():
@@ -338,6 +406,23 @@ class FileSystemRunRepository:
                 return checkpoint.artifact_hashes["research_packet"]
         return None
 
+    @staticmethod
+    def _latest_statuses(stored: StoredRun) -> tuple[
+        ExecutionStatus, DataQualityStatus, DeliveryStatus
+    ]:
+        if stored.checkpoints:
+            latest = stored.checkpoints[-1]
+            return (
+                latest.execution_status,
+                latest.data_quality_status,
+                latest.delivery_status,
+            )
+        return (
+            stored.run.execution_status,
+            stored.run.data_quality_status,
+            stored.run.delivery_status,
+        )
+
     def load(self, run_id: str) -> StoredRun | None:
         staging, final, _ = self._paths(run_id)
         if staging.is_dir():
@@ -367,9 +452,15 @@ class FileSystemRunRepository:
             if checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at:
                 raise ValueError(f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required")
             stored_packet_hash = self._stored_packet_hash(stored)
+            previous_statuses = self._latest_statuses(stored)
             valid_freeze = (
                 checkpoint.stage == "EVIDENCE_FROZEN"
-                and checkpoint.execution_status is stored.run.execution_status
+                and (
+                    checkpoint.execution_status,
+                    checkpoint.data_quality_status,
+                    checkpoint.delivery_status,
+                )
+                == previous_statuses
                 and checkpoint.written_at == stored.evidence_cutoff_at
                 and not checkpoint.resumable
                 and not checkpoint.artifact_hashes
@@ -395,6 +486,11 @@ class FileSystemRunRepository:
         self._atomic_write(target, canonical_bytes(checkpoint))
 
     def freeze_evidence(self, run_id: str, cutoff_at: datetime) -> StoredRun:
+        market_date, _ = self._validated_run_id(run_id)
+        with self._run_lock(market_date):
+            return self._freeze_evidence_unlocked(run_id, cutoff_at)
+
+    def _freeze_evidence_unlocked(self, run_id: str, cutoff_at: datetime) -> StoredRun:
         staging, _, _ = self._paths(run_id)
         stored = self.load(run_id)
         if stored is None or not staging.is_dir():
@@ -410,12 +506,15 @@ class FileSystemRunRepository:
                 separators=(",", ":"),
             ).encode("utf-8"),
         )
-        self.checkpoint(
+        execution_status, data_quality_status, delivery_status = self._latest_statuses(stored)
+        self._checkpoint_unlocked(
             run_id,
             RunCheckpoint(
                 run_id=run_id,
                 stage="EVIDENCE_FROZEN",
-                execution_status=stored.run.execution_status,
+                execution_status=execution_status,
+                data_quality_status=data_quality_status,
+                delivery_status=delivery_status,
                 written_at=cutoff_at,
                 evidence_cutoff_at=cutoff_at,
                 artifact_hashes=FrozenMap({}),
@@ -519,15 +618,40 @@ class FileSystemRunRepository:
         return report_bytes, bundle_bytes
 
     def publish_atomically(self, bundle: PublishedRunBundle) -> PublishedArtifact:
+        with self._run_lock(bundle.run.market_date):
+            return self._publish_atomically_unlocked(bundle)
+
+    def _publish_atomically_unlocked(self, bundle: PublishedRunBundle) -> PublishedArtifact:
         staging, final, index_path, latest_path = self._publication_paths(bundle.run.run_id)
         if not staging.is_dir():
             raise PublicationError("run-specific staging directory is absent")
         if final.exists():
             raise PublicationError("immutable final run directory already exists")
-        staged_context = self._load_context_from(bundle.run.run_id, staging)
-        if staged_context is None:
+        stored = self._load_from_path(bundle.run.run_id, staging, False)
+        if stored is None:
             raise PublicationError("staged run context is absent")
-        if staged_context != bundle.run:
+        staged_context = stored.run
+        final_identity = bundle.run.model_copy(
+            update={
+                "execution_status": staged_context.execution_status,
+                "data_quality_status": staged_context.data_quality_status,
+                "delivery_status": staged_context.delivery_status,
+            }
+        )
+        if final_identity != staged_context:
+            raise PublicationError("PublishedRunBundle RunContext differs from staged RunContext")
+        if stored.checkpoints:
+            latest_statuses = self._latest_statuses(stored)
+            published_statuses = (
+                bundle.run.execution_status,
+                bundle.run.data_quality_status,
+                bundle.run.delivery_status,
+            )
+            if published_statuses != latest_statuses:
+                raise PublicationError(
+                    "PublishedRunBundle statuses differ from the final checkpoint status snapshot"
+                )
+        elif bundle.run != staged_context:
             raise PublicationError("PublishedRunBundle RunContext differs from staged RunContext")
         report_bytes = bundle.report_markdown.encode("utf-8")
         markdown_sha256 = _sha256(report_bytes)

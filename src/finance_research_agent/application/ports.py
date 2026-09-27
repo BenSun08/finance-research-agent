@@ -35,6 +35,7 @@ __all__ = [
     "HistoricalBarsFetcher",
     "MarketDataProvider",
     "RunRepository",
+    "PublishedArtifactReader",
     "WatchlistRepository",
     "TradingCalendar",
 ]
@@ -133,8 +134,20 @@ class RunRepository(Protocol):
 
     def checkpoint(self, run_id: str, checkpoint: RunCheckpoint) -> None: ...
 
+    def stage_artifact(self, run_id: str, artifact_name: str, payload: bytes) -> str: ...
+
+    def read_staged_artifact(self, run_id: str, artifact_name: str) -> bytes | None: ...
+
     def freeze_evidence(self, run_id: str, cutoff_at: datetime) -> StoredRun: ...
 
     def publish_atomically(self, bundle: PublishedRunBundle) -> PublishedArtifact: ...
 
     def get_latest(self, market_date: date) -> str | None: ...
+
+
+class PublishedArtifactReader(Protocol):
+    """Read-only boundary for replaying an indexed immutable publication."""
+
+    def load_published_bundle(self, run_id: str) -> PublishedRunBundle | None: ...
+
+    def get_report(self, run_id: str) -> str | None: ...
