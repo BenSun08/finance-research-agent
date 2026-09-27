@@ -2573,11 +2573,14 @@ Expected: all plan artifacts remain conditional research records.
         metrics: Sequence[MetricResult],
         gates: Sequence[GateResult],
         candidates: Sequence[SetupCandidate],
+        exclusions: Sequence[CandidateExclusion],
         plans: Sequence[TradePlanDraft],
         capabilities: Sequence[CapabilityState],
         observations: Sequence[PlanObservation],
         max_serialized_bytes: int,
     ) -> ResearchPacket
+
+`ResearchPacket.candidate_exclusions` is an immutable tuple copied from the supplied R6 exclusions in their deterministic input order. Preserve each exclusion's symbol, optional setup type, reason codes, and gates exactly. Candidate exclusions are protected from trimming; if protected packet content exceeds `max_serialized_bytes`, raise `PacketBudgetExceeded`. R8 must not infer, rank, or rewrite exclusions. This input and packet field provide the frozen data needed for the Product A `Blocked and Excluded Candidates` section and the requirement that every watchlist name remain visible with a concise state or exclusion reason (spec section 19.2).
 
     def validate_research_brief(
         packet: ResearchPacket,

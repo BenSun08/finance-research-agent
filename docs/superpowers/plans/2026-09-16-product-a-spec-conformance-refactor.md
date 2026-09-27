@@ -635,14 +635,16 @@ Adapters and surfaces: constrained HTTP, official evidence adapters, broader Alp
 
 **Public contracts:** `ResearchPacket`, `ResearchBriefDraft`, `Claim`, `ValidationIssue`, `ValidationReport`, packet builder, brief validator.
 
+**R8 spec/plan interface correction required by Product A spec §19.2:** The Product A spec requires every watchlist name to remain visible with a concise state or exclusion reason, while R6 already produces `CandidateExclusion` records. The original R8 packet-builder contract did not carry those records into `ResearchPacket`, so the §19.2 requirement could not be met at the synthesis boundary. To make R8 conform to the spec, the packet builder accepts the frozen R6 exclusions as `exclusions: Sequence[CandidateExclusion]`; `ResearchPacket` stores them as immutable `candidate_exclusions: tuple[CandidateExclusion, ...]`. Copy every supplied exclusion with its symbol, optional setup type, reason codes, and gates intact, preserving the deterministic R6 input order. Candidate exclusions are protected packet content and are never trimmed. If protected content alone exceeds the packet budget, fail with the packet budget error. Do not infer, rank, or rewrite exclusions in R8.
+
 **Tests first:** deep immutability/stable hash; post-cutoff rejection; protected trimming order; packet budget failure; exact sections; numeric/unit equality; evidence relevance/reachability; counter-evidence; IEX language; disabled-capability disclosure; imperative/prohibited states; repair attempts 1-3; inert prompt injection.
 
 **Implementation steps:**
 
-- [ ] Build one canonical packet from frozen run/evidence/deterministic outputs.
-- [ ] Implement deterministic size budgeting that never removes risks/provenance/gates.
-- [ ] Add one canonical prompt source and independent digest.
-- [ ] Implement schema-first structured validation with no fuzzy numeric truth.
+- [x] Build one canonical packet from frozen run/evidence/deterministic outputs.
+- [x] Implement deterministic size budgeting that never removes risks/provenance/gates.
+- [x] Add one canonical prompt source and independent digest.
+- [x] Implement schema-first structured validation with no fuzzy numeric truth.
 
 **Migration compatibility:** generic `FinalAnswer`/`ModelResponse` remain unchanged but are not accepted as Product A drafts.
 
