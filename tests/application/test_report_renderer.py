@@ -1,5 +1,6 @@
 from finance_research_agent.application.report_renderer import render_markdown_report
-from finance_research_agent.domain.validation import validate_research_brief
+from finance_research_agent.domain.enums import ValidationCode, ValidationSeverity
+from finance_research_agent.domain.validation import ValidationIssue, validate_research_brief
 
 
 def test_report_renderer_is_deterministic_and_keeps_validated_sections_and_citations(
@@ -52,3 +53,32 @@ def test_report_renderer_rejects_an_invalid_draft(
         assert "only a valid draft can be rendered" in str(error)
     else:
         raise AssertionError("invalid drafts must not render")
+
+
+def test_report_renderer_rejects_a_forged_validation_issue(
+    valid_packet, valid_brief_draft
+) -> None:
+    validation = validate_research_brief(
+        valid_packet, valid_brief_draft, validation_attempt=1
+    )
+    forged = validation.model_copy(
+        update={
+            "issues": (
+                ValidationIssue(
+                    issue_id="forged-warning",
+                    code=ValidationCode.TEXT_LIMIT_EXCEEDED,
+                    severity=ValidationSeverity.WARNING,
+                    json_pointer="/claims/0/text",
+                    message="unverified warning",
+                    related_evidence_ids=(),
+                ),
+            )
+        }
+    )
+
+    try:
+        render_markdown_report(valid_packet, valid_brief_draft, forged)
+    except ValueError as error:
+        assert "does not match deterministic validation" in str(error)
+    else:
+        raise AssertionError("a caller-forged validation report must not render")

@@ -113,3 +113,15 @@ def test_replay_rejects_report_bytes_that_disagree_with_the_frozen_bundle(
 
     with pytest.raises(ValueError, match="report bytes do not match the frozen bundle"):
         replay_published_artifact(reader, bundle.run.run_id, _versions(bundle.run))
+
+
+def test_replay_rejects_a_bundle_stored_under_another_run_id(valid_packet) -> None:
+    bundle, report = _published_fixture(valid_packet)
+    other_run = bundle.run.model_copy(
+        update={"run_id": "premarket-2026-08-27-r1", "market_date": bundle.run.market_date}
+    )
+    other_bundle = bundle.model_copy(update={"run": other_run})
+    reader = _Reader(other_bundle, report)
+
+    with pytest.raises(ValueError, match="run ID does not match"):
+        replay_published_artifact(reader, bundle.run.run_id, _versions(bundle.run))
