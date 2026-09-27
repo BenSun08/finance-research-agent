@@ -1,7 +1,6 @@
 import json
 from datetime import UTC, datetime
 from hashlib import sha256
-from importlib import import_module
 
 import pytest
 
@@ -9,6 +8,10 @@ from finance_research_agent.application.operational_report import render_operati
 from finance_research_agent.application.reduced_report import (
     render_reduced_report,
     render_reduced_report_base,
+)
+from finance_research_agent.application.replay_service import (
+    ArtifactNotFoundError,
+    replay_published_artifact,
 )
 from finance_research_agent.application.report_renderer import render_markdown_report
 from finance_research_agent.domain.enums import (
@@ -25,27 +28,6 @@ from finance_research_agent.domain.models import (
 )
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 from finance_research_agent.domain.validation import validate_research_brief
-
-try:
-    replay_published_artifact = import_module(
-        "finance_research_agent.application.replay_service"
-    ).replay_published_artifact
-    ArtifactNotFoundError = import_module(
-        "finance_research_agent.application.replay_service"
-    ).ArtifactNotFoundError
-    ArtifactVersionMismatchError = import_module(
-        "finance_research_agent.application.replay_service"
-    ).ArtifactVersionMismatchError
-except (ImportError, AttributeError):
-
-    def replay_published_artifact(*args, **kwargs):
-        raise AssertionError("frozen-artifact replay is not implemented")
-
-    class ArtifactNotFoundError(RuntimeError):
-        pass
-
-    class ArtifactVersionMismatchError(RuntimeError):
-        pass
 
 
 class _Reader:
@@ -118,6 +100,7 @@ def test_replay_returns_the_frozen_bundle_without_collection_or_synthesis(
     assert result.json_matches and result.markdown_matches
     assert result.stored_json_sha256 == result.replayed_json_sha256
     assert result.stored_markdown_sha256 == result.replayed_markdown_sha256
+    assert result.component_version_mismatches == ()
     assert reader.calls == [
         f"bundle:{bundle.run.run_id}", f"report:{bundle.run.run_id}",
         f"artifact:{bundle.run.run_id}",
@@ -156,8 +139,11 @@ def test_replay_fails_closed_when_a_component_version_differs(
     reader = _Reader(bundle, report)
     current_versions = _versions(bundle.run).model_copy(update={field: replacement})
 
-    with pytest.raises(ArtifactVersionMismatchError, match=field):
-        replay_published_artifact(reader, bundle.run.run_id, current_versions)
+    result = replay_published_artifact(reader, bundle.run.run_id, current_versions)
+    assert result.component_version_mismatches == (field,)
+    assert result.json_matches
+    assert not result.markdown_matches
+    assert result.replayed_markdown_sha256 is None
 
 
 def test_replay_rejects_report_bytes_that_disagree_with_the_frozen_bundle(
@@ -354,10 +340,12 @@ def test_version_drift_is_reported_before_current_renderer_difference(
     })
     current = _versions(bundle.run).model_copy(update={"report_template_version": "0.2"})
 
-    with pytest.raises(ArtifactVersionMismatchError, match="report_template_version"):
-        replay_published_artifact(
-            _Reader(older_bundle, older_report), bundle.run.run_id, current
-        )
+    result = replay_published_artifact(
+        _Reader(older_bundle, older_report), bundle.run.run_id, current
+    )
+    assert result.component_version_mismatches == ("report_template_version",)
+    assert result.json_matches and not result.markdown_matches
+    assert result.replayed_markdown_sha256 is None
 
 
 def test_replay_rejects_indexed_json_digest_that_disagrees_with_bundle(

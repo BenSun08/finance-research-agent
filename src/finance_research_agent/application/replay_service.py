@@ -33,13 +33,13 @@ class ArtifactNotFoundError(LookupError):
     """Raised when a run has no complete indexed publication."""
 
 
-class ArtifactVersionMismatchError(ValueError):
-    """Raised when current component versions cannot replay a frozen artifact."""
-
-
 @dataclass(frozen=True, slots=True)
 class ArtifactReplayResult:
-    """Frozen bundle and indexed byte-identity evidence after verification."""
+    """Indexed hashes and replay result.
+
+    On version drift, ``markdown_matches=False`` means reconstruction was skipped;
+    ``replayed_markdown_sha256`` is absent rather than a measured mismatch.
+    """
 
     run_id: str
     bundle: PublishedRunBundle
@@ -49,7 +49,8 @@ class ArtifactReplayResult:
     stored_json_sha256: str
     replayed_json_sha256: str
     stored_markdown_sha256: str
-    replayed_markdown_sha256: str
+    replayed_markdown_sha256: str | None
+    component_version_mismatches: tuple[str, ...]
 
 
 def _recorded_versions(bundle: PublishedRunBundle) -> ComponentVersions:
@@ -196,8 +197,17 @@ def replay_published_artifact(
         raise ValueError("report bytes do not match the frozen bundle")
     mismatches = _version_mismatches(_recorded_versions(bundle), current_versions)
     if mismatches:
-        raise ArtifactVersionMismatchError(
-            "component versions differ from the frozen run: " + ", ".join(mismatches)
+        return ArtifactReplayResult(
+            run_id=run_id,
+            bundle=bundle,
+            report_markdown=report,
+            json_matches=True,
+            markdown_matches=False,
+            stored_json_sha256=artifact.bundle_sha256,
+            replayed_json_sha256=json_digest,
+            stored_markdown_sha256=artifact.markdown_sha256,
+            replayed_markdown_sha256=None,
+            component_version_mismatches=mismatches,
         )
     reconstructed = _reconstructed_report(bundle)
     replayed_markdown_digest = sha256(reconstructed.encode("utf-8")).hexdigest()
@@ -213,4 +223,5 @@ def replay_published_artifact(
         replayed_json_sha256=json_digest,
         stored_markdown_sha256=artifact.markdown_sha256,
         replayed_markdown_sha256=replayed_markdown_digest,
+        component_version_mismatches=(),
     )
