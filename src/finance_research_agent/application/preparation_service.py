@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 from finance_research_agent.application.ports import RunRepository
+from finance_research_agent.application.reduced_report import render_reduced_report_base
 from finance_research_agent.domain.enums import ExecutionStatus
 from finance_research_agent.domain.models import RunCheckpoint
 from finance_research_agent.domain.packets import ResearchPacket
@@ -69,7 +70,10 @@ def stage_research_packet(
 
     payload = _canonical_packet_bytes(packet)
     digest = repository.stage_artifact(packet.run.run_id, "research_packet", payload)
-    artifact_hashes = FrozenMap({"research_packet": digest})
+    reduced_digest = repository.stage_artifact(
+        packet.run.run_id, "reduced_report", render_reduced_report_base(packet)
+    )
+    artifact_hashes = FrozenMap({"research_packet": digest, "reduced_report": reduced_digest})
     if latest.stage in {
         ExecutionStatus.AWAITING_SYNTHESIS.value,
         ExecutionStatus.VALIDATING.value,
@@ -80,6 +84,7 @@ def stage_research_packet(
             or latest.delivery_status is not packet_context.delivery_status
             or latest.evidence_cutoff_at != packet_context.evidence_cutoff_at
             or latest.artifact_hashes.get("research_packet") != digest
+            or latest.artifact_hashes.get("reduced_report") != reduced_digest
             or latest.resumable
         ):
             raise ValueError("staged research packet differs from frozen checkpoint")

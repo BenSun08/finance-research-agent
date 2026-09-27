@@ -7,13 +7,18 @@ from threading import Barrier
 import pytest
 
 from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+from finance_research_agent.application import publication_service
 from finance_research_agent.application.packet_service import build_research_packet
 from finance_research_agent.application.preparation_service import stage_research_packet
 from finance_research_agent.application.publication_service import (
     publish_validated_brief,
     validate_staged_brief,
 )
-from finance_research_agent.domain.enums import ExecutionStatus
+from finance_research_agent.domain.enums import (
+    BriefOrigin,
+    DataQualityStatus,
+    ExecutionStatus,
+)
 from finance_research_agent.domain.models import RunCheckpoint
 from finance_research_agent.domain.types import FrozenMap
 
@@ -74,7 +79,41 @@ def test_validation_records_attempt_and_retry_without_using_repair(
     stored = repo.load(packet.run.run_id)
     assert stored is not None
     assert [c.stage for c in stored.checkpoints].count("VALIDATING") == 1
-    assert len(stored.checkpoints[-1].artifact_hashes) == 3
+    assert len(stored.checkpoints[-1].artifact_hashes) == 4
+    assert stored.checkpoints[-1].artifact_hashes["reduced_report"] == (
+        stored.checkpoints[-2].artifact_hashes["reduced_report"]
+    )
+
+
+def test_validation_checkpoint_cannot_drop_staged_reduced_report(
+    tmp_path, valid_packet
+):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None
+    packet_hash = stored.checkpoints[-1].artifact_hashes["research_packet"]
+    draft_hash = repo.stage_artifact(packet.run.run_id, "brief_draft_bad", b"{}")
+    report_hash = repo.stage_artifact(packet.run.run_id, "validation_report_bad", b"{}")
+
+    with pytest.raises(ValueError, match="EVIDENCE_CUTOFF_VIOLATION"):
+        repo.checkpoint(
+            packet.run.run_id,
+            RunCheckpoint(
+                run_id=packet.run.run_id,
+                stage="VALIDATING",
+                execution_status=ExecutionStatus.VALIDATING,
+                data_quality_status=packet.run.data_quality_status,
+                delivery_status=packet.run.delivery_status,
+                written_at=at + timedelta(seconds=1),
+                evidence_cutoff_at=packet.run.evidence_cutoff_at,
+                artifact_hashes=FrozenMap({
+                    "research_packet": packet_hash,
+                    "brief_draft_bad": draft_hash,
+                    "validation_report_bad": report_hash,
+                }),
+                resumable=False,
+            ),
+        )
 
 
 def test_validation_limits_repair_to_two_attempts(tmp_path, valid_packet, valid_brief_draft):
@@ -177,6 +216,182 @@ def test_invalid_attempt_cannot_publish(tmp_path, valid_packet, valid_brief_draf
         publish_validated_brief(repo, packet, at + timedelta(seconds=1))
     stored = repo.load(packet.run.run_id)
     assert stored is not None and stored.checkpoints[-1].stage == "VALIDATING"
+
+
+def test_reduced_report_publishes_from_awaiting_and_retries_exact_reason(
+    tmp_path, valid_packet
+):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+
+    artifact = publication_service.publish_reduced_report(
+        repo, packet, "SYNTHESIS_UNAVAILABLE", at + timedelta(seconds=1)
+    )
+
+    assert artifact.run_id == packet.run.run_id
+    report = repo.get_report(packet.run.run_id)
+    assert report is not None
+    assert "Fallback reason: SYNTHESIS_UNAVAILABLE" in report
+    assert "Brief origin: DETERMINISTIC_REDUCED" in report
+    assert "Execution status: PUBLISHED" in report
+    assert "## Executive Brief\n" in report
+    assert "## Detailed Report\n" in report
+    assert [line for line in report.splitlines() if line.startswith("### ")] == [
+        "### Run Status", "### Market Posture", "### What Changed",
+        "### Today’s Event Clock", "### Core Market Risks",
+        "### Watchlist Priorities", "### Trade Plan Drafts", "### Data Warnings",
+        "### Market Regime", "### Macro and Event Calendar", "### Broad-Market Radar",
+        "### Sector Rotation", "### Cross-Asset Risk Signals", "### Core Monitor",
+        "### Watchlist Dashboard", "### Eligible Setups", "### Trade Plan Drafts",
+        "### Blocked and Excluded Candidates", "### Changes Since Prior Run",
+        "### Data Quality and Limitations", "### Evidence Index",
+        "### Methodology and Risk Notice",
+    ]
+    bundle = repo.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    assert bundle.model_dump(mode="json")["bundle"]["reduced_report_reason"] == (
+        "SYNTHESIS_UNAVAILABLE"
+    )
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None and stored.published
+    assert stored.checkpoints[-1].stage == "PUBLISHED"
+    assert publication_service.publish_reduced_report(
+        repo, packet, "SYNTHESIS_UNAVAILABLE", at + timedelta(seconds=2)
+    ) == artifact
+    with pytest.raises(ValueError, match="reason"):
+        publication_service.publish_reduced_report(
+            repo, packet, "SYNTHESIS_TIMEOUT", at + timedelta(seconds=2)
+        )
+    with pytest.raises(ValueError, match="origin|recorded attempt"):
+        publish_validated_brief(repo, packet, at + timedelta(seconds=2))
+
+
+def test_reduced_report_requires_exhausted_invalid_repairs(
+    tmp_path, valid_packet, valid_brief_draft
+):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    with pytest.raises(ValueError, match="repair"):
+        publication_service.publish_reduced_report(
+            repo, packet, "VALIDATION_REPAIR_EXHAUSTED", at + timedelta(seconds=1)
+        )
+    for attempt in range(1, 4):
+        bad = valid_brief_draft.model_copy(
+            update={"run_id": f"premarket-2026-01-01-r{attempt + 1}"}
+        )
+        validate_staged_brief(repo, packet, bad, at + timedelta(seconds=attempt))
+    with pytest.raises(ValueError, match="reason|exhausted"):
+        publication_service.publish_reduced_report(
+            repo, packet, "SYNTHESIS_UNAVAILABLE", at + timedelta(seconds=4)
+        )
+    artifact = publication_service.publish_reduced_report(
+        repo, packet, "VALIDATION_REPAIR_EXHAUSTED", at + timedelta(seconds=4)
+    )
+    assert artifact.run_id == packet.run.run_id
+    bundle = repo.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    assert len(bundle.model_dump(mode="json")["bundle"]["validation_reports"]) == 3
+
+
+def test_validation_rejects_caller_supplied_reduced_origin(
+    tmp_path, valid_packet, valid_brief_draft
+):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    forged = valid_brief_draft.model_copy(update={"origin": BriefOrigin.DETERMINISTIC_REDUCED})
+    with pytest.raises(ValueError, match="origin"):
+        validate_staged_brief(repo, packet, forged, at)
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None and stored.checkpoints[-1].stage == "AWAITING_SYNTHESIS"
+
+
+def test_reduced_report_blocks_every_frozen_plan_without_copying_thesis(
+    tmp_path, valid_packet, valid_trade_plan
+):
+    plan = valid_trade_plan.model_copy(
+        update={
+            "run_id": valid_packet.run.run_id,
+            "evidence_cutoff_at": valid_packet.run.evidence_cutoff_at,
+        }
+    )
+    with_plan = build_research_packet(
+        run=valid_packet.run,
+        evidence=valid_packet.evidence,
+        snapshots=valid_packet.market,
+        events=valid_packet.events,
+        metrics=valid_packet.metrics,
+        gates=valid_packet.gates,
+        candidates=valid_packet.candidates,
+        exclusions=valid_packet.candidate_exclusions,
+        plans=(plan,),
+        capabilities=valid_packet.capability_states,
+        observations=valid_packet.prior_plan_observations,
+        max_serialized_bytes=250_000,
+    )
+    repo, packet, at = _prepared(tmp_path, with_plan)
+
+    publication_service.publish_reduced_report(
+        repo, packet, "SYNTHESIS_TIMEOUT", at + timedelta(seconds=1)
+    )
+
+    bundle = repo.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    reduced_plans = bundle.model_dump(mode="json")["bundle"]["reduced_plans"]
+    assert reduced_plans == [
+        {"plan_id": plan.plan_id, "status": "BLOCKED", "reason": "SYNTHESIS_TIMEOUT"}
+    ]
+    report = repo.get_report(packet.run.run_id)
+    assert report is not None
+    assert f"({plan.symbol}): BLOCKED for reduced-report review" in report
+    assert plan.thesis not in report
+
+
+def test_reduced_publication_retries_after_pre_rename_failure(tmp_path, valid_packet):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    repo.inject_failure_before_rename = True
+    with pytest.raises(Exception, match="injected failure"):
+        publication_service.publish_reduced_report(
+            repo, packet, "SYNTHESIS_TIMEOUT", at + timedelta(seconds=1)
+        )
+    assert repo.get_report(packet.run.run_id) is None
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None and stored.checkpoints[-1].stage == "PUBLISHED"
+    with pytest.raises(ValueError, match="reason"):
+        publication_service.publish_reduced_report(
+            repo, packet, "SYNTHESIS_UNAVAILABLE", at + timedelta(seconds=2)
+        )
+
+    repo.inject_failure_before_rename = False
+    artifact = publication_service.publish_reduced_report(
+        repo, packet, "SYNTHESIS_TIMEOUT", at + timedelta(seconds=2)
+    )
+
+    assert artifact.run_id == packet.run.run_id
+    assert repo.get_report(packet.run.run_id) is not None
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None and [c.stage for c in stored.checkpoints].count("PUBLISHED") == 1
+
+
+def test_reduced_report_rejects_global_fail_quality(tmp_path, valid_packet):
+    failed_run = valid_packet.run.model_copy(
+        update={"data_quality_status": DataQualityStatus.FAIL}
+    )
+    failed_packet = build_research_packet(
+        run=failed_run,
+        evidence=valid_packet.evidence,
+        snapshots=valid_packet.market,
+        events=valid_packet.events,
+        metrics=valid_packet.metrics,
+        gates=valid_packet.gates,
+        candidates=valid_packet.candidates,
+        exclusions=valid_packet.candidate_exclusions,
+        plans=valid_packet.deterministic_plan_inputs,
+        capabilities=valid_packet.capability_states,
+        observations=valid_packet.prior_plan_observations,
+        max_serialized_bytes=250_000,
+    )
+    repo, packet, at = _prepared(tmp_path, failed_packet)
+    with pytest.raises(ValueError, match="operational|FAIL"):
+        publication_service.publish_reduced_report(
+            repo, packet, "SYNTHESIS_UNAVAILABLE", at + timedelta(seconds=1)
+        )
 
 
 def test_publication_retries_after_atomic_failure(tmp_path, valid_packet, valid_brief_draft):

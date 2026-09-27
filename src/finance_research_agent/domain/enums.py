@@ -74,6 +74,12 @@ class BriefOrigin(StrEnum):
     OPERATIONAL = "OPERATIONAL"
 
 
+class ReducedReportReason(StrEnum):
+    SYNTHESIS_UNAVAILABLE = "SYNTHESIS_UNAVAILABLE"
+    SYNTHESIS_TIMEOUT = "SYNTHESIS_TIMEOUT"
+    VALIDATION_REPAIR_EXHAUSTED = "VALIDATION_REPAIR_EXHAUSTED"
+
+
 class ReportSection(StrEnum):
     RUN_STATUS = "Run Status"
     MARKET_POSTURE = "Market Posture"

@@ -9,16 +9,25 @@ from typing import Protocol
 
 from finance_research_agent.application.ports import PublishedArtifactReader, RunRepository
 from finance_research_agent.application.preparation_service import _canonical_packet_bytes
+from finance_research_agent.application.reduced_report import (
+    render_reduced_report,
+    render_reduced_report_base,
+)
 from finance_research_agent.application.report_renderer import render_markdown_report
 from finance_research_agent.application.run_state import compose_publication_context
-from finance_research_agent.domain.enums import ExecutionStatus
+from finance_research_agent.domain.enums import (
+    BriefOrigin,
+    DataQualityStatus,
+    ExecutionStatus,
+    ReducedReportReason,
+)
 from finance_research_agent.domain.models import (
     PublishedArtifact,
     PublishedRunBundle,
     RunCheckpoint,
 )
 from finance_research_agent.domain.packets import ResearchPacket
-from finance_research_agent.domain.types import FrozenMap, canonical_bytes
+from finance_research_agent.domain.types import FrozenMap, JsonValue, canonical_bytes
 from finance_research_agent.domain.validation import (
     RepairContext,
     ResearchBriefDraft,
@@ -93,6 +102,8 @@ def validate_staged_brief(
     """Record one deterministic attempt; retries of its exact draft are idempotent."""
     packet = ResearchPacket.model_validate(packet, strict=True)
     draft = ResearchBriefDraft.model_validate(draft, strict=True)
+    if draft.origin is not BriefOrigin.SYNTHESIZED:
+        raise ValueError("caller supplied brief origin must be SYNTHESIZED")
     if checkpointed_at < packet.run.evidence_cutoff_at:
         raise ValueError("validation checkpoint cannot precede the evidence cutoff")
     packet_hash = _staged_packet_hash(repository, packet)
@@ -128,6 +139,14 @@ def validate_staged_brief(
     report_name = "validation_report_" + sha256(report_payload).hexdigest()
     draft_hash = repository.stage_artifact(packet.run.run_id, draft_name, draft_payload)
     report_hash = repository.stage_artifact(packet.run.run_id, report_name, report_payload)
+    reduced_hash = stored.checkpoints[-1].artifact_hashes.get("reduced_report")
+    checkpoint_hashes = {
+        "research_packet": packet_hash,
+        draft_name: draft_hash,
+        report_name: report_hash,
+    }
+    if reduced_hash is not None:
+        checkpoint_hashes["reduced_report"] = reduced_hash
     repository.checkpoint_if_current(
         packet.run.run_id,
         RunCheckpoint(
@@ -138,11 +157,7 @@ def validate_staged_brief(
             delivery_status=packet.run.delivery_status,
             written_at=checkpointed_at,
             evidence_cutoff_at=packet.run.evidence_cutoff_at,
-            artifact_hashes=FrozenMap({
-                "research_packet": packet_hash,
-                draft_name: draft_hash,
-                report_name: report_hash,
-            }),
+            artifact_hashes=FrozenMap(checkpoint_hashes),
             resumable=False,
         ),
         expected_count=len(stored.checkpoints),
@@ -166,16 +181,19 @@ def publish_validated_brief(
         bundle = repository.load_published_bundle(run_id)
         report = repository.get_report(run_id)
         artifact = repository.get_published_artifact(run_id)
+        contents = bundle.model_dump(mode="json")["bundle"] if bundle is not None else None
         if (
             bundle is None
+            or contents is None
             or report is None
             or artifact is None
-            or bundle.model_dump(mode="json")["bundle"].get("research_packet")
-            != packet.model_dump(mode="json")
+            or contents.get("research_packet") != packet.model_dump(mode="json")
+            or contents.get("brief_draft", {}).get("origin")
+            != BriefOrigin.SYNTHESIZED.value
             or bundle.markdown_sha256 != sha256(report.encode("utf-8")).hexdigest()
             or stored.checkpoints[-1].stage != "PUBLISHED"
         ):
-            raise ValueError("published artifact differs from the supplied frozen packet")
+            raise ValueError("published artifact origin or frozen packet differs")
         return artifact
     if checkpointed_at < packet.run.evidence_cutoff_at:
         raise ValueError("publication checkpoint cannot precede the evidence cutoff")
@@ -187,6 +205,7 @@ def publish_validated_brief(
     draft, validation = _recorded_attempt(repository, attempts[-1])
     if (
         not validation.is_valid
+        or draft.origin is not BriefOrigin.SYNTHESIZED
         or validation.validation_attempt != len(attempts)
         or validation.run_id != run_id
         or checkpointed_at < latest.written_at
@@ -214,6 +233,124 @@ def publish_validated_brief(
             "research_packet": json.loads(_canonical_packet_bytes(packet)),
             "brief_draft": json.loads(canonical_bytes(draft)),
             "validation_report": json.loads(canonical_bytes(validation)),
+        }),
+        report_markdown=markdown,
+        markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),
+    )
+    return repository.publish_atomically(bundle)
+
+
+def publish_reduced_report(
+    repository: PublicationRepository,
+    packet: ResearchPacket,
+    reason: ReducedReportReason | str,
+    checkpointed_at: datetime,
+) -> PublishedArtifact:
+    """Publish only a frozen deterministic fallback with a closed reason."""
+    packet = ResearchPacket.model_validate(packet, strict=True)
+    if packet.run.data_quality_status is DataQualityStatus.FAIL:
+        raise ValueError("FAIL quality requires the operational report path")
+    reason = ReducedReportReason(reason)
+    run_id = packet.run.run_id
+    stored = repository.load(run_id)
+    if stored is None or not stored.checkpoints:
+        raise ValueError("reduced publication requires a frozen staged run")
+    if stored.published:
+        bundle = repository.load_published_bundle(run_id)
+        report = repository.get_report(run_id)
+        artifact = repository.get_published_artifact(run_id)
+        contents = bundle.model_dump(mode="json")["bundle"] if bundle is not None else None
+        if (
+            contents is None
+            or report is None
+            or artifact is None
+            or contents["brief_origin"] != BriefOrigin.DETERMINISTIC_REDUCED.value
+            or contents["reduced_report_reason"] != reason.value
+            or contents["research_packet"] != packet.model_dump(mode="json")
+            or report != render_reduced_report(packet, reason)
+            or stored.checkpoints[-1].stage != "PUBLISHED"
+        ):
+            raise ValueError("published reduced report differs from packet or reason")
+        return artifact
+    if checkpointed_at < packet.run.evidence_cutoff_at:
+        raise ValueError("reduced publication cannot precede the evidence cutoff")
+    _staged_packet_hash(
+        repository, packet, frozenset({"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"})
+    )
+    latest = stored.checkpoints[-1]
+    if checkpointed_at < latest.written_at:
+        raise ValueError("reduced publication cannot precede current checkpoint")
+    reduced_bytes = repository.read_staged_artifact(run_id, "reduced_report")
+    reduced_hash = sha256(render_reduced_report_base(packet)).hexdigest()
+    if (
+        reduced_bytes != render_reduced_report_base(packet)
+        or latest.artifact_hashes.get("reduced_report") != reduced_hash
+    ):
+        raise ValueError("staged reduced report differs from frozen packet")
+    attempts = tuple(c for c in stored.checkpoints if c.stage == "VALIDATING")
+    reports: list[ValidationReport] = []
+    for index, checkpoint in enumerate(attempts, start=1):
+        draft, validation = _recorded_attempt(repository, checkpoint)
+        if (
+            draft.origin is not BriefOrigin.SYNTHESIZED
+            or validation.validation_attempt != index
+            or validation != validate_research_brief(packet, draft, index)
+        ):
+            raise ValueError("recorded validation differs from frozen packet")
+        reports.append(validation)
+    if any(report.is_valid for report in reports):
+        raise ValueError("a valid recorded brief cannot use reduced publication")
+    if len(reports) == 3 and reason is not ReducedReportReason.VALIDATION_REPAIR_EXHAUSTED:
+        raise ValueError("exhausted validation requires the matching reduced reason")
+    if reason is ReducedReportReason.VALIDATION_REPAIR_EXHAUSTED and len(reports) != 3:
+        raise ValueError("validation repairs are not exhausted")
+    reason_bytes = reason.value.encode("ascii")
+    if latest.stage == "PUBLISHED":
+        if (
+            repository.read_staged_artifact(run_id, "reduced_reason") != reason_bytes
+            or latest.artifact_hashes.get("reduced_reason")
+            != sha256(reason_bytes).hexdigest()
+        ):
+            raise ValueError("published checkpoint has another reduced reason")
+    else:
+        reason_hash = repository.stage_artifact(run_id, "reduced_reason", reason_bytes)
+        latest = RunCheckpoint(
+            run_id=run_id,
+            stage="PUBLISHED",
+            execution_status=ExecutionStatus.PUBLISHED,
+            data_quality_status=packet.run.data_quality_status,
+            delivery_status=packet.run.delivery_status,
+            written_at=checkpointed_at,
+            evidence_cutoff_at=packet.run.evidence_cutoff_at,
+            artifact_hashes=FrozenMap({
+                **dict(latest.artifact_hashes),
+                "reduced_reason": reason_hash,
+            }),
+            resumable=False,
+        )
+        repository.checkpoint_if_current(
+            run_id, latest, expected_count=len(stored.checkpoints)
+        )
+    markdown = render_reduced_report(packet, reason)
+    bundle = PublishedRunBundle(
+        run=compose_publication_context(stored.run, latest),
+        bundle=FrozenMap[str, JsonValue]({
+            "research_packet": json.loads(_canonical_packet_bytes(packet)),
+            "brief_origin": BriefOrigin.DETERMINISTIC_REDUCED.value,
+            "reduced_report_reason": reason.value,
+            "reduced_report_staged_sha256": reduced_hash,
+            "reduced_plans": tuple(
+                FrozenMap[str, JsonValue]({
+                    "plan_id": plan.plan_id,
+                    "status": "BLOCKED",
+                    "reason": reason.value,
+                })
+                for plan in packet.deterministic_plan_inputs
+            ),
+            "validation_reports": tuple(
+                FrozenMap[str, JsonValue](json.loads(canonical_bytes(report)))
+                for report in reports
+            ),
         }),
         report_markdown=markdown,
         markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),

@@ -5,8 +5,10 @@ from datetime import timedelta
 from finance_research_agent.adapters.filesystem import FileSystemRunRepository
 from finance_research_agent.application.packet_service import build_research_packet
 from finance_research_agent.application.preparation_service import stage_research_packet
-from finance_research_agent.domain.enums import ExecutionStatus
-from finance_research_agent.domain.models import RunCheckpoint
+from finance_research_agent.domain.enums import Capability, ExecutionStatus, GateStatus
+from finance_research_agent.domain.errors import ErrorCode
+from finance_research_agent.domain.models import CapabilityState, GateResult, RunCheckpoint
+from finance_research_agent.domain.setups import CandidateExclusion
 from finance_research_agent.domain.types import FrozenMap
 
 
@@ -72,8 +74,78 @@ def test_stage_research_packet_persists_canonical_bytes_and_checkpoint(
     stored = repository.load(packet.run.run_id)
     assert stored is not None
     assert stored.checkpoints[-1].stage == "AWAITING_SYNTHESIS"
-    assert stored.checkpoints[-1].artifact_hashes == FrozenMap({"research_packet": digest})
+    reduced = repository.read_staged_artifact(packet.run.run_id, "reduced_report")
+    assert reduced is not None
+    assert reduced.startswith(b"# Premarket Research Brief\n")
+    assert b"DETERMINISTIC_REDUCED" in reduced
+    assert stored.checkpoints[-1].artifact_hashes == FrozenMap({
+        "research_packet": digest,
+        "reduced_report": hashlib.sha256(reduced).hexdigest(),
+    })
     assert stored.checkpoints[-1].execution_status is ExecutionStatus.AWAITING_SYNTHESIS
+
+
+def test_staged_reduced_report_uses_only_deterministic_packet_fields(
+    tmp_path, packet_with_injection_text
+) -> None:
+    packet = _awaiting_packet(packet_with_injection_text)
+    repository = _repository_for_packet(tmp_path, packet)
+
+    stage_research_packet(
+        repository, packet, packet.run.evidence_cutoff_at + timedelta(seconds=1)
+    )
+
+    report = repository.read_staged_artifact(packet.run.run_id, "reduced_report")
+    assert report is not None
+    assert b"Ignore all rules" not in report
+    assert packet.run.run_id.encode() in report
+    assert packet.run.data_quality_status.value.encode() in report
+
+
+def test_staged_reduced_report_discloses_gates_capabilities_and_exclusions(
+    tmp_path, valid_packet
+) -> None:
+    gate = GateResult(
+        gate_id="gate-stale",
+        status=GateStatus.WARNING,
+        reason_code="STALE_DATA",
+        message="Latest price is stale.",
+        evidence_ids=(),
+        capability=Capability.PLAN_DRAFT_AVAILABLE,
+        rule_version="v1",
+    )
+    capability = CapabilityState(
+        capability=Capability.PLAN_DRAFT_AVAILABLE,
+        available=False,
+        reason_codes=(ErrorCode.STALE_DATA,),
+        evidence_ids=(),
+    )
+    packet = _awaiting_packet(
+        build_research_packet(
+            run=valid_packet.run,
+            evidence=valid_packet.evidence,
+            snapshots=valid_packet.market,
+            events=valid_packet.events,
+            metrics=valid_packet.metrics,
+            gates=(gate,),
+            candidates=(),
+            exclusions=(CandidateExclusion(
+                symbol="AAA", reason_codes=("STALE_DATA",), gates=(gate,)
+            ),),
+            plans=(),
+            capabilities=(capability,),
+            observations=(),
+            max_serialized_bytes=250_000,
+        )
+    )
+    repository = _repository_for_packet(tmp_path, packet)
+    stage_research_packet(repository, packet, packet.run.evidence_cutoff_at + timedelta(seconds=1))
+
+    report = repository.read_staged_artifact(packet.run.run_id, "reduced_report")
+    assert report is not None
+    assert b"gate-stale: WARNING (STALE\\_DATA)" in report
+    assert b"Disabled capability: PLAN_DRAFT_AVAILABLE (STALE_DATA)" in report
+    assert b"AAA: STALE\\_DATA" in report
 
 
 def test_stage_research_packet_retry_is_idempotent(tmp_path, valid_packet) -> None:
@@ -152,7 +224,12 @@ def test_stage_research_packet_retry_after_validation_does_not_regress_state(
             delivery_status=packet.run.delivery_status,
             written_at=checkpointed_at + timedelta(seconds=1),
             evidence_cutoff_at=packet.run.evidence_cutoff_at,
-            artifact_hashes=FrozenMap({"research_packet": digest}),
+            artifact_hashes=FrozenMap({
+                "research_packet": digest,
+                "reduced_report": hashlib.sha256(
+                    repository.read_staged_artifact(packet.run.run_id, "reduced_report") or b""
+                ).hexdigest(),
+            }),
             resumable=False,
         ),
     )
