@@ -35,6 +35,7 @@ __all__ = [
     "HistoricalBarsFetcher",
     "MarketDataProvider",
     "RunRepository",
+    "PublishedArtifactReader",
     "WatchlistRepository",
     "TradingCalendar",
 ]
@@ -138,3 +139,11 @@ class RunRepository(Protocol):
     def publish_atomically(self, bundle: PublishedRunBundle) -> PublishedArtifact: ...
 
     def get_latest(self, market_date: date) -> str | None: ...
+
+
+class PublishedArtifactReader(Protocol):
+    """Read-only boundary for replaying an indexed immutable publication."""
+
+    def load_published_bundle(self, run_id: str) -> PublishedRunBundle | None: ...
+
+    def get_report(self, run_id: str) -> str | None: ...
