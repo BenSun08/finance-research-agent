@@ -436,6 +436,19 @@ class FileSystemRunRepository:
         with self._run_lock(market_date):
             self._checkpoint_unlocked(run_id, checkpoint)
 
+    def checkpoint_if_current(
+        self, run_id: str, checkpoint: RunCheckpoint, expected_count: int
+    ) -> None:
+        """Append only against the observed checkpoint generation."""
+        market_date, _ = self._validated_run_id(run_id)
+        if type(expected_count) is not int or expected_count < 0:
+            raise ValueError("expected checkpoint count must be nonnegative")
+        with self._run_lock(market_date):
+            stored = self.load(run_id)
+            if stored is None or stored.published or len(stored.checkpoints) != expected_count:
+                raise ValueError("checkpoint state changed; retry from current run")
+            self._checkpoint_unlocked(run_id, checkpoint)
+
     def _checkpoint_unlocked(self, run_id: str, checkpoint: RunCheckpoint) -> None:
         staging, _, _ = self._paths(run_id)
         if checkpoint.run_id != run_id:
@@ -736,9 +749,11 @@ class FileSystemRunRepository:
                 index_bytes = None
             if index_bytes is not None:
                 index_payload = json.loads(index_bytes)
+            published_at = datetime.now(UTC)
             index_payload[bundle.run.run_id] = {
                 "bundle_sha256": bundle_sha256,
                 "markdown_sha256": markdown_sha256,
+                "published_at": published_at.isoformat(),
             }
             latest_run_id = max(
                 index_payload,
@@ -772,8 +787,29 @@ class FileSystemRunRepository:
             run_id=bundle.run.run_id,
             bundle_sha256=bundle_sha256,
             markdown_sha256=markdown_sha256,
-            published_at=datetime.now(UTC),
+            published_at=published_at,
         )
+
+    def get_published_artifact(self, run_id: str) -> PublishedArtifact | None:
+        """Return the indexed publication receipt only while its bytes remain valid."""
+        _, final, index_path, _ = self._publication_paths(run_id)
+        if self._published_payloads(run_id, final) is None:
+            return None
+        try:
+            index = json.loads(self._read_confined(index_path.parent, index_path.name))
+            entry = index[run_id]
+            return PublishedArtifact(
+                run_id=run_id,
+                bundle_sha256=entry["bundle_sha256"],
+                markdown_sha256=entry["markdown_sha256"],
+                published_at=datetime.fromisoformat(entry["published_at"]),
+            )
+        except FileNotFoundError:
+            return None
+        except PathNotAllowedError:
+            raise
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
 
     def get_latest(self, market_date: date) -> str | None:
         report_root = self._safe_path(

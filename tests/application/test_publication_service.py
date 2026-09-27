@@ -1,6 +1,8 @@
 """Checkpointed brief validation and publication from one frozen packet."""
 
-from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
+from threading import Barrier
 
 import pytest
 
@@ -88,6 +90,42 @@ def test_validation_limits_repair_to_two_attempts(tmp_path, valid_packet, valid_
         validate_staged_brief(repo, packet, valid_brief_draft, at + timedelta(seconds=4))
 
 
+def test_concurrent_validation_cannot_record_duplicate_attempts(
+    tmp_path, valid_packet, valid_brief_draft
+):
+    barrier = Barrier(2)
+
+    class ContendedRepository(FileSystemRunRepository):
+        def stage_artifact(self, run_id, artifact_name, payload):
+            digest = super().stage_artifact(run_id, artifact_name, payload)
+            if artifact_name.startswith("validation_report_"):
+                barrier.wait(timeout=5)
+            return digest
+
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    contended = ContendedRepository(tmp_path)
+    drafts = tuple(
+        valid_brief_draft.model_copy(
+            update={"run_id": f"premarket-2026-01-01-r{revision}"}
+        )
+        for revision in (2, 3)
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(validate_staged_brief, contended, packet, draft, at)
+            for draft in drafts
+        ]
+        outcomes = []
+        for future in futures:
+            try:
+                outcomes.append(future.result())
+            except ValueError:
+                outcomes.append(None)
+    assert sum(outcome is not None for outcome in outcomes) == 1
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None and [c.stage for c in stored.checkpoints].count("VALIDATING") == 1
+
+
 def test_publication_requires_valid_recorded_attempt_and_is_replayable(
     tmp_path, valid_packet, valid_brief_draft
 ):
@@ -100,9 +138,11 @@ def test_publication_requires_valid_recorded_attempt_and_is_replayable(
     report, _ = validate_staged_brief(repo, packet, draft, at)
     assert report.is_valid
 
+    before_publication = datetime.now(UTC)
     artifact = publish_validated_brief(repo, packet, at + timedelta(seconds=1))
 
     assert artifact.run_id == packet.run.run_id
+    assert artifact.published_at >= before_publication
     stored = repo.load(packet.run.run_id)
     assert stored is not None and stored.published
     assert stored.checkpoints[-1].stage == "PUBLISHED"

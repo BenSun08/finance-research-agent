@@ -31,6 +31,8 @@ from finance_research_agent.domain.validation import (
 class PublicationRepository(RunRepository, PublishedArtifactReader, Protocol):
     """Staged-write and published-read ports required for idempotent publication."""
 
+    def get_published_artifact(self, run_id: str) -> PublishedArtifact | None: ...
+
 
 def _staged_packet_hash(
     repository: RunRepository,
@@ -124,7 +126,7 @@ def validate_staged_brief(
     report_name = "validation_report_" + sha256(report_payload).hexdigest()
     draft_hash = repository.stage_artifact(packet.run.run_id, draft_name, draft_payload)
     report_hash = repository.stage_artifact(packet.run.run_id, report_name, report_payload)
-    repository.checkpoint(
+    repository.checkpoint_if_current(
         packet.run.run_id,
         RunCheckpoint(
             run_id=packet.run.run_id,
@@ -141,6 +143,7 @@ def validate_staged_brief(
             }),
             resumable=False,
         ),
+        expected_count=len(stored.checkpoints),
     )
     repair = create_repair_context(packet, report) if report.repairable else None
     return report, repair
@@ -160,21 +163,18 @@ def publish_validated_brief(
     if stored.published:
         bundle = repository.load_published_bundle(run_id)
         report = repository.get_report(run_id)
+        artifact = repository.get_published_artifact(run_id)
         if (
             bundle is None
             or report is None
+            or artifact is None
             or bundle.model_dump(mode="json")["bundle"].get("research_packet")
             != packet.model_dump(mode="json")
             or bundle.markdown_sha256 != sha256(report.encode("utf-8")).hexdigest()
             or stored.checkpoints[-1].stage != "PUBLISHED"
         ):
             raise ValueError("published artifact differs from the supplied frozen packet")
-        return PublishedArtifact(
-            run_id=run_id,
-            bundle_sha256=sha256(canonical_bytes(bundle)).hexdigest(),
-            markdown_sha256=bundle.markdown_sha256,
-            published_at=stored.checkpoints[-1].written_at,
-        )
+        return artifact
     if checkpointed_at < packet.run.evidence_cutoff_at:
         raise ValueError("publication checkpoint cannot precede the evidence cutoff")
     _staged_packet_hash(repository, packet, frozenset({"VALIDATING", "PUBLISHED"}))
@@ -203,7 +203,9 @@ def publish_validated_brief(
             artifact_hashes=latest.artifact_hashes,
             resumable=False,
         )
-        repository.checkpoint(run_id, latest)
+        repository.checkpoint_if_current(
+            run_id, latest, expected_count=len(stored.checkpoints)
+        )
     bundle = PublishedRunBundle(
         run=compose_publication_context(stored.run, latest),
         bundle=FrozenMap({
@@ -214,5 +216,4 @@ def publish_validated_brief(
         report_markdown=markdown,
         markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),
     )
-    published = repository.publish_atomically(bundle)
-    return published.model_copy(update={"published_at": latest.written_at})
+    return repository.publish_atomically(bundle)
