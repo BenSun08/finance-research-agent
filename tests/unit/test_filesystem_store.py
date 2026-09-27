@@ -326,6 +326,107 @@ def test_checkpoint_and_cutoff_are_persisted_and_cutoff_is_immutable(tmp_path: P
         repository.freeze_evidence(context.run_id, NOW + timedelta(minutes=14))
 
 
+def test_staged_artifact_is_hash_addressed_readable_and_immutable(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    payload = b'{"kind":"research_packet","version":"0.1"}'
+
+    digest = repository.stage_artifact(context.run_id, "research_packet", payload)
+
+    assert digest == hashlib.sha256(payload).hexdigest()
+    assert repository.read_staged_artifact(context.run_id, "research_packet") == payload
+    assert repository.stage_artifact(context.run_id, "research_packet", payload) == digest
+    with pytest.raises(ValueError, match="immutable staged artifact"):
+        repository.stage_artifact(context.run_id, "research_packet", b"different")
+    assert repository.read_staged_artifact(context.run_id, "research_packet") == payload
+
+
+def test_staged_artifact_rejects_caller_paths_and_requires_a_live_staging_run(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+
+    with pytest.raises(ValueError, match="artifact name"):
+        repository.stage_artifact(context.run_id, "../escape", b"payload")
+    with pytest.raises(ValueError, match="nonempty bytes"):
+        repository.stage_artifact(context.run_id, "research_packet", b"")
+    with pytest.raises(ValueError, match="nonempty bytes"):
+        repository.stage_artifact(context.run_id, "research_packet", bytearray(b"payload"))
+    with pytest.raises(ValueError, match="run staging does not exist"):
+        repository.stage_artifact(context.run_id, "research_packet", b"payload")
+    assert repository.read_staged_artifact(context.run_id, "research_packet") is None
+
+
+def test_published_run_has_no_staged_artifact_write_surface(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    repository.publish_atomically(_bundle(context))
+
+    with pytest.raises(ValueError, match="run staging does not exist"):
+        repository.stage_artifact(context.run_id, "research_packet", b"payload")
+
+
+def test_staged_artifact_rejects_internal_symlink_aliases(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context()
+    repository.create(context)
+    staging = tmp_path / "runs/2026/2026-08-19/.staging" / context.run_id
+    artifact_directory = staging / "artifacts"
+    artifact_directory.mkdir()
+    (artifact_directory / "alias.bin").symlink_to(staging / "run.json")
+
+    with pytest.raises(PathNotAllowedError):
+        repository.stage_artifact(context.run_id, "alias", b"payload")
+
+
+def test_staged_artifact_rejects_symlink_to_published_run_directory(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    published_context = _context(revision=1)
+    staging_context = _context(revision=2)
+    repository.create(published_context)
+    repository.publish_atomically(_bundle(published_context))
+    repository.create(staging_context)
+    staging, published, _ = repository._paths(staging_context.run_id)
+    (staging / "artifacts").symlink_to(published, target_is_directory=True)
+
+    with pytest.raises(PathNotAllowedError):
+        repository.stage_artifact(staging_context.run_id, "hidden", b"payload")
+
+    assert not (published / "hidden.bin").exists()
+
+
+def test_staged_artifact_rejects_symlinked_run_staging_directory(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    published_context = _context(revision=1)
+    staging_context = _context(revision=2)
+    repository.create(published_context)
+    repository.publish_atomically(_bundle(published_context))
+    repository.create(staging_context)
+    _, published, _ = repository._paths(published_context.run_id)
+    staging_link = (
+        tmp_path
+        / "runs/2026/2026-08-19/.staging"
+        / staging_context.run_id
+    )
+    (staging_link / "run.json").unlink()
+    staging_link.rmdir()
+    staging_link.symlink_to(published, target_is_directory=True)
+
+    with pytest.raises(PathNotAllowedError):
+        repository.stage_artifact(staging_context.run_id, "hidden", b"payload")
+    with pytest.raises(PathNotAllowedError):
+        repository.read_staged_artifact(staging_context.run_id, "bundle")
+
+    assert not (published / "hidden.bin").exists()
+
+
 def test_freeze_holds_run_lock_while_committing_cutoff_and_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
