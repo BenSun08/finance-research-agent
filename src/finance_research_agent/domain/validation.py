@@ -855,6 +855,70 @@ def _validate_claims(
             )
 
 
+def _section_claims(
+    draft: ResearchBriefDraft, section_id: ReportSection, claim_map: dict[str, Claim]
+) -> tuple[Claim, ...]:
+    """Return the claims explicitly placed in one detailed report section."""
+    section = next(
+        (item for item in draft.detailed_sections if item.section is section_id),
+        None,
+    )
+    if section is None:
+        return ()
+    return tuple(claim_map[item] for item in section.claim_ids if item in claim_map)
+
+
+def _validate_watchlist_coverage(
+    packet: ResearchPacket,
+    draft: ResearchBriefDraft,
+    issues: list[ValidationIssue],
+) -> None:
+    """Require each R6 candidate/exclusion to appear with its deterministic state/reason."""
+    claim_map = {claim.claim_id: claim for claim in draft.claims}
+    dashboard = _section_claims(draft, ReportSection.WATCHLIST_DASHBOARD, claim_map)
+    excluded = _section_claims(
+        draft, ReportSection.BLOCKED_EXCLUDED_CANDIDATES, claim_map
+    )
+
+    for candidate in packet.candidates:
+        represented = any(
+            claim.subject_symbol == candidate.symbol
+            and candidate.plan_status.value.casefold() in claim.text.casefold()
+            for claim in dashboard
+        )
+        if not represented:
+            issues.append(
+                _issue(
+                    ValidationCode.WATCHLIST_COVERAGE_MISSING,
+                    "/detailed_sections/WATCHLIST_DASHBOARD",
+                    "watchlist candidate must appear with its deterministic state",
+                    expected=f"{candidate.symbol}: {candidate.plan_status.value}",
+                )
+            )
+
+    for candidate_exclusion in packet.candidate_exclusions:
+        represented = any(
+            claim.subject_symbol == candidate_exclusion.symbol
+            and any(
+                reason.casefold() in claim.text.casefold()
+                for reason in candidate_exclusion.reason_codes
+            )
+            for claim in excluded
+        )
+        if not represented:
+            issues.append(
+                _issue(
+                    ValidationCode.WATCHLIST_COVERAGE_MISSING,
+                    "/detailed_sections/BLOCKED_EXCLUDED_CANDIDATES",
+                    "excluded watchlist candidate must appear with a deterministic reason",
+                    expected=(
+                        f"{candidate_exclusion.symbol}: "
+                        + ", ".join(candidate_exclusion.reason_codes)
+                    ),
+                )
+            )
+
+
 def validate_research_brief(
     packet: ResearchPacket,
     draft: ResearchBriefDraft,
@@ -967,6 +1031,7 @@ def validate_research_brief(
             )
         )
     _validate_claims(packet, draft, issues)
+    _validate_watchlist_coverage(packet, draft, issues)
     ordered = tuple(
         sorted(issues, key=lambda item: (item.json_pointer, item.code.value, item.issue_id))
     )

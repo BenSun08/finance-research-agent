@@ -4,6 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from finance_research_agent.application.packet_service import build_research_packet
+from finance_research_agent.domain.enums import Capability, GateStatus, ReportSection
+from finance_research_agent.domain.models import GateResult
+from finance_research_agent.domain.setups import CandidateExclusion
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.domain.validation import (
     PlanNarrative,
@@ -53,6 +56,101 @@ def test_valid_draft_preserves_required_english_sections(
     report = validate_research_brief(valid_packet, valid_brief_draft, validation_attempt=1)
     assert report.is_valid is True
     assert report.issues == ()
+
+
+def test_excluded_packet_symbol_must_appear_with_reason_in_exclusions_section(
+    valid_packet,
+    valid_brief_draft,
+) -> None:
+    exclusion = CandidateExclusion(
+        symbol="AAPL",
+        reason_codes=("EVENT_RISK_BLOCK",),
+        gates=(
+            GateResult(
+                gate_id="event-risk",
+                status=GateStatus.BLOCK,
+                reason_code="EVENT_RISK_BLOCK",
+                message="Frozen event gate blocked the candidate.",
+                evidence_ids=("evidence-00",),
+                capability=Capability.PLAN_DRAFT_AVAILABLE,
+                rule_version="r5",
+            ),
+        ),
+    )
+    packet = build_research_packet(
+        run=valid_packet.run,
+        evidence=valid_packet.evidence,
+        snapshots=valid_packet.market,
+        events=valid_packet.events,
+        metrics=valid_packet.metrics,
+        gates=valid_packet.gates,
+        candidates=valid_packet.candidates,
+        exclusions=(exclusion,),
+        plans=valid_packet.deterministic_plan_inputs,
+        capabilities=valid_packet.capability_states,
+        observations=valid_packet.prior_plan_observations,
+        max_serialized_bytes=250_000,
+    )
+
+    report = validate_research_brief(packet, valid_brief_draft, validation_attempt=1)
+
+    assert report.is_valid is False
+
+
+def test_excluded_packet_symbol_is_valid_when_reason_is_in_exclusions_section(
+    valid_packet,
+    valid_brief_draft,
+) -> None:
+    exclusion = CandidateExclusion(
+        symbol="AAPL",
+        reason_codes=("EVENT_RISK_BLOCK",),
+        gates=(
+            GateResult(
+                gate_id="event-risk",
+                status=GateStatus.BLOCK,
+                reason_code="EVENT_RISK_BLOCK",
+                message="Frozen event gate blocked the candidate.",
+                evidence_ids=("evidence-00",),
+                capability=Capability.PLAN_DRAFT_AVAILABLE,
+                rule_version="r5",
+            ),
+        ),
+    )
+    packet = build_research_packet(
+        run=valid_packet.run,
+        evidence=valid_packet.evidence,
+        snapshots=valid_packet.market,
+        events=valid_packet.events,
+        metrics=valid_packet.metrics,
+        gates=valid_packet.gates,
+        candidates=valid_packet.candidates,
+        exclusions=(exclusion,),
+        plans=valid_packet.deterministic_plan_inputs,
+        capabilities=valid_packet.capability_states,
+        observations=valid_packet.prior_plan_observations,
+        max_serialized_bytes=250_000,
+    )
+    reason_claim = valid_brief_draft.claims[0].model_copy(
+        update={
+            "claim_id": "claim-exclusion-aapl",
+            "text": "AAPL excluded: EVENT_RISK_BLOCK.",
+        }
+    )
+    draft = valid_brief_draft.model_copy(
+        update={
+            "claims": (*valid_brief_draft.claims, reason_claim),
+            "detailed_sections": tuple(
+                section.model_copy(update={"claim_ids": (reason_claim.claim_id,)})
+                if section.section is ReportSection.BLOCKED_EXCLUDED_CANDIDATES
+                else section
+                for section in valid_brief_draft.detailed_sections
+            ),
+        }
+    )
+
+    report = validate_research_brief(packet, draft, validation_attempt=1)
+
+    assert report.is_valid is True
 
 
 def test_repair_context_is_bounded_and_binds_the_frozen_packet(
