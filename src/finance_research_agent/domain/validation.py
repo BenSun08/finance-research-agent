@@ -1037,6 +1037,17 @@ def validate_research_brief(
     ordered = tuple(
         sorted(issues, key=lambda item: (item.json_pointer, item.code.value, item.issue_id))
     )
+    if len(ordered) > 2000:
+        ordered = (
+            *ordered[:1999],
+            _issue(
+                ValidationCode.VALIDATION_ISSUES_TRUNCATED,
+                "/issues",
+                "validation findings exceeded the report limit; additional findings are omitted",
+                expected="2000 or fewer findings",
+                actual=str(len(ordered)),
+            ),
+        )
     is_valid = not any(issue.severity is ValidationSeverity.ERROR for issue in ordered)
     return ValidationReport(
         run_id=packet.run.run_id,

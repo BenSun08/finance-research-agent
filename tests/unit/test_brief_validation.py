@@ -272,6 +272,40 @@ def test_scientific_notation_in_claim_text_is_checked_against_numeric_value(
     assert "DETERMINISTIC_VALUE_MISMATCH" in {issue.code.value for issue in report.issues}
 
 
+def test_invalid_draft_with_many_findings_returns_bounded_validation_report(
+    valid_packet,
+    valid_brief_draft,
+) -> None:
+    headline, sma = valid_brief_draft.claims
+    repeated_claims = tuple(
+        sma.model_copy(
+            update={
+                "claim_id": f"claim-many-{index}",
+                "text": ("1 " * 600) + "price",
+            }
+        )
+        for index in range(4)
+    )
+    claim_ids = tuple(claim.claim_id for claim in repeated_claims)
+    draft = valid_brief_draft.model_copy(
+        update={
+            "claims": (headline, *repeated_claims),
+            "detailed_sections": tuple(
+                section.model_copy(update={"claim_ids": claim_ids})
+                if section.section is ReportSection.MARKET_REGIME
+                else section
+                for section in valid_brief_draft.detailed_sections
+            ),
+        }
+    )
+
+    report = validate_research_brief(valid_packet, draft, validation_attempt=1)
+
+    assert report.is_valid is False
+    assert len(report.issues) <= 2000
+    assert report.issues[-1].code.value == "VALIDATION_ISSUES_TRUNCATED"
+
+
 def test_time_bounded_claim_rejects_evidence_without_fact_timestamp(
     valid_packet,
     valid_brief_draft,
