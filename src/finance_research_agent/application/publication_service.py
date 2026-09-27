@@ -119,6 +119,8 @@ def validate_staged_brief(
         attempt = repair_context.validation_attempt
     else:
         attempt = 1
+    if checkpointed_at < stored.checkpoints[-1].written_at:
+        raise ValueError("validation checkpoint cannot precede current checkpoint")
     report = validate_research_brief(packet, draft, validation_attempt=attempt)
     draft_payload = canonical_bytes(draft)
     report_payload = canonical_bytes(report)

@@ -90,6 +90,20 @@ def test_validation_limits_repair_to_two_attempts(tmp_path, valid_packet, valid_
         validate_staged_brief(repo, packet, valid_brief_draft, at + timedelta(seconds=4))
 
 
+def test_validation_cannot_backdate_staged_checkpoint(
+    tmp_path, valid_packet, valid_brief_draft
+):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    backdated = at - timedelta(milliseconds=500)
+    assert backdated > packet.run.evidence_cutoff_at
+
+    with pytest.raises(ValueError, match="current checkpoint"):
+        validate_staged_brief(repo, packet, valid_brief_draft, backdated)
+
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None and stored.checkpoints[-1].stage == "AWAITING_SYNTHESIS"
+
+
 def test_concurrent_validation_cannot_record_duplicate_attempts(
     tmp_path, valid_packet, valid_brief_draft
 ):

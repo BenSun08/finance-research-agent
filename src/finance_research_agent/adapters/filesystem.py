@@ -464,6 +464,8 @@ class FileSystemRunRepository:
         if stored.evidence_cutoff_at is not None:
             if checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at:
                 raise ValueError(f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required")
+            if stored.checkpoints and checkpoint.written_at < stored.checkpoints[-1].written_at:
+                raise ValueError("checkpoint cannot precede current checkpoint")
             stored_packet_hash = self._stored_packet_hash(stored)
             if checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}:
                 staged_packet = self._staged_artifact_path(run_id, "research_packet")
