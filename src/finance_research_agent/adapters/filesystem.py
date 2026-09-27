@@ -436,6 +436,19 @@ class FileSystemRunRepository:
         with self._run_lock(market_date):
             self._checkpoint_unlocked(run_id, checkpoint)
 
+    def checkpoint_if_current(
+        self, run_id: str, checkpoint: RunCheckpoint, expected_count: int
+    ) -> None:
+        """Append only against the observed checkpoint generation."""
+        market_date, _ = self._validated_run_id(run_id)
+        if type(expected_count) is not int or expected_count < 0:
+            raise ValueError("expected checkpoint count must be nonnegative")
+        with self._run_lock(market_date):
+            stored = self.load(run_id)
+            if stored is None or stored.published or len(stored.checkpoints) != expected_count:
+                raise ValueError("checkpoint state changed; retry from current run")
+            self._checkpoint_unlocked(run_id, checkpoint)
+
     def _checkpoint_unlocked(self, run_id: str, checkpoint: RunCheckpoint) -> None:
         staging, _, _ = self._paths(run_id)
         if checkpoint.run_id != run_id:
@@ -451,8 +464,10 @@ class FileSystemRunRepository:
         if stored.evidence_cutoff_at is not None:
             if checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at:
                 raise ValueError(f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required")
+            if stored.checkpoints and checkpoint.written_at < stored.checkpoints[-1].written_at:
+                raise ValueError("checkpoint cannot precede current checkpoint")
             stored_packet_hash = self._stored_packet_hash(stored)
-            if checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}:
+            if checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}:
                 staged_packet = self._staged_artifact_path(run_id, "research_packet")
                 current_packet_hash = (
                     _sha256(staged_packet.read_bytes()) if staged_packet.is_file() else None
@@ -472,20 +487,56 @@ class FileSystemRunRepository:
                 and not checkpoint.resumable
                 and not checkpoint.artifact_hashes
             )
+            staged_hashes_valid = all(
+                (
+                    staged := self._staged_artifact_path(run_id, name)).is_file()
+                    and _sha256(staged.read_bytes()) == digest
+                for name, digest in checkpoint.artifact_hashes.items()
+            )
+            validation_artifacts = (
+                sum(name.startswith("brief_draft_") for name in checkpoint.artifact_hashes) == 1
+                and sum(
+                    name.startswith("validation_report_")
+                    for name in checkpoint.artifact_hashes
+                ) == 1
+                and len(checkpoint.artifact_hashes) == 3
+            )
             valid_retry = (
-                checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
+                checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}
                 and checkpoint.execution_status.value == checkpoint.stage
                 and not checkpoint.resumable
-                and tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                and (
+                    checkpoint.stage == "AWAITING_SYNTHESIS"
+                    and tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                    or checkpoint.stage in {"VALIDATING", "PUBLISHED"}
+                    and (
+                        checkpoint.stage == "VALIDATING"
+                        and tuple(checkpoint.artifact_hashes) == ("research_packet",)
+                        or validation_artifacts
+                    )
+                )
+                and staged_hashes_valid
                 and current_packet_hash is not None
                 and checkpoint.artifact_hashes["research_packet"] == current_packet_hash
                 and bool(stored.checkpoints)
+                and (
+                    checkpoint.data_quality_status,
+                    checkpoint.delivery_status,
+                ) == previous_statuses[1:]
+                and (
+                    checkpoint.stage != "VALIDATING"
+                    or not validation_artifacts
+                    or sum(c.stage == "VALIDATING" for c in stored.checkpoints) < 3
+                )
                 and (
                     checkpoint.stage == "AWAITING_SYNTHESIS"
                     and stored.checkpoints[-1].stage == "EVIDENCE_FROZEN"
                     or checkpoint.stage == "VALIDATING"
                     and stored.checkpoints[-1].stage
                     in {"AWAITING_SYNTHESIS", "VALIDATING"}
+                    or checkpoint.stage == "PUBLISHED"
+                    and stored.checkpoints[-1].stage == "VALIDATING"
+                    and checkpoint.artifact_hashes == stored.checkpoints[-1].artifact_hashes
                 )
             )
             if not (valid_freeze or valid_retry):
@@ -700,9 +751,11 @@ class FileSystemRunRepository:
                 index_bytes = None
             if index_bytes is not None:
                 index_payload = json.loads(index_bytes)
+            published_at = datetime.now(UTC)
             index_payload[bundle.run.run_id] = {
                 "bundle_sha256": bundle_sha256,
                 "markdown_sha256": markdown_sha256,
+                "published_at": published_at.isoformat(),
             }
             latest_run_id = max(
                 index_payload,
@@ -736,8 +789,29 @@ class FileSystemRunRepository:
             run_id=bundle.run.run_id,
             bundle_sha256=bundle_sha256,
             markdown_sha256=markdown_sha256,
-            published_at=datetime.now(UTC),
+            published_at=published_at,
         )
+
+    def get_published_artifact(self, run_id: str) -> PublishedArtifact | None:
+        """Return the indexed publication receipt only while its bytes remain valid."""
+        _, final, index_path, _ = self._publication_paths(run_id)
+        if self._published_payloads(run_id, final) is None:
+            return None
+        try:
+            index = json.loads(self._read_confined(index_path.parent, index_path.name))
+            entry = index[run_id]
+            return PublishedArtifact(
+                run_id=run_id,
+                bundle_sha256=entry["bundle_sha256"],
+                markdown_sha256=entry["markdown_sha256"],
+                published_at=datetime.fromisoformat(entry["published_at"]),
+            )
+        except FileNotFoundError:
+            return None
+        except PathNotAllowedError:
+            raise
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
 
     def get_latest(self, market_date: date) -> str | None:
         report_root = self._safe_path(

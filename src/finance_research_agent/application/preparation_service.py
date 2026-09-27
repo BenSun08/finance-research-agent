@@ -79,7 +79,7 @@ def stage_research_packet(
             or latest.data_quality_status is not packet_context.data_quality_status
             or latest.delivery_status is not packet_context.delivery_status
             or latest.evidence_cutoff_at != packet_context.evidence_cutoff_at
-            or latest.artifact_hashes != artifact_hashes
+            or latest.artifact_hashes.get("research_packet") != digest
             or latest.resumable
         ):
             raise ValueError("staged research packet differs from frozen checkpoint")
