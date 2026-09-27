@@ -500,6 +500,23 @@ class FileSystemRunRepository:
                     for name in checkpoint.artifact_hashes
                 ) == 1
                 and len(checkpoint.artifact_hashes) in {3, 4}
+                and all(
+                    name in {"research_packet", "reduced_report"}
+                    or name.startswith("brief_draft_")
+                    or name.startswith("validation_report_")
+                    for name in checkpoint.artifact_hashes
+                )
+            )
+            reduced_publication = (
+                checkpoint.stage == "PUBLISHED"
+                and stored.checkpoints[-1].stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
+                and "reduced_report" in stored.checkpoints[-1].artifact_hashes
+                and set(checkpoint.artifact_hashes)
+                == set(stored.checkpoints[-1].artifact_hashes) | {"reduced_reason"}
+                and all(
+                    checkpoint.artifact_hashes[name] == digest
+                    for name, digest in stored.checkpoints[-1].artifact_hashes.items()
+                )
             )
             valid_retry = (
                 checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}
@@ -519,11 +536,17 @@ class FileSystemRunRepository:
                             {"research_packet", "reduced_report"},
                         )
                         or validation_artifacts
+                        or reduced_publication
                     )
                 )
                 and staged_hashes_valid
                 and current_packet_hash is not None
                 and checkpoint.artifact_hashes["research_packet"] == current_packet_hash
+                and (
+                    stored.checkpoints[-1].artifact_hashes.get("reduced_report") is None
+                    or checkpoint.artifact_hashes.get("reduced_report")
+                    == stored.checkpoints[-1].artifact_hashes["reduced_report"]
+                )
                 and bool(stored.checkpoints)
                 and (
                     checkpoint.data_quality_status,
@@ -541,8 +564,11 @@ class FileSystemRunRepository:
                     and stored.checkpoints[-1].stage
                     in {"AWAITING_SYNTHESIS", "VALIDATING"}
                     or checkpoint.stage == "PUBLISHED"
-                    and stored.checkpoints[-1].stage == "VALIDATING"
-                    and checkpoint.artifact_hashes == stored.checkpoints[-1].artifact_hashes
+                    and (
+                        stored.checkpoints[-1].stage == "VALIDATING"
+                        and checkpoint.artifact_hashes == stored.checkpoints[-1].artifact_hashes
+                        or reduced_publication
+                    )
                 )
             )
             if not (valid_freeze or valid_retry):
