@@ -7,6 +7,7 @@ from datetime import datetime
 from hashlib import sha256
 from typing import Protocol
 
+from finance_research_agent.application.operational_report import render_operational_report
 from finance_research_agent.application.ports import PublishedArtifactReader, RunRepository
 from finance_research_agent.application.preparation_service import _canonical_packet_bytes
 from finance_research_agent.application.reduced_report import (
@@ -21,10 +22,12 @@ from finance_research_agent.domain.enums import (
     ExecutionStatus,
     ReducedReportReason,
 )
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     PublishedArtifact,
     PublishedRunBundle,
     RunCheckpoint,
+    RunContext,
 )
 from finance_research_agent.domain.packets import ResearchPacket
 from finance_research_agent.domain.types import FrozenMap, JsonValue, canonical_bytes
@@ -351,6 +354,103 @@ def publish_reduced_report(
                 FrozenMap[str, JsonValue](json.loads(canonical_bytes(report)))
                 for report in reports
             ),
+        }),
+        report_markdown=markdown,
+        markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),
+    )
+    return repository.publish_atomically(bundle)
+
+
+def publish_operational_report(
+    repository: PublicationRepository,
+    run: RunContext,
+    reason: ErrorCode | str,
+    checkpointed_at: datetime,
+) -> PublishedArtifact:
+    """Publish a closed operational failure without a research packet."""
+    run = RunContext.model_validate(run, strict=True)
+    reason = ErrorCode(reason)
+    run_id = run.run_id
+    stored = repository.load(run_id)
+    if stored is None or not stored.checkpoints:
+        raise ValueError("operational publication requires a checkpointed run")
+    if run.data_quality_status is not DataQualityStatus.FAIL:
+        raise ValueError("operational publication requires FAIL quality")
+    expected_run = stored.run.model_copy(update={
+        "execution_status": run.execution_status,
+        "data_quality_status": run.data_quality_status,
+        "delivery_status": run.delivery_status,
+    })
+    if expected_run != run:
+        raise ValueError("operational RunContext differs from staged identity")
+    if stored.published:
+        bundle = repository.load_published_bundle(run_id)
+        report = repository.get_report(run_id)
+        artifact = repository.get_published_artifact(run_id)
+        contents = bundle.model_dump(mode="json")["bundle"] if bundle is not None else None
+        if (
+            contents != {"brief_origin": BriefOrigin.OPERATIONAL.value,
+                         "failure_code": reason.value}
+            or report != render_operational_report(run, reason)
+            or artifact is None
+            or stored.checkpoints[-1].stage != "PUBLISHED"
+        ):
+            raise ValueError("published operational report differs from run or reason")
+        return artifact
+    if stored.evidence_cutoff_at is not None and (
+        stored.evidence_cutoff_at != run.evidence_cutoff_at
+        or checkpointed_at < stored.evidence_cutoff_at
+    ):
+        raise ValueError("operational report differs from frozen cutoff")
+    latest = stored.checkpoints[-1]
+    if (
+        latest.data_quality_status is not DataQualityStatus.FAIL
+        or latest.delivery_status is not run.delivery_status
+        or checkpointed_at < latest.written_at
+        or any("research_packet" in item.artifact_hashes for item in stored.checkpoints)
+        or repository.read_staged_artifact(run_id, "research_packet") is not None
+    ):
+        raise ValueError("operational publication requires matching FAIL state without packet")
+    reason_bytes = reason.value.encode("ascii")
+    if latest.stage == "PUBLISHED":
+        if (
+            latest.artifact_hashes.get("operational_reason")
+            != sha256(reason_bytes).hexdigest()
+            or repository.read_staged_artifact(run_id, "operational_reason")
+            != reason_bytes
+        ):
+            raise ValueError("published checkpoint has another operational reason")
+    else:
+        if latest.stage not in {
+            "CREATED", "CONFIG_FROZEN", "PRIOR_PLANS_OBSERVED",
+            "EVIDENCE_COLLECTED", "EVIDENCE_FROZEN", "NORMALIZED",
+            "QUALITY_EVALUATED", "ANALYZED", "PACKET_FROZEN",
+            "COLLECTING", "NORMALIZING", "ANALYZING",
+        } or latest.execution_status is not run.execution_status:
+            raise ValueError("operational publication requires pre-synthesis state")
+        reason_hash = repository.stage_artifact(run_id, "operational_reason", reason_bytes)
+        latest = RunCheckpoint(
+            run_id=run_id,
+            stage="PUBLISHED",
+            execution_status=ExecutionStatus.PUBLISHED,
+            data_quality_status=DataQualityStatus.FAIL,
+            delivery_status=run.delivery_status,
+            written_at=checkpointed_at,
+            evidence_cutoff_at=stored.evidence_cutoff_at,
+            artifact_hashes=FrozenMap({
+                **dict(latest.artifact_hashes), "operational_reason": reason_hash,
+            }),
+            resumable=False,
+        )
+        repository.checkpoint_if_current(
+            run_id, latest, expected_count=len(stored.checkpoints)
+        )
+    markdown = render_operational_report(run, reason)
+    bundle = PublishedRunBundle(
+        run=compose_publication_context(stored.run, latest),
+        bundle=FrozenMap[str, JsonValue]({
+            "brief_origin": BriefOrigin.OPERATIONAL.value,
+            "failure_code": reason.value,
         }),
         report_markdown=markdown,
         markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),

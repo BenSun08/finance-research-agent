@@ -423,6 +423,51 @@ class FileSystemRunRepository:
             stored.run.delivery_status,
         )
 
+    def _operational_publication_valid(
+        self, run_id: str, stored: StoredRun, checkpoint: RunCheckpoint
+    ) -> bool:
+        if not stored.checkpoints:
+            return False
+        previous = stored.checkpoints[-1]
+        if (
+            checkpoint.stage != "PUBLISHED"
+            or checkpoint.execution_status is not ExecutionStatus.PUBLISHED
+            or checkpoint.data_quality_status is not DataQualityStatus.FAIL
+            or checkpoint.resumable
+            or checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at
+            or checkpoint.written_at < previous.written_at
+            or previous.data_quality_status is not DataQualityStatus.FAIL
+            or checkpoint.delivery_status is not previous.delivery_status
+            or previous.stage not in {
+                "CREATED", "CONFIG_FROZEN", "PRIOR_PLANS_OBSERVED",
+                "EVIDENCE_COLLECTED", "EVIDENCE_FROZEN", "NORMALIZED",
+                "QUALITY_EVALUATED", "ANALYZED", "PACKET_FROZEN",
+                "COLLECTING", "NORMALIZING", "ANALYZING",
+            }
+            or any("research_packet" in item.artifact_hashes for item in stored.checkpoints)
+            or self._staged_artifact_path(run_id, "research_packet").is_file()
+            or set(checkpoint.artifact_hashes)
+            != set(previous.artifact_hashes) | {"operational_reason"}
+            or any(
+                checkpoint.artifact_hashes[name] != digest
+                for name, digest in previous.artifact_hashes.items()
+            )
+            or any(
+                not (artifact := self._staged_artifact_path(run_id, name)).is_file()
+                or _sha256(artifact.read_bytes()) != digest
+                for name, digest in checkpoint.artifact_hashes.items()
+            )
+        ):
+            return False
+        staged = self._staged_artifact_path(run_id, "operational_reason")
+        if not staged.is_file():
+            return False
+        payload = staged.read_bytes()
+        return (
+            payload in {code.value.encode("ascii") for code in ErrorCode}
+            and checkpoint.artifact_hashes["operational_reason"] == _sha256(payload)
+        )
+
     def load(self, run_id: str) -> StoredRun | None:
         staging, final, _ = self._paths(run_id)
         if staging.is_dir():
@@ -456,6 +501,12 @@ class FileSystemRunRepository:
         stored = self.load(run_id)
         if stored is None or not staging.is_dir():
             raise ValueError("run staging does not exist")
+        if (
+            stored.evidence_cutoff_at is None
+            and checkpoint.stage == "PUBLISHED"
+            and not self._operational_publication_valid(run_id, stored, checkpoint)
+        ):
+            raise ValueError("operational publication requires a bound failure reason")
         if stored.evidence_cutoff_at is not None and checkpoint.evidence_cutoff_at not in (
             None,
             stored.evidence_cutoff_at,
@@ -518,6 +569,9 @@ class FileSystemRunRepository:
                     for name, digest in stored.checkpoints[-1].artifact_hashes.items()
                 )
             )
+            operational_publication = self._operational_publication_valid(
+                run_id, stored, checkpoint
+            )
             valid_retry = (
                 checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}
                 and checkpoint.execution_status.value == checkpoint.stage
@@ -571,7 +625,7 @@ class FileSystemRunRepository:
                     )
                 )
             )
-            if not (valid_freeze or valid_retry):
+            if not (valid_freeze or valid_retry or operational_publication):
                 raise ValueError(
                     f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required"
                 )
@@ -749,6 +803,16 @@ class FileSystemRunRepository:
                 raise PublicationError(
                     "PublishedRunBundle statuses differ from the final checkpoint status snapshot"
                 )
+            if stored.checkpoints[-1].stage == "PUBLISHED":
+                for name, digest in stored.checkpoints[-1].artifact_hashes.items():
+                    staged_artifact = self._staged_artifact_path(bundle.run.run_id, name)
+                    if (
+                        not staged_artifact.is_file()
+                        or _sha256(staged_artifact.read_bytes()) != digest
+                    ):
+                        raise PublicationError(
+                            "final checkpoint artifact differs from staged bytes"
+                        )
         elif bundle.run != staged_context:
             raise PublicationError("PublishedRunBundle RunContext differs from staged RunContext")
         report_bytes = bundle.report_markdown.encode("utf-8")
