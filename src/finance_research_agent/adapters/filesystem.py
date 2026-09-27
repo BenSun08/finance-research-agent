@@ -452,6 +452,13 @@ class FileSystemRunRepository:
             if checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at:
                 raise ValueError(f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required")
             stored_packet_hash = self._stored_packet_hash(stored)
+            if checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}:
+                staged_packet = self._staged_artifact_path(run_id, "research_packet")
+                current_packet_hash = (
+                    _sha256(staged_packet.read_bytes()) if staged_packet.is_file() else None
+                )
+                if stored_packet_hash is not None and stored_packet_hash != current_packet_hash:
+                    current_packet_hash = None
             previous_statuses = self._latest_statuses(stored)
             valid_freeze = (
                 checkpoint.stage == "EVIDENCE_FROZEN"
@@ -470,8 +477,16 @@ class FileSystemRunRepository:
                 and checkpoint.execution_status.value == checkpoint.stage
                 and not checkpoint.resumable
                 and tuple(checkpoint.artifact_hashes) == ("research_packet",)
-                and stored_packet_hash is not None
-                and checkpoint.artifact_hashes["research_packet"] == stored_packet_hash
+                and current_packet_hash is not None
+                and checkpoint.artifact_hashes["research_packet"] == current_packet_hash
+                and bool(stored.checkpoints)
+                and (
+                    checkpoint.stage == "AWAITING_SYNTHESIS"
+                    and stored.checkpoints[-1].stage == "EVIDENCE_FROZEN"
+                    or checkpoint.stage == "VALIDATING"
+                    and stored.checkpoints[-1].stage
+                    in {"AWAITING_SYNTHESIS", "VALIDATING"}
+                )
             )
             if not (valid_freeze or valid_retry):
                 raise ValueError(

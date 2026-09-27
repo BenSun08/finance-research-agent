@@ -519,19 +519,18 @@ def test_post_cutoff_collection_resume_is_rejected_but_frozen_packet_validation_
     repository = FileSystemRunRepository(tmp_path)
     context = _context()
     repository.create(context)
-    packet_hash = "a" * 64
     repository.checkpoint(
         context.run_id,
         RunCheckpoint(
             run_id=context.run_id,
-            stage="PACKET_FROZEN",
-            execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+            stage="ANALYZING",
+            execution_status=ExecutionStatus.ANALYZING,
             data_quality_status=DataQualityStatus.PASS,
             delivery_status=DeliveryStatus.MANUAL,
             written_at=NOW + timedelta(minutes=1),
             evidence_cutoff_at=None,
-            artifact_hashes=FrozenMap({"research_packet": packet_hash}),
-            resumable=False,
+            artifact_hashes=FrozenMap({}),
+            resumable=True,
         ),
     )
     cutoff = NOW + timedelta(minutes=13)
@@ -553,6 +552,21 @@ def test_post_cutoff_collection_resume_is_rejected_but_frozen_packet_validation_
             ),
         )
 
+    packet_hash = repository.stage_artifact(context.run_id, "research_packet", b"packet")
+    repository.checkpoint(
+        context.run_id,
+        RunCheckpoint(
+            run_id=context.run_id,
+            stage="AWAITING_SYNTHESIS",
+            execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+            data_quality_status=DataQualityStatus.PASS,
+            delivery_status=DeliveryStatus.MANUAL,
+            written_at=cutoff + timedelta(seconds=2),
+            evidence_cutoff_at=cutoff,
+            artifact_hashes=FrozenMap({"research_packet": packet_hash}),
+            resumable=False,
+        ),
+    )
     repository.checkpoint(
         context.run_id,
         RunCheckpoint(
@@ -561,7 +575,7 @@ def test_post_cutoff_collection_resume_is_rejected_but_frozen_packet_validation_
             execution_status=ExecutionStatus.VALIDATING,
             data_quality_status=DataQualityStatus.PASS,
             delivery_status=DeliveryStatus.MANUAL,
-            written_at=cutoff + timedelta(seconds=2),
+            written_at=cutoff + timedelta(seconds=3),
             evidence_cutoff_at=cutoff,
             artifact_hashes=FrozenMap({"research_packet": packet_hash}),
             resumable=False,
