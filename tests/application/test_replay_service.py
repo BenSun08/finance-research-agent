@@ -94,14 +94,31 @@ def test_replay_rejects_missing_publication(valid_packet) -> None:
         replay_published_artifact(reader, bundle.run.run_id, _versions(bundle.run))
 
 
-def test_replay_fails_closed_when_a_component_version_differs(valid_packet) -> None:
+@pytest.mark.parametrize(
+    "field,replacement",
+    (
+        ("core_version", "9.9.9"),
+        ("mcp_contract_version", "9.9.9"),
+        ("plugin_version", "9.9.9"),
+        ("skill_version", "9.9.9"),
+        ("prompt_version", "9.9.9"),
+        ("report_template_version", "9.9.9"),
+        ("schema_versions", FrozenMap({"different": "9.9.9"})),
+        ("watchlist_version", "different"),
+        ("regime_policy_version", "different"),
+        ("setup_policy_version", "different"),
+        ("risk_policy_version", "different"),
+        ("source_policy_version", "different"),
+    ),
+)
+def test_replay_fails_closed_when_a_component_version_differs(
+    valid_packet, field, replacement
+) -> None:
     bundle, report = _published_fixture(valid_packet)
     reader = _Reader(bundle, report)
-    current_versions = _versions(bundle.run).model_copy(
-        update={"core_version": "newer-core"}
-    )
+    current_versions = _versions(bundle.run).model_copy(update={field: replacement})
 
-    with pytest.raises(ArtifactVersionMismatchError, match="core_version"):
+    with pytest.raises(ArtifactVersionMismatchError, match=field):
         replay_published_artifact(reader, bundle.run.run_id, current_versions)
 
 

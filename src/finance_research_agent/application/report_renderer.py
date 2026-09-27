@@ -33,7 +33,52 @@ def _claim_line(claim_id: str, claims: Mapping[str, Claim]) -> str:
         )
     )
     suffix = f" {' '.join(citations)}" if citations else ""
-    return f"- {text}{suffix}"
+    line = f"- {text}{suffix}"
+    context = _claim_context_lines(claim)
+    if context:
+        return "\n".join((line, *(f"  - {item}" for item in context)))
+    return line
+
+
+def _claim_context_lines(claim: Claim) -> tuple[str, ...]:
+    context: list[str] = []
+    if claim.plan_status is not None:
+        context.append(f"Plan status: {claim.plan_status.value}")
+    if claim.counter_evidence_ids:
+        citations = " ".join(f"[{item}]" for item in claim.counter_evidence_ids)
+        context.append(f"Counter-evidence: {citations}")
+    if claim.invalidation:
+        context.append(f"Invalidation: {_inline_text(claim.invalidation)}")
+    if claim.expires_at is not None:
+        context.append(f"Expires: {claim.expires_at.isoformat()}")
+    return tuple(context)
+
+
+def _plan_narrative_lines(draft: ResearchBriefDraft, claims: Mapping[str, Claim]) -> list[str]:
+    lines: list[str] = []
+    for narrative in draft.plan_narratives:
+        citations: list[str] = []
+        pending = list(narrative.claim_ids)
+        seen: set[str] = set()
+        while pending:
+            claim_id = pending.pop(0)
+            if claim_id in seen:
+                continue
+            seen.add(claim_id)
+            claim = claims[claim_id]
+            citations.extend((*claim.evidence_ids, *claim.metric_ids))
+            pending.extend(claim.supports_claim_ids)
+        citation_suffix = " " + " ".join(
+            f"[{citation}]" for citation in dict.fromkeys(citations)
+        ) if citations else ""
+        lines.append(
+            f"- Plan {narrative.plan_id}: {_inline_text(narrative.text)}{citation_suffix}"
+        )
+        for claim_id in narrative.claim_ids:
+            lines.extend(
+                f"  - {item}" for item in _claim_context_lines(claims[claim_id])
+            )
+    return lines
 
 
 def render_markdown_report(
@@ -99,7 +144,11 @@ def render_markdown_report(
     for section in draft.detailed_sections:
         lines.extend((f"### {section.section.value}", ""))
         lines.extend(_claim_line(claim_id, claim_map) for claim_id in section.claim_ids)
-        if not section.claim_ids:
+        if section.section.value == "Trade Plan Drafts":
+            lines.extend(_plan_narrative_lines(draft, claim_map))
+        if not section.claim_ids and not (
+            section.section.value == "Trade Plan Drafts" and draft.plan_narratives
+        ):
             lines.append("- No validated claims.")
         lines.append("")
 
