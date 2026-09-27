@@ -9,6 +9,10 @@ from finance_research_agent.adapters.filesystem import (
     PublicationError,
 )
 from finance_research_agent.application import publication_service
+from finance_research_agent.application.replay_service import (
+    _recorded_versions,
+    replay_published_artifact,
+)
 from finance_research_agent.domain.enums import DataQualityStatus, ExecutionStatus
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import RunCheckpoint
@@ -82,6 +86,8 @@ def test_pre_synthesis_fail_publishes_only_operational_artifact(
     }
     report = repository.get_report(run.run_id)
     assert report is not None and "No market conclusion or trade plan" in report
+    replay = replay_published_artifact(repository, run.run_id, _recorded_versions(bundle))
+    assert replay.json_matches and replay.markdown_matches
     assert publication_service.publish_operational_report(
         repository, run, ErrorCode.MARKET_CALENDAR_UNAVAILABLE, at
     ) == receipt

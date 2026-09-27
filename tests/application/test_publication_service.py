@@ -14,6 +14,10 @@ from finance_research_agent.application.publication_service import (
     publish_validated_brief,
     validate_staged_brief,
 )
+from finance_research_agent.application.replay_service import (
+    _recorded_versions,
+    replay_published_artifact,
+)
 from finance_research_agent.domain.enums import (
     BriefOrigin,
     DataQualityStatus,
@@ -205,6 +209,10 @@ def test_publication_requires_valid_recorded_attempt_and_is_replayable(
         mode="json"
     )
     assert repo.get_report(packet.run.run_id).startswith("# Premarket Research Brief")
+    replay = replay_published_artifact(repo, packet.run.run_id, _recorded_versions(bundle))
+    assert replay.json_matches and replay.markdown_matches
+    assert replay.stored_json_sha256 == artifact.bundle_sha256
+    assert replay.stored_markdown_sha256 == artifact.markdown_sha256
     assert publish_validated_brief(repo, packet, at + timedelta(seconds=2)) == artifact
 
 
@@ -228,6 +236,10 @@ def test_reduced_report_publishes_from_awaiting_and_retries_exact_reason(
     )
 
     assert artifact.run_id == packet.run.run_id
+    bundle = repo.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    replay = replay_published_artifact(repo, packet.run.run_id, _recorded_versions(bundle))
+    assert replay.json_matches and replay.markdown_matches
     report = repo.get_report(packet.run.run_id)
     assert report is not None
     assert "Fallback reason: SYNTHESIS_UNAVAILABLE" in report

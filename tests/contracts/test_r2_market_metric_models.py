@@ -121,6 +121,11 @@ def test_metric_result_is_strict_serializable_and_preserves_dataclass_replace() 
         "ev-history-0123456789abcdef01234567"
     ]
     assert replace(metric, value=Decimal("104")).value == Decimal("104")
+    assert TypeAdapter(MetricResult).validate_json(
+        TypeAdapter(MetricResult).dump_json(metric)
+    ) == metric
+    with pytest.raises(ValueError, match="immutable tuples"):
+        replace(metric, input_evidence_ids=["ev-history-0123456789abcdef01234567"])
 
 
 def test_metric_result_rejects_duplicate_evidence_references_without_reordering() -> None:

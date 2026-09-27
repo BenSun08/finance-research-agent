@@ -5,7 +5,14 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, PlainSerializer
+from pydantic import (
+    AfterValidator,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    ValidationInfo,
+)
 from pydantic.dataclasses import dataclass
 
 from finance_research_agent.domain.models import Identifier
@@ -64,10 +71,19 @@ MetricDecimal = Annotated[
 ]
 
 
-def _immutable_tuple(value: Any) -> Any:
+def _immutable_tuple(value: Any, info: ValidationInfo) -> Any:
+    if info.mode == "json" and isinstance(value, list):
+        return tuple(value)
     if not isinstance(value, tuple):
         raise ValueError("metric result collections must be immutable tuples")
     return value
+
+
+def _immutable_parameters(value: Any, info: ValidationInfo) -> Any:
+    parameters = _immutable_tuple(value, info)
+    if info.mode == "json":
+        return tuple(tuple(item) if isinstance(item, list) else item for item in parameters)
+    return parameters
 
 
 def _unique[T](values: tuple[T, ...]) -> tuple[T, ...]:
@@ -80,7 +96,7 @@ MetricParameterValue = Annotated[str, Field(min_length=1, max_length=256)]
 MetricParameter = tuple[Identifier, MetricParameterValue]
 MetricParameters = Annotated[
     tuple[MetricParameter, ...],
-    BeforeValidator(_immutable_tuple),
+    BeforeValidator(_immutable_parameters),
     Field(max_length=64, json_schema_extra={"maxItems": 64}),
 ]
 MetricSnapshotIds = Annotated[
