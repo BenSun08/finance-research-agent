@@ -803,6 +803,16 @@ class FileSystemRunRepository:
                 raise PublicationError(
                     "PublishedRunBundle statuses differ from the final checkpoint status snapshot"
                 )
+            if stored.checkpoints[-1].stage == "PUBLISHED":
+                for name, digest in stored.checkpoints[-1].artifact_hashes.items():
+                    staged_artifact = self._staged_artifact_path(bundle.run.run_id, name)
+                    if (
+                        not staged_artifact.is_file()
+                        or _sha256(staged_artifact.read_bytes()) != digest
+                    ):
+                        raise PublicationError(
+                            "final checkpoint artifact differs from staged bytes"
+                        )
         elif bundle.run != staged_context:
             raise PublicationError("PublishedRunBundle RunContext differs from staged RunContext")
         report_bytes = bundle.report_markdown.encode("utf-8")

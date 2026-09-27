@@ -309,3 +309,46 @@ def test_operational_publication_recovers_only_with_same_failure_code(
     stored = repository.load(run.run_id)
     assert stored is not None
     assert [item.stage for item in stored.checkpoints].count("PUBLISHED") == 1
+
+
+def test_operational_retry_rejects_changed_artifact_after_failed_rename(
+    tmp_path, valid_packet
+) -> None:
+    run = valid_packet.run.model_copy(update={
+        "execution_status": ExecutionStatus.CREATED,
+        "data_quality_status": DataQualityStatus.FAIL,
+    })
+    repository = FileSystemRunRepository(tmp_path)
+    repository.create(run)
+    digest = repository.stage_artifact(run.run_id, "collection_manifest", b"original")
+    repository.checkpoint(run.run_id, RunCheckpoint(
+        run_id=run.run_id,
+        stage="CREATED",
+        execution_status=ExecutionStatus.CREATED,
+        data_quality_status=DataQualityStatus.FAIL,
+        delivery_status=run.delivery_status,
+        written_at=run.invoked_at,
+        evidence_cutoff_at=None,
+        artifact_hashes=FrozenMap({"collection_manifest": digest}),
+        resumable=True,
+    ))
+    at = run.invoked_at + timedelta(seconds=1)
+    repository.inject_failure_before_rename = True
+    with pytest.raises(PublicationError, match="injected failure"):
+        publication_service.publish_operational_report(
+            repository, run, ErrorCode.PROVIDER_UNAVAILABLE, at
+        )
+    staged = (
+        tmp_path / "runs" / "2026" / "2026-08-26" / ".staging" /
+        run.run_id / "artifacts" / "collection_manifest.bin"
+    )
+    staged.write_bytes(b"changed")
+    repository.inject_failure_before_rename = False
+
+    with pytest.raises(PublicationError, match="artifact"):
+        publication_service.publish_operational_report(
+            repository, run, ErrorCode.PROVIDER_UNAVAILABLE, at
+        )
+    assert repository.get_report(run.run_id) is None
+    stored = repository.load(run.run_id)
+    assert stored is not None and not stored.published
