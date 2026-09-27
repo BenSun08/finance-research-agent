@@ -222,13 +222,15 @@ class RunLease(StrictModel):
 
 
 class RunCheckpoint(StrictModel):
-    """Immutable serialized progress marker retained below run staging."""
+    """Immutable progress marker with a snapshot of every orthogonal run status."""
 
     run_id: Annotated[
         str, Field(max_length=128, pattern=r"^premarket-\d{4}-\d{2}-\d{2}-r[1-9]\d*$")
     ]
     stage: Identifier
     execution_status: ExecutionStatus
+    data_quality_status: DataQualityStatus
+    delivery_status: DeliveryStatus
     written_at: UtcDatetime
     evidence_cutoff_at: UtcDatetime | None
     artifact_hashes: FrozenMap[Identifier, Sha256]

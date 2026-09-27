@@ -338,6 +338,23 @@ class FileSystemRunRepository:
                 return checkpoint.artifact_hashes["research_packet"]
         return None
 
+    @staticmethod
+    def _latest_statuses(stored: StoredRun) -> tuple[
+        ExecutionStatus, DataQualityStatus, DeliveryStatus
+    ]:
+        if stored.checkpoints:
+            latest = stored.checkpoints[-1]
+            return (
+                latest.execution_status,
+                latest.data_quality_status,
+                latest.delivery_status,
+            )
+        return (
+            stored.run.execution_status,
+            stored.run.data_quality_status,
+            stored.run.delivery_status,
+        )
+
     def load(self, run_id: str) -> StoredRun | None:
         staging, final, _ = self._paths(run_id)
         if staging.is_dir():
@@ -367,9 +384,15 @@ class FileSystemRunRepository:
             if checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at:
                 raise ValueError(f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required")
             stored_packet_hash = self._stored_packet_hash(stored)
+            previous_statuses = self._latest_statuses(stored)
             valid_freeze = (
                 checkpoint.stage == "EVIDENCE_FROZEN"
-                and checkpoint.execution_status is stored.run.execution_status
+                and (
+                    checkpoint.execution_status,
+                    checkpoint.data_quality_status,
+                    checkpoint.delivery_status,
+                )
+                == previous_statuses
                 and checkpoint.written_at == stored.evidence_cutoff_at
                 and not checkpoint.resumable
                 and not checkpoint.artifact_hashes
@@ -395,6 +418,11 @@ class FileSystemRunRepository:
         self._atomic_write(target, canonical_bytes(checkpoint))
 
     def freeze_evidence(self, run_id: str, cutoff_at: datetime) -> StoredRun:
+        market_date, _ = self._validated_run_id(run_id)
+        with self._run_lock(market_date):
+            return self._freeze_evidence_unlocked(run_id, cutoff_at)
+
+    def _freeze_evidence_unlocked(self, run_id: str, cutoff_at: datetime) -> StoredRun:
         staging, _, _ = self._paths(run_id)
         stored = self.load(run_id)
         if stored is None or not staging.is_dir():
@@ -410,12 +438,15 @@ class FileSystemRunRepository:
                 separators=(",", ":"),
             ).encode("utf-8"),
         )
-        self.checkpoint(
+        execution_status, data_quality_status, delivery_status = self._latest_statuses(stored)
+        self._checkpoint_unlocked(
             run_id,
             RunCheckpoint(
                 run_id=run_id,
                 stage="EVIDENCE_FROZEN",
-                execution_status=stored.run.execution_status,
+                execution_status=execution_status,
+                data_quality_status=data_quality_status,
+                delivery_status=delivery_status,
                 written_at=cutoff_at,
                 evidence_cutoff_at=cutoff_at,
                 artifact_hashes=FrozenMap({}),
@@ -519,15 +550,40 @@ class FileSystemRunRepository:
         return report_bytes, bundle_bytes
 
     def publish_atomically(self, bundle: PublishedRunBundle) -> PublishedArtifact:
+        with self._run_lock(bundle.run.market_date):
+            return self._publish_atomically_unlocked(bundle)
+
+    def _publish_atomically_unlocked(self, bundle: PublishedRunBundle) -> PublishedArtifact:
         staging, final, index_path, latest_path = self._publication_paths(bundle.run.run_id)
         if not staging.is_dir():
             raise PublicationError("run-specific staging directory is absent")
         if final.exists():
             raise PublicationError("immutable final run directory already exists")
-        staged_context = self._load_context_from(bundle.run.run_id, staging)
-        if staged_context is None:
+        stored = self._load_from_path(bundle.run.run_id, staging, False)
+        if stored is None:
             raise PublicationError("staged run context is absent")
-        if staged_context != bundle.run:
+        staged_context = stored.run
+        final_identity = bundle.run.model_copy(
+            update={
+                "execution_status": staged_context.execution_status,
+                "data_quality_status": staged_context.data_quality_status,
+                "delivery_status": staged_context.delivery_status,
+            }
+        )
+        if final_identity != staged_context:
+            raise PublicationError("PublishedRunBundle RunContext differs from staged RunContext")
+        if stored.checkpoints:
+            latest_statuses = self._latest_statuses(stored)
+            published_statuses = (
+                bundle.run.execution_status,
+                bundle.run.data_quality_status,
+                bundle.run.delivery_status,
+            )
+            if published_statuses != latest_statuses:
+                raise PublicationError(
+                    "PublishedRunBundle statuses differ from the final checkpoint status snapshot"
+                )
+        elif bundle.run != staged_context:
             raise PublicationError("PublishedRunBundle RunContext differs from staged RunContext")
         report_bytes = bundle.report_markdown.encode("utf-8")
         markdown_sha256 = _sha256(report_bytes)
