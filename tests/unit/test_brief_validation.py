@@ -153,6 +153,78 @@ def test_excluded_packet_symbol_is_valid_when_reason_is_in_exclusions_section(
     assert report.is_valid is True
 
 
+def test_candidate_packet_symbol_requires_status_in_watchlist_dashboard(
+    valid_packet,
+    valid_brief_draft,
+) -> None:
+    from tests.unit.test_scoring import _candidate
+
+    packet = build_research_packet(
+        run=valid_packet.run,
+        evidence=valid_packet.evidence,
+        snapshots=valid_packet.market,
+        events=valid_packet.events,
+        metrics=valid_packet.metrics,
+        gates=valid_packet.gates,
+        candidates=(_candidate("AAPL"),),
+        exclusions=valid_packet.candidate_exclusions,
+        plans=valid_packet.deterministic_plan_inputs,
+        capabilities=valid_packet.capability_states,
+        observations=valid_packet.prior_plan_observations,
+        max_serialized_bytes=250_000,
+    )
+
+    report = validate_research_brief(packet, valid_brief_draft, validation_attempt=1)
+
+    assert "WATCHLIST_COVERAGE_MISSING" in {issue.code.value for issue in report.issues}
+
+
+def test_candidate_packet_symbol_is_valid_when_dashboard_states_candidate(
+    valid_packet,
+    valid_brief_draft,
+) -> None:
+    from tests.unit.test_scoring import _candidate
+
+    packet = build_research_packet(
+        run=valid_packet.run,
+        evidence=valid_packet.evidence,
+        snapshots=valid_packet.market,
+        events=valid_packet.events,
+        metrics=valid_packet.metrics,
+        gates=valid_packet.gates,
+        candidates=(_candidate("AAPL"),),
+        exclusions=valid_packet.candidate_exclusions,
+        plans=valid_packet.deterministic_plan_inputs,
+        capabilities=valid_packet.capability_states,
+        observations=valid_packet.prior_plan_observations,
+        max_serialized_bytes=250_000,
+    )
+    headline = valid_brief_draft.claims[0]
+    status_claim = headline.model_copy(
+        update={
+            "claim_id": "claim-watchlist-aapl",
+            "text": "AAPL has a DRAFT setup.",
+        }
+    )
+    draft = valid_brief_draft.model_copy(
+        update={
+            "claims": (*valid_brief_draft.claims, status_claim),
+            "detailed_sections": tuple(
+                section.model_copy(update={"claim_ids": (status_claim.claim_id,)})
+                if section.section is ReportSection.WATCHLIST_DASHBOARD
+                else section
+                for section in valid_brief_draft.detailed_sections
+            ),
+        }
+    )
+
+    report = validate_research_brief(packet, draft, validation_attempt=1)
+
+    assert not any(
+        issue.code.value == "WATCHLIST_COVERAGE_MISSING" for issue in report.issues
+    )
+
+
 def test_repair_context_is_bounded_and_binds_the_frozen_packet(
     valid_packet,
     valid_brief_draft,
