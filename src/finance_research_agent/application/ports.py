@@ -18,6 +18,7 @@ from finance_research_agent.domain.models import (
     PublishedRunBundle,
     RunCheckpoint,
     RunContext,
+    RunContextSeed,
     RunKey,
     RunLease,
     StoredRun,
@@ -128,7 +129,10 @@ class RunRepository(Protocol):
     """Provider-neutral boundary for immutable local run state."""
 
     def allocate_revision(
-        self, market_date: date, invocation: InvocationType, now: datetime
+        self,
+        seed: RunContextSeed,
+        invocation: InvocationType,
+        requested_revision: int | None = None,
     ) -> RunContext: ...
 
     def acquire_lease(self, key: RunKey, now: datetime) -> RunLease: ...

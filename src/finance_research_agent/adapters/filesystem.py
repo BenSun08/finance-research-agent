@@ -24,12 +24,11 @@ from finance_research_agent.domain.enums import (
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.market_calendar import format_run_id
 from finance_research_agent.domain.models import (
-    ComponentVersions,
-    ConfigurationSnapshot,
     PublishedArtifact,
     PublishedRunBundle,
     RunCheckpoint,
     RunContext,
+    RunContextSeed,
     RunKey,
     RunLease,
     StoredRun,
@@ -231,50 +230,6 @@ class FileSystemRunRepository:
             raise FileNotFoundError(target)
         return target.read_bytes()
 
-    def _default_context(self, market_date: date, revision: int, now: datetime) -> RunContext:
-        versions = ComponentVersions(
-            core_version="0.5.0.dev0",
-            mcp_contract_version="0.1",
-            plugin_version="0.1",
-            skill_version="0.1",
-            prompt_version="0.1",
-            report_template_version="0.1",
-            schema_versions=FrozenMap({"run-context": "0.1"}),
-            watchlist_version="0",
-            regime_policy_version="0",
-            setup_policy_version="0",
-            risk_policy_version="0",
-            source_policy_version="0",
-        )
-        configuration = ConfigurationSnapshot(
-            content_hash_sha256="0" * 64,
-            file_hashes=FrozenMap({}),
-            watchlist_version="0",
-            regime_policy_version="0",
-            setup_policy_version="0",
-            risk_policy_version="0",
-            source_policy_version="0",
-        )
-        return RunContext(
-            run_id=format_run_id(market_date, revision),
-            run_type=RunType.PREMARKET,
-            market_date=market_date,
-            revision=revision,
-            invoked_at=now,
-            evidence_cutoff_at=now,
-            execution_status=ExecutionStatus.CREATED,
-            data_quality_status=DataQualityStatus.PASS,
-            delivery_status=DeliveryStatus.MANUAL,
-            configuration_snapshot=configuration,
-            core_version=versions.core_version,
-            mcp_contract_version=versions.mcp_contract_version,
-            plugin_version=versions.plugin_version,
-            skill_version=versions.skill_version,
-            prompt_version=versions.prompt_version,
-            report_template_version=versions.report_template_version,
-            schema_versions=versions.schema_versions,
-        )
-
     def _load_context_from(self, run_id: str, path: Path) -> RunContext | None:
         try:
             payload = self._read_confined(path, "run.json")
@@ -299,11 +254,26 @@ class FileSystemRunRepository:
         return tuple(sorted(result))
 
     def allocate_revision(
-        self, market_date: date, invocation: InvocationType, now: datetime
+        self,
+        seed: RunContextSeed,
+        invocation: InvocationType,
+        requested_revision: int | None = None,
     ) -> RunContext:
-        now = self._require_utc(now)
+        if not isinstance(seed, RunContextSeed):
+            raise ValueError("seed must be a validated RunContextSeed")
+        seed = RunContextSeed.model_validate(seed)
         if not isinstance(invocation, InvocationType):
             raise ValueError("invocation must be a declared InvocationType")
+        if requested_revision is not None and (
+            isinstance(requested_revision, bool)
+            or not isinstance(requested_revision, int)
+            or requested_revision <= 0
+        ):
+            raise ValueError("requested_revision must be a positive integer")
+        if invocation is InvocationType.SCHEDULED and requested_revision is not None:
+            raise ValueError("scheduled invocation cannot request a revision")
+
+        market_date = seed.market_date
         with self._run_lock(market_date):
             existing = self._existing_revision_ids(market_date)
             if invocation is InvocationType.SCHEDULED:
@@ -313,11 +283,48 @@ class FileSystemRunRepository:
                     loaded = self.load(run_id)
                     if loaded is not None:
                         return loaded.run
+                    raise PublicationError("existing scheduled revision has no readable context")
+            elif requested_revision is not None:
+                run_id = format_run_id(market_date, requested_revision)
+                if run_id in existing:
+                    loaded = self.load(run_id)
+                    if loaded is None:
+                        raise PublicationError("existing revision has no readable context")
+                    if loaded.published:
+                        raise ValueError("published manual revision cannot be resumed")
+                    return loaded.run
+                maximum = max(
+                    (self._validated_run_id(existing_run_id)[1] for existing_run_id in existing),
+                    default=0,
+                )
+                if requested_revision != maximum + 1:
+                    raise ValueError("requested_revision must identify the next available revision")
+                revision = requested_revision
             else:
                 revision = max(
                     (self._validated_run_id(run_id)[1] for run_id in existing), default=0
                 ) + 1
-            context = self._default_context(market_date, revision, now)
+
+            versions = seed.component_versions
+            context = RunContext(
+                run_id=format_run_id(market_date, revision),
+                run_type=RunType.PREMARKET,
+                market_date=market_date,
+                revision=revision,
+                invoked_at=seed.invoked_at,
+                evidence_cutoff_at=seed.invoked_at,
+                execution_status=ExecutionStatus.CREATED,
+                data_quality_status=DataQualityStatus.PASS,
+                delivery_status=seed.delivery_status,
+                configuration_snapshot=seed.configuration_snapshot,
+                core_version=versions.core_version,
+                mcp_contract_version=versions.mcp_contract_version,
+                plugin_version=versions.plugin_version,
+                skill_version=versions.skill_version,
+                prompt_version=versions.prompt_version,
+                report_template_version=versions.report_template_version,
+                schema_versions=versions.schema_versions,
+            )
             self._create_unlocked(context)
             return context
 

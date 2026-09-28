@@ -26,6 +26,7 @@ from finance_research_agent.domain.models import (
     PublishedRunBundle,
     RunCheckpoint,
     RunContext,
+    RunContextSeed,
     RunKey,
     RunLease,
 )
@@ -75,6 +76,38 @@ def _context(revision: int = 1) -> RunContext:
         prompt_version=versions.prompt_version,
         report_template_version=versions.report_template_version,
         schema_versions=versions.schema_versions,
+    )
+
+
+def _seed() -> RunContextSeed:
+    configuration = ConfigurationSnapshot(
+        content_hash_sha256="a" * 64,
+        file_hashes=FrozenMap({"watchlist.yaml": "b" * 64}),
+        watchlist_version="1",
+        regime_policy_version="1",
+        setup_policy_version="1",
+        risk_policy_version="1",
+        source_policy_version="1",
+    )
+    return RunContextSeed(
+        market_date=date(2026, 8, 19),
+        invoked_at=NOW,
+        delivery_status=DeliveryStatus.MANUAL,
+        configuration_snapshot=configuration,
+        component_versions=ComponentVersions(
+            core_version="0.5.0.dev0",
+            mcp_contract_version="0.1",
+            plugin_version="0.1",
+            skill_version="0.1",
+            prompt_version="0.1",
+            report_template_version="0.1",
+            schema_versions=FrozenMap({"run-context": "0.1"}),
+            watchlist_version="1",
+            regime_policy_version="1",
+            setup_policy_version="1",
+            risk_policy_version="1",
+            source_policy_version="1",
+        ),
     )
 
 
@@ -186,10 +219,9 @@ def test_stale_heartbeat_cannot_resurrect_replaced_lease(
 
 def test_concurrent_manual_revision_allocations_are_unique(tmp_path: Path) -> None:
     repositories = tuple(FileSystemRunRepository(tmp_path) for _ in range(4))
-    market_date = date(2026, 8, 19)
 
     def allocate(repository: FileSystemRunRepository) -> str:
-        return repository.allocate_revision(market_date, InvocationType.MANUAL, NOW).run_id
+        return repository.allocate_revision(_seed(), InvocationType.MANUAL).run_id
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         run_ids = tuple(executor.map(allocate, repositories))
