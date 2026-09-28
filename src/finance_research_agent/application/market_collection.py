@@ -236,3 +236,27 @@ def collect_market_data(
         ),
         completed_at=completed_at,
     )
+
+
+def collect_market_data_for_market_date(
+    provider: MarketDataProvider,
+    clock: Clock,
+    calendar: TradingCalendar,
+    symbols: Sequence[str],
+    *,
+    market_date: date,
+    session_count: int,
+) -> MarketDataCollection:
+    """Collect market evidence for completed sessions before a run market date."""
+    expected_sessions = resolve_completed_session_window(
+        calendar, before=market_date, session_count=session_count
+    )
+    return collect_market_data(
+        provider,
+        clock,
+        symbols,
+        start=expected_sessions[0],
+        end=expected_sessions[-1],
+        expected_sessions=expected_sessions,
+        completed_through_session=expected_sessions[-1],
+    )
