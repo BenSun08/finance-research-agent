@@ -83,11 +83,13 @@ def checkpoint_collected_market_data_quality(
         raise ValueError("quality evaluation collection differs from frozen collection")
     stored = authoritative.frozen_run
 
+    existing_quality = repository.read_staged_artifact(stored.run_id, "data_quality")
     if stored.checkpoints[-1].stage == "QUALITY_EVALUATED":
-        payload = repository.read_staged_artifact(stored.run_id, "data_quality")
-        if payload is None:
+        if existing_quality is None:
             raise ValueError("quality checkpoint is missing its staged result")
-        quality = _decode_quality(payload)
+        quality = _decode_quality(existing_quality)
+    elif existing_quality is not None:
+        quality = _decode_quality(existing_quality)
     else:
         configuration = configuration_from_snapshot(stored.run.configuration_snapshot)
         source_health = read_configured_source_health(

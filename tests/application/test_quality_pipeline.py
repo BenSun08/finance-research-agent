@@ -50,13 +50,17 @@ class _MarketData:
 
 
 class _Calendar:
-    def __init__(self) -> None:
+    def __init__(self, *, available: bool = True) -> None:
+        self.available = available
         self.calls = 0
 
     def readiness(self) -> ProviderReadiness:
         self.calls += 1
         return ProviderReadiness(
-            provider="market-calendar", configured=True, available=True
+            provider="market-calendar",
+            configured=True,
+            available=self.available,
+            error_code=None if self.available else ErrorCode.PROVIDER_UNAVAILABLE,
         )
 
     def is_trading_day(self, market_date) -> bool:
@@ -195,6 +199,27 @@ def test_unavailable_configured_market_data_source_records_global_quality_failur
     assert result.quality.global_reason_codes == (ErrorCode.PROVIDER_UNAVAILABLE,)
 
 
+def test_unavailable_configured_calendar_records_global_quality_failure(
+    tmp_path: Path, valid_packet
+) -> None:
+    from finance_research_agent.application.quality_pipeline import (
+        checkpoint_collected_market_data_quality,
+    )
+
+    repository = FileSystemRunRepository(tmp_path)
+    collected = _stored_collection(repository, valid_packet)
+    result = checkpoint_collected_market_data_quality(
+        repository,
+        collected,
+        cast(MarketDataProvider, _MarketData()),
+        cast(MarketCalendarReadinessProvider, _Calendar(available=False)),
+        checkpointed_at=_COLLECTED_AT + timedelta(seconds=1),
+    )
+
+    assert result.quality.status.value == "FAIL"
+    assert result.quality.global_reason_codes == (ErrorCode.PROVIDER_UNAVAILABLE,)
+
+
 def test_checkpoint_quality_rejects_an_invalid_collection_wrapper(
     tmp_path: Path,
 ) -> None:
@@ -280,6 +305,59 @@ def test_quality_checkpoint_retry_uses_recorded_result_without_provider_reads(
     assert resumed.quality == first.quality
     assert resumed.stored_run.checkpoints == first.stored_run.checkpoints
     assert market_data.calls == calendar.calls == 1
+
+
+def test_quality_retry_recovers_artifact_left_before_checkpoint_after_readiness_changes(
+    tmp_path: Path, valid_packet
+) -> None:
+    from finance_research_agent.application.quality_pipeline import (
+        checkpoint_collected_market_data_quality,
+    )
+
+    repository = FileSystemRunRepository(tmp_path)
+    collected = _stored_collection(repository, valid_packet)
+    market_data = _MarketData()
+    calendar = _Calendar()
+
+    class InterruptedCheckpoint:
+        def load(self, run_id: str):
+            return repository.load(run_id)
+
+        def read_staged_artifact(self, run_id: str, artifact_name: str):
+            return repository.read_staged_artifact(run_id, artifact_name)
+
+        def stage_artifact(self, run_id: str, artifact_name: str, payload: bytes) -> str:
+            return repository.stage_artifact(run_id, artifact_name, payload)
+
+        def checkpoint_if_current(
+            self, run_id: str, checkpoint: RunCheckpoint, expected_count: int
+        ) -> None:
+            if checkpoint.stage == "QUALITY_EVALUATED":
+                raise RuntimeError("simulated interruption after quality artifact staging")
+            repository.checkpoint_if_current(run_id, checkpoint, expected_count)
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        checkpoint_collected_market_data_quality(
+            cast(RunRepository, InterruptedCheckpoint()),
+            collected,
+            cast(MarketDataProvider, market_data),
+            cast(MarketCalendarReadinessProvider, calendar),
+            checkpointed_at=_COLLECTED_AT + timedelta(seconds=1),
+        )
+
+    assert repository.read_staged_artifact(collected.frozen_run.run_id, "data_quality")
+    assert market_data.calls == calendar.calls == 1
+    resumed = checkpoint_collected_market_data_quality(
+        repository,
+        collected,
+        cast(MarketDataProvider, _MarketData(available=False)),
+        cast(MarketCalendarReadinessProvider, _Calendar(available=False)),
+        checkpointed_at=_COLLECTED_AT + timedelta(seconds=2),
+    )
+
+    assert resumed.stored_run.checkpoints[-1].stage == "QUALITY_EVALUATED"
+    assert resumed.quality.status.value == "DEGRADED"
+    assert resumed.quality.global_reason_codes == ()
 
 
 def test_quality_checkpoint_resume_rejects_a_missing_quality_artifact(
