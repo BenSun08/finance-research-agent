@@ -7,7 +7,7 @@ from finance_research_agent.domain.models import (
     ProviderFailure,
     SourceHealth,
 )
-from finance_research_agent.domain.policies import RiskPolicy
+from finance_research_agent.domain.policies import RiskPolicy, SourcePolicy
 from finance_research_agent.domain.quality import DataQualityResult, evaluate_data_quality
 
 
@@ -15,11 +15,14 @@ def evaluate_collected_market_data_quality(
     collection: MarketDataCollection,
     *,
     source_health: Sequence[SourceHealth],
+    source_policy: SourcePolicy,
     risk_policy: RiskPolicy | None,
 ) -> DataQualityResult:
     """Evaluate failures without losing their global, symbol, or price scope."""
     if not isinstance(collection, MarketDataCollection):
         raise TypeError("collection must be MarketDataCollection")
+    if not isinstance(source_policy, SourcePolicy):
+        raise TypeError("source_policy must be SourcePolicy")
     symbols = tuple(result.symbol for result in collection.symbols)
     if len(set(symbols)) != len(symbols):
         raise ValueError("market-data collection symbols must be unique")
@@ -42,6 +45,7 @@ def evaluate_collected_market_data_quality(
                 current_price_failures.append(price)
 
     return evaluate_data_quality(
+        source_roles=source_policy.quality_source_roles,
         source_health=source_health,
         provider_failures=provider_failures,
         current_price_failures=current_price_failures,

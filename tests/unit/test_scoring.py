@@ -5,7 +5,12 @@ from decimal import ROUND_DOWN, Decimal, Inexact, localcontext
 
 import pytest
 
-from finance_research_agent.domain.enums import DataQualityStatus, GateStatus, PlanStatus
+from finance_research_agent.domain.enums import (
+    DataQualityStatus,
+    GateStatus,
+    PlanStatus,
+    SourceRole,
+)
 from finance_research_agent.domain.events import EventAssessment
 from finance_research_agent.domain.models import SourceHealth
 from finance_research_agent.domain.policies import RiskPolicy
@@ -52,6 +57,7 @@ def _score_context(setup):
 
 def _pass_quality():
     return evaluate_data_quality(
+        source_roles=tuple(SourceRole),
         source_health=tuple(
             SourceHealth(provider=name, available=True, required=True)
             for name in ("alpaca", "market-calendar", "macro-calendar", "sec_edgar")
@@ -211,7 +217,7 @@ def test_frozen_blocked_event_cannot_be_replaced_before_component_evaluation():
 
 
 def test_frozen_failed_data_quality_cannot_be_replaced_before_component_evaluation():
-    failed_quality = evaluate_data_quality(source_health=())
+    failed_quality = evaluate_data_quality(source_roles=tuple(SourceRole), source_health=())
     assert failed_quality.status is DataQualityStatus.FAIL
     setup = _setup().model_copy(update={"data_quality": failed_quality})
     calls = []

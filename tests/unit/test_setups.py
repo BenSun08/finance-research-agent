@@ -12,6 +12,7 @@ from finance_research_agent.domain.enums import (
     GateStatus,
     PlanStatus,
     Session,
+    SourceRole,
 )
 from finance_research_agent.domain.events import EventAssessment
 from finance_research_agent.domain.models import (
@@ -184,6 +185,7 @@ def _load_context(name: str) -> dict[str, object]:
     )
     context["event_assessment"] = EventAssessment(plan_status=PlanStatus.DRAFT, gates=())
     context["data_quality"] = evaluate_data_quality(
+        source_roles=tuple(SourceRole),
         source_health=tuple(
             SourceHealth(provider=name, available=True, required=True)
             for name in ("alpaca", "market-calendar", "macro-calendar", "sec_edgar")
@@ -304,7 +306,7 @@ def test_required_missing_comparison_is_an_exclusion(breakout_context, missing):
 
 
 def test_disabled_quality_capability_cannot_be_offset(breakout_context):
-    quality = evaluate_data_quality(source_health=())
+    quality = evaluate_data_quality(source_roles=tuple(SourceRole), source_health=())
     result = assess_setups(**{**breakout_context, "data_quality": quality})
     assert not result.setups
     assert result.exclusions[0].gates
