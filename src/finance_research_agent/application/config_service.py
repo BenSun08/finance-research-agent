@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -64,6 +65,10 @@ def load_configuration(root: Path) -> AppConfiguration:
         name: _read_configuration_file(root, filename)
         for name, filename in FIXED_CONFIGURATION_FILES.items()
     }
+    return _configuration_from_values(values)
+
+
+def _configuration_from_values(values: dict[str, Any]) -> AppConfiguration:
     regime_values = values["regime"]
     regime_values["component_weights"] = tuple(
         (
@@ -98,6 +103,14 @@ def load_configuration(root: Path) -> AppConfiguration:
     )
 
 
+def _plain_mapping(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {key: _plain_mapping(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_plain_mapping(item) for item in value)
+    return value
+
+
 class DirectoryConfigurationRepository:
     """Trusted fixed-file bootstrap repository used by the public application API."""
 
@@ -113,6 +126,55 @@ def _jsonable(value: object) -> object:
     return json.loads(
         json.dumps(value, default=lambda item: getattr(item, "value", str(item)))
     )
+
+
+def configuration_from_snapshot(snapshot: ConfigurationSnapshot) -> AppConfiguration:
+    """Rehydrate and verify every policy in one immutable configuration snapshot."""
+    if snapshot.policies is None or snapshot.policy_hashes is None:
+        raise ValueError("configuration snapshot is missing frozen policies")
+    expected_policy_names = set(FIXED_CONFIGURATION_FILES)
+    if (
+        set(snapshot.policies) != expected_policy_names
+        or set(snapshot.policy_hashes) != expected_policy_names
+    ):
+        raise ValueError("configuration snapshot policy set does not match its schema")
+
+    configuration = _configuration_from_values(
+        {
+            name: _plain_mapping(snapshot.policies[name])
+            for name in FIXED_CONFIGURATION_FILES
+        }
+    )
+    policies = (
+        ("watchlist", configuration.watchlist),
+        ("risk", configuration.risk),
+        ("regime", configuration.regime),
+        ("setup", configuration.setup),
+        ("source", configuration.source),
+    )
+    expected_hashes = {name: canonical_model_hash(policy) for name, policy in policies}
+    expected_file_hashes = {
+        f"{name}-policy.yaml" if name != "watchlist" else "watchlist.yaml": value
+        for name, value in expected_hashes.items()
+    }
+    if dict(snapshot.policy_hashes) != expected_hashes:
+        raise ValueError("configuration snapshot policy hashes do not match frozen policies")
+    if dict(snapshot.file_hashes) != expected_file_hashes:
+        raise ValueError("configuration snapshot file hashes do not match frozen policies")
+    if canonical_model_hash(configuration) != snapshot.content_hash_sha256:
+        raise ValueError("configuration snapshot content hash does not match frozen policies")
+    expected_versions = {
+        "watchlist_version": configuration.watchlist.version,
+        "risk_policy_version": configuration.risk.version,
+        "regime_policy_version": configuration.regime.version,
+        "setup_policy_version": configuration.setup.version,
+        "source_policy_version": configuration.source.version,
+    }
+    if any(getattr(snapshot, key) != value for key, value in expected_versions.items()):
+        raise ValueError("configuration snapshot versions do not match frozen policies")
+    if snapshot.radar_universe != configuration.regime.radar_universe:
+        raise ValueError("configuration snapshot radar universe does not match regime policy")
+    return configuration
 
 
 class ConfigService:
