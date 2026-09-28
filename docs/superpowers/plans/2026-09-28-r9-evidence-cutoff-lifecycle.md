@@ -43,17 +43,17 @@
 - [x] Run the focused tests and confirm the cutoff is currently not bound to the loaded run.
 - [x] Overlay the persisted freeze timestamp onto the loaded immutable run snapshot; preserve old pre-freeze fixture compatibility; reject cutoff timestamps before invocation.
 - [x] Run focused storage tests and existing freeze/checkpoint tests.
-- [ ] Commit this task with its tests.
+- [x] Commit this task with its tests.
 
 ### Task 3: Enforce the Bound Cutoff at Artifact Boundaries
 
 **Files:** `domain/packets.py`, `application/preparation_service.py`, `application/publication_service.py`, `application/reduced_report.py`, focused packet/publication tests.
 
-- [ ] Add failing tests that an unbound run cannot form or stage a research packet or publish a report.
-- [ ] Run focused tests and confirm failures occur before artifact writes.
-- [ ] Add explicit bound-cutoff guards at the packet, staging, publication, and rendering boundaries while preserving frozen-run identity checks.
-- [ ] Run the focused suites, then full `pytest`, `ruff check .`, `mypy src`, and `git diff --check`.
-- [ ] Review the final diff and coverage for every new branch, then commit this task.
+- [x] Add failing tests that an unbound run cannot form or stage a research packet or publish a report.
+- [x] Run focused tests and confirm failures occur before artifact writes.
+- [x] Add explicit bound-cutoff guards at the packet, staging, publication, and rendering boundaries while preserving frozen-run identity checks.
+- [x] Run focused suites (68 passed), then full `pytest` (1,709 passed, 1 deselected), `ruff check .`, and `mypy src`.
+- [x] Review the final diff and statement coverage for every changed module, then commit this task.
 
 ## Completion Gate
 

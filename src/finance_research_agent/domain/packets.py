@@ -32,7 +32,7 @@ def validate_packet_cutoff(
     metrics: tuple[MetricResult, ...],
 ) -> None:
     """Reject frozen packet inputs that were observed, retrieved, or calculated too late."""
-    cutoff = run.evidence_cutoff_at
+    cutoff = run.require_evidence_cutoff()
     for item in evidence:
         if item.source.retrieved_at > cutoff or item.source.observed_at > cutoff:
             raise ValueError("source observation is after evidence cutoff")

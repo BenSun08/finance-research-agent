@@ -111,7 +111,7 @@ def test_new_revision_copies_every_seed_field(tmp_path: Path) -> None:
     assert context.prompt_version == seed.component_versions.prompt_version
     assert context.report_template_version == seed.component_versions.report_template_version
     assert context.schema_versions == seed.component_versions.schema_versions
-    assert context.evidence_cutoff_at == seed.invoked_at
+    assert context.evidence_cutoff_at is None
 
 
 def test_requested_unpublished_manual_revision_is_reused(tmp_path: Path) -> None:

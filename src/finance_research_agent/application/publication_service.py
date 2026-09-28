@@ -55,6 +55,7 @@ def _staged_packet_hash(
     stored = repository.load(run_id)
     if stored is None or stored.published or not stored.checkpoints:
         raise ValueError("validation requires an unpublished staged run")
+    evidence_cutoff_at = packet.run.require_evidence_cutoff()
     latest = stored.checkpoints[-1]
     if latest.stage not in allowed_stages:
         raise ValueError("validation requires a staged synthesis packet")
@@ -63,7 +64,7 @@ def _staged_packet_hash(
     if (
         payload != _canonical_packet_bytes(packet)
         or latest.artifact_hashes.get("research_packet") != digest
-        or stored.evidence_cutoff_at != packet.run.evidence_cutoff_at
+        or stored.evidence_cutoff_at != evidence_cutoff_at
         or latest.data_quality_status is not packet.run.data_quality_status
         or latest.delivery_status is not packet.run.delivery_status
     ):
@@ -107,7 +108,8 @@ def validate_staged_brief(
     draft = ResearchBriefDraft.model_validate(draft, strict=True)
     if draft.origin is not BriefOrigin.SYNTHESIZED:
         raise ValueError("caller supplied brief origin must be SYNTHESIZED")
-    if checkpointed_at < packet.run.evidence_cutoff_at:
+    evidence_cutoff_at = packet.run.require_evidence_cutoff()
+    if checkpointed_at < evidence_cutoff_at:
         raise ValueError("validation checkpoint cannot precede the evidence cutoff")
     packet_hash = _staged_packet_hash(repository, packet)
     stored = repository.load(packet.run.run_id)
@@ -159,7 +161,7 @@ def validate_staged_brief(
             data_quality_status=packet.run.data_quality_status,
             delivery_status=packet.run.delivery_status,
             written_at=checkpointed_at,
-            evidence_cutoff_at=packet.run.evidence_cutoff_at,
+            evidence_cutoff_at=evidence_cutoff_at,
             artifact_hashes=FrozenMap(checkpoint_hashes),
             resumable=False,
         ),
@@ -198,7 +200,8 @@ def publish_validated_brief(
         ):
             raise ValueError("published artifact origin or frozen packet differs")
         return artifact
-    if checkpointed_at < packet.run.evidence_cutoff_at:
+    evidence_cutoff_at = packet.run.require_evidence_cutoff()
+    if checkpointed_at < evidence_cutoff_at:
         raise ValueError("publication checkpoint cannot precede the evidence cutoff")
     _staged_packet_hash(repository, packet, frozenset({"VALIDATING", "PUBLISHED"}))
     latest = stored.checkpoints[-1]
@@ -223,7 +226,7 @@ def publish_validated_brief(
             data_quality_status=packet.run.data_quality_status,
             delivery_status=packet.run.delivery_status,
             written_at=checkpointed_at,
-            evidence_cutoff_at=packet.run.evidence_cutoff_at,
+            evidence_cutoff_at=evidence_cutoff_at,
             artifact_hashes=latest.artifact_hashes,
             resumable=False,
         )
@@ -275,7 +278,8 @@ def publish_reduced_report(
         ):
             raise ValueError("published reduced report differs from packet or reason")
         return artifact
-    if checkpointed_at < packet.run.evidence_cutoff_at:
+    evidence_cutoff_at = packet.run.require_evidence_cutoff()
+    if checkpointed_at < evidence_cutoff_at:
         raise ValueError("reduced publication cannot precede the evidence cutoff")
     _staged_packet_hash(
         repository, packet, frozenset({"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"})
@@ -324,7 +328,7 @@ def publish_reduced_report(
             data_quality_status=packet.run.data_quality_status,
             delivery_status=packet.run.delivery_status,
             written_at=checkpointed_at,
-            evidence_cutoff_at=packet.run.evidence_cutoff_at,
+            evidence_cutoff_at=evidence_cutoff_at,
             artifact_hashes=FrozenMap({
                 **dict(latest.artifact_hashes),
                 "reduced_reason": reason_hash,
