@@ -1,9 +1,12 @@
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
 
 import pytest
+from pydantic import TypeAdapter
 
 from finance_research_agent.application.config_service import (
     ConfigService,
@@ -16,6 +19,7 @@ from finance_research_agent.domain.models import (
     InstrumentIdentity,
     PriceObservation,
     ProviderFailure,
+    RunCheckpoint,
 )
 from finance_research_agent.domain.policies import WatchlistConfig, canonical_model_hash
 from finance_research_agent.domain.types import FrozenMap
@@ -361,6 +365,16 @@ def test_collect_and_freeze_run_binds_cutoff_after_successful_collection(
     assert result.frozen_run.run.evidence_cutoff_at == COMPLETED_AT
     assert result.frozen_run.checkpoints[-1].stage == "EVIDENCE_FROZEN"
     assert result.frozen_run.checkpoints[-1].evidence_cutoff_at == COMPLETED_AT
+    collection_checkpoint = result.frozen_run.checkpoints[-2]
+    assert collection_checkpoint.stage == "EVIDENCE_COLLECTED"
+    assert collection_checkpoint.resumable is True
+    collection_digest = collection_checkpoint.artifact_hashes["market_data_collection"]
+    collection_payload = repository.read_staged_artifact(run.run_id, "market_data_collection")
+    assert collection_payload is not None
+    assert hashlib.sha256(collection_payload).hexdigest() == collection_digest
+    assert TypeAdapter(type(result.collection)).validate_json(collection_payload, strict=True) == (
+        result.collection
+    )
     assert repository.load(run.run_id) == result.frozen_run
 
 
@@ -397,6 +411,152 @@ def test_collect_and_freeze_run_does_not_freeze_after_collection_failure(
     assert stored.evidence_cutoff_at is None
     assert stored.run.evidence_cutoff_at is None
     assert stored.checkpoints == ()
+    assert repository.read_staged_artifact(run.run_id, "market_data_collection") is None
+
+
+def test_collect_and_freeze_run_resumes_from_collected_checkpoint_without_provider_call(
+    valid_packet, tmp_path: Path
+) -> None:
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.collection_service import (
+        collect_and_freeze_market_data_for_run,
+        collect_market_data_for_run,
+    )
+    from finance_research_agent.application.market_collection import MarketDataCollection
+
+    repository = FileSystemRunRepository(tmp_path)
+    run = _run(valid_packet)
+    repository.create(run)
+    collection = collect_market_data_for_run(
+        run,
+        cast(MarketDataProvider, _MarketData()),
+        cast(Clock, _Clock()),
+        cast(TradingCalendar, _Calendar()),
+    )
+    collection_payload = TypeAdapter(MarketDataCollection).dump_json(collection)
+    collection_digest = repository.stage_artifact(
+        run.run_id, "market_data_collection", collection_payload
+    )
+    repository.checkpoint(
+        run.run_id,
+        RunCheckpoint(
+            run_id=run.run_id,
+            stage="EVIDENCE_COLLECTED",
+            execution_status=run.execution_status,
+            data_quality_status=run.data_quality_status,
+            delivery_status=run.delivery_status,
+            written_at=COMPLETED_AT,
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({"market_data_collection": collection_digest}),
+            resumable=True,
+        ),
+    )
+
+    class UnexpectedMarketData(_MarketData):
+        def fetch_instruments(
+            self, symbols: Sequence[str]
+        ) -> Mapping[str, InstrumentIdentity | ProviderFailure]:
+            raise AssertionError("resuming collected evidence must not call a provider")
+
+    result = collect_and_freeze_market_data_for_run(
+        run,
+        repository,
+        cast(MarketDataProvider, UnexpectedMarketData()),
+        cast(Clock, _Clock()),
+        cast(TradingCalendar, _Calendar()),
+    )
+
+    assert result.collection == collection
+    assert result.frozen_run.evidence_cutoff_at == collection.completed_at
+    assert result.frozen_run.checkpoints[-2].stage == "EVIDENCE_COLLECTED"
+    assert result.frozen_run.checkpoints[-1].stage == "EVIDENCE_FROZEN"
+
+
+def test_collect_and_freeze_run_recovers_orphaned_staged_collection_without_provider_call(
+    valid_packet, tmp_path: Path
+) -> None:
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.collection_service import (
+        collect_and_freeze_market_data_for_run,
+        collect_market_data_for_run,
+    )
+    from finance_research_agent.application.market_collection import MarketDataCollection
+
+    repository = FileSystemRunRepository(tmp_path)
+    run = _run(valid_packet)
+    repository.create(run)
+    collection = collect_market_data_for_run(
+        run,
+        cast(MarketDataProvider, _MarketData()),
+        cast(Clock, _Clock()),
+        cast(TradingCalendar, _Calendar()),
+    )
+    payload = TypeAdapter(MarketDataCollection).dump_python(collection, mode="json")
+    orphaned_payload = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    repository.stage_artifact(run.run_id, "market_data_collection", orphaned_payload)
+
+    class UnexpectedMarketData(_MarketData):
+        def fetch_instruments(
+            self, symbols: Sequence[str]
+        ) -> Mapping[str, InstrumentIdentity | ProviderFailure]:
+            raise AssertionError("an orphaned staged collection must be reused")
+
+    result = collect_and_freeze_market_data_for_run(
+        run,
+        repository,
+        cast(MarketDataProvider, UnexpectedMarketData()),
+        cast(Clock, _Clock()),
+        cast(TradingCalendar, _Calendar()),
+    )
+
+    assert result.collection == collection
+    assert result.frozen_run.evidence_cutoff_at == collection.completed_at
+    assert tuple(checkpoint.stage for checkpoint in result.frozen_run.checkpoints) == (
+        "EVIDENCE_COLLECTED",
+        "EVIDENCE_FROZEN",
+    )
+
+
+def test_collect_and_freeze_run_resumes_frozen_collection_without_provider_call(
+    valid_packet, tmp_path: Path
+) -> None:
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.collection_service import (
+        collect_and_freeze_market_data_for_run,
+    )
+
+    repository = FileSystemRunRepository(tmp_path)
+    run = _run(valid_packet)
+    repository.create(run)
+    first = collect_and_freeze_market_data_for_run(
+        run,
+        repository,
+        cast(MarketDataProvider, _MarketData()),
+        cast(Clock, _Clock()),
+        cast(TradingCalendar, _Calendar()),
+    )
+
+    class UnexpectedMarketData(_MarketData):
+        def fetch_instruments(
+            self, symbols: Sequence[str]
+        ) -> Mapping[str, InstrumentIdentity | ProviderFailure]:
+            raise AssertionError("resuming frozen evidence must not call a provider")
+
+    resumed = collect_and_freeze_market_data_for_run(
+        run,
+        repository,
+        cast(MarketDataProvider, UnexpectedMarketData()),
+        cast(Clock, _Clock()),
+        cast(TradingCalendar, _Calendar()),
+    )
+
+    assert resumed == first
 
 
 def test_collect_and_freeze_run_rejects_already_frozen_before_provider_call(
