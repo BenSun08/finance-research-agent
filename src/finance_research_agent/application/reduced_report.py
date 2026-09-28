@@ -7,6 +7,7 @@ from finance_research_agent.domain.packets import ResearchPacket
 
 def render_reduced_report_base(packet: ResearchPacket) -> bytes:
     """Stage a bounded report without model prose or live source reads."""
+    evidence_cutoff_at = packet.run.require_evidence_cutoff()
     lines = [
         "# Premarket Research Brief",
         "",
@@ -16,7 +17,7 @@ def render_reduced_report_base(packet: ResearchPacket) -> bytes:
         f"Execution status: {packet.run.execution_status.value}",
         f"Data quality status: {packet.run.data_quality_status.value}",
         f"Delivery status: {packet.run.delivery_status.value}",
-        f"Evidence cutoff: {packet.run.evidence_cutoff_at.isoformat()}",
+        f"Evidence cutoff: {evidence_cutoff_at.isoformat()}",
     ]
     warnings = [
         f"- {_inline_text(gate.gate_id)}: {gate.status.value} "

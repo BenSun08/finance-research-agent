@@ -11,6 +11,7 @@ from finance_research_agent.application import publication_service
 from finance_research_agent.application.packet_service import build_research_packet
 from finance_research_agent.application.preparation_service import stage_research_packet
 from finance_research_agent.application.publication_service import (
+    publish_reduced_report,
     publish_validated_brief,
     validate_staged_brief,
 )
@@ -22,6 +23,7 @@ from finance_research_agent.domain.enums import (
     BriefOrigin,
     DataQualityStatus,
     ExecutionStatus,
+    ReducedReportReason,
 )
 from finance_research_agent.domain.models import RunCheckpoint
 from finance_research_agent.domain.types import FrozenMap
@@ -66,6 +68,30 @@ def _prepared(tmp_path, valid_packet):
     at = run.evidence_cutoff_at + timedelta(seconds=1)
     stage_research_packet(repo, packet, at)
     return repo, packet, at
+
+
+def test_unbound_packet_cannot_publish_or_advance_a_frozen_run(
+    tmp_path, valid_packet
+) -> None:
+    repository, packet, checkpointed_at = _prepared(tmp_path, valid_packet)
+    unbound_packet = packet.model_copy(update={
+        "run": packet.run.model_copy(update={"evidence_cutoff_at": None}),
+    })
+    before = repository.load(packet.run.run_id)
+    assert before is not None
+
+    with pytest.raises(ValueError, match="evidence cutoff has not been frozen"):
+        publish_reduced_report(
+            repository,
+            unbound_packet,
+            ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+            checkpointed_at,
+        )
+
+    after = repository.load(packet.run.run_id)
+    assert after == before
+    assert not after.published
+    assert repository.get_published_artifact(packet.run.run_id) is None
 
 
 def test_validation_records_attempt_and_retry_without_using_repair(

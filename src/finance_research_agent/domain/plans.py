@@ -283,7 +283,8 @@ def build_trade_plan(
         raise ValueError("only SATELLITE_ELIGIBLE watchlist items may receive plans")
     if not isinstance(generated_at, datetime) or generated_at.utcoffset() != timedelta(0):
         raise ValueError("generated_at must be a UTC datetime")
-    if generated_at < run.invoked_at or generated_at < run.evidence_cutoff_at:
+    evidence_cutoff_at = run.require_evidence_cutoff()
+    if generated_at < run.invoked_at or generated_at < evidence_cutoff_at:
         raise ValueError("generated_at cannot predate the run or evidence cutoff")
     if run.delivery_status is DeliveryStatus.MISSED_WINDOW:
         raise ValueError("run window forbids a plan after a missed premarket run")
@@ -305,9 +306,9 @@ def build_trade_plan(
         raise ValueError("setup policy differs from selected candidate")
     if candidate.regime_policy_version != regime.policy_version:
         raise ValueError("regime policy differs from selected candidate")
-    if candidate.evidence_cutoff_at != run.evidence_cutoff_at:
+    if candidate.evidence_cutoff_at != evidence_cutoff_at:
         raise ValueError("candidate and run evidence cutoffs differ")
-    if current_price is not None and current_price.retrieved_at > run.evidence_cutoff_at:
+    if current_price is not None and current_price.retrieved_at > evidence_cutoff_at:
         raise ValueError("current price is after the evidence cutoff")
     gate_results = tuple(dict.fromkeys((*candidate.event_assessment.gates, *gates)))
     states = tuple(capability_states)
@@ -386,7 +387,7 @@ def build_trade_plan(
             setup_type=candidate.setup_type,
             plan_status=status,
             generated_at=generated_at,
-            evidence_cutoff_at=run.evidence_cutoff_at,
+            evidence_cutoff_at=evidence_cutoff_at,
             valid_from=generated_at,
             expires_at=_expiry_time(generated_at, setup_policy.plan_lifetime_sessions),
             market_regime=regime.regime,

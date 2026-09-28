@@ -219,10 +219,17 @@
       "$ref": "#/$defs/DeliveryStatus"
     },
     "evidence_cutoff_at": {
-      "format": "date-time",
-      "pattern": "(?:Z|\\+00:00)$",
-      "title": "Evidence Cutoff At",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Evidence Cutoff At"
     },
     "execution_status": {
       "$ref": "#/$defs/ExecutionStatus"

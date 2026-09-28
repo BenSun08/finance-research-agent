@@ -114,7 +114,7 @@ def _request(
     )
 
 
-def test_prepare_scheduled_run_freezes_configuration_once_into_first_context(
+def test_prepare_scheduled_run_starts_without_an_evidence_cutoff(
     tmp_path: Path,
 ) -> None:
     dependencies, config, clock, _ = _dependencies(tmp_path)
@@ -128,7 +128,7 @@ def test_prepare_scheduled_run_freezes_configuration_once_into_first_context(
     assert run.run_type is RunType.PREMARKET
     assert run.market_date == MARKET_DATE
     assert run.invoked_at == NOW
-    assert run.evidence_cutoff_at == NOW
+    assert run.evidence_cutoff_at is None
     assert run.delivery_status is DeliveryStatus.ON_TIME
     assert run.execution_status is ExecutionStatus.CREATED
     assert run.data_quality_status is DataQualityStatus.PASS

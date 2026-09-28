@@ -117,6 +117,16 @@ def test_packet_rejects_evidence_after_frozen_cutoff(packet_inputs) -> None:
         )
 
 
+def test_packet_requires_a_cutoff_bound_by_evidence_freeze(packet_inputs) -> None:
+    unbound_run = packet_inputs["run"].model_copy(update={"evidence_cutoff_at": None})
+
+    with pytest.raises(ValueError, match="evidence cutoff has not been frozen"):
+        build_research_packet(
+            **(packet_inputs["as_kwargs"]() | {"run": unbound_run}),
+            max_serialized_bytes=250_000,
+        )
+
+
 def test_packet_is_deeply_immutable_and_has_stable_hash(packet_inputs) -> None:
     first = build_research_packet(**packet_inputs["as_kwargs"](), max_serialized_bytes=250_000)
     second = build_research_packet(**packet_inputs["as_kwargs"](), max_serialized_bytes=250_000)

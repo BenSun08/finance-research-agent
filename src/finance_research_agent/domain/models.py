@@ -2,7 +2,7 @@
 
 import re
 import unicodedata
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from math import isclose
 from typing import Annotated, Literal, Self
 
@@ -360,7 +360,7 @@ class RunContext(StrictModel):
     market_date: date
     revision: Annotated[int, Field(gt=0)]
     invoked_at: UtcDatetime
-    evidence_cutoff_at: UtcDatetime
+    evidence_cutoff_at: UtcDatetime | None
     execution_status: ExecutionStatus
     data_quality_status: DataQualityStatus
     delivery_status: DeliveryStatus
@@ -372,6 +372,12 @@ class RunContext(StrictModel):
     prompt_version: Version
     report_template_version: Version
     schema_versions: FrozenMap[Identifier, Version]
+
+    def require_evidence_cutoff(self) -> datetime:
+        """Return the frozen evidence boundary or fail before consuming run data."""
+        if self.evidence_cutoff_at is None:
+            raise ValueError("evidence cutoff has not been frozen")
+        return self.evidence_cutoff_at
 
     @model_validator(mode="after")
     def _consistent_identity(self) -> Self:
