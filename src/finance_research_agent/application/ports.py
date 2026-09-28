@@ -29,6 +29,7 @@ from finance_research_agent.market_data.historical import (
 )
 
 __all__ = [
+    "Clock",
     "ConfigurationRepository",
     "ConfigurationRepositoryFactory",
     "EventProvider",
@@ -39,6 +40,12 @@ __all__ = [
     "WatchlistRepository",
     "TradingCalendar",
 ]
+
+
+class Clock(Protocol):
+    """Injectable source of the current UTC instant for deterministic services."""
+
+    def now_utc(self) -> datetime: ...
 
 
 class MarketDataProvider(Protocol):
