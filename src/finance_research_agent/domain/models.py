@@ -190,6 +190,34 @@ class ComponentVersions(StrictModel):
     source_policy_version: Version
 
 
+class RunContextSeed(StrictModel):
+    """Validated non-identity values used to create an immutable run context."""
+
+    market_date: date
+    invoked_at: UtcDatetime
+    delivery_status: DeliveryStatus
+    configuration_snapshot: ConfigurationSnapshot
+    component_versions: ComponentVersions
+
+    @model_validator(mode="after")
+    def _policy_versions_match_configuration(self) -> Self:
+        for field_name in (
+            "watchlist_version",
+            "regime_policy_version",
+            "setup_policy_version",
+            "risk_policy_version",
+            "source_policy_version",
+        ):
+            if getattr(self.component_versions, field_name) != getattr(
+                self.configuration_snapshot, field_name
+            ):
+                raise ValueError(
+                    f"component_versions.{field_name} must match "
+                    f"configuration_snapshot.{field_name}"
+                )
+        return self
+
+
 class RunKey(StrictModel):
     """Stable logical identity used to locate one market-date run family."""
 
