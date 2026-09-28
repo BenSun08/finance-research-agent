@@ -317,3 +317,21 @@ def test_collect_market_data_rejects_noncanonical_ticker_before_provider_call() 
         )
 
     assert calls == []
+
+
+def test_collect_market_data_requires_final_expected_session_before_provider_call() -> None:
+    calls: list[str] = []
+    sessions = (date(2026, 9, 24), date(2026, 9, 25))
+
+    with pytest.raises(ValueError, match="completed session must be the final expected session"):
+        _collect_market_data(
+            _MarketData(calls),
+            _Clock(calls),
+            ("AAPL",),
+            start=sessions[0],
+            end=sessions[-1],
+            expected_sessions=sessions,
+            completed_through_session=sessions[0],
+        )
+
+    assert calls == []

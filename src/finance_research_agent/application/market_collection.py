@@ -137,8 +137,8 @@ def collect_market_data(
         raise ValueError("market collection start must not follow end")
     if type(expected_sessions) is not tuple or not expected_sessions:
         raise ValueError("market collection requires expected sessions")
-    if completed_through_session not in expected_sessions:
-        raise ValueError("completed session must be one of the expected sessions")
+    if completed_through_session != expected_sessions[-1]:
+        raise ValueError("completed session must be the final expected session")
 
     instruments = provider.fetch_instruments(requested)
     _validate_instruments(instruments, requested)
