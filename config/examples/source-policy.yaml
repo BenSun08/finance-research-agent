@@ -1,4 +1,5 @@
 version: "1"
+quality_source_roles: [market-data, market-calendar]
 allowed_adapters: [alpaca_historical, official_https]
 allowed_https_domains: [example.test]
 allowed_hosts_by_adapter:

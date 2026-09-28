@@ -4,6 +4,7 @@ import pytest
 
 from finance_research_agent.adapters.alpaca import AlpacaMarketDataProvider
 from finance_research_agent.adapters.http_client import SafeHttpClient
+from finance_research_agent.domain.enums import SourceRole
 from finance_research_agent.domain.policies import SourcePolicy
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.settings import Settings
@@ -17,6 +18,7 @@ def test_alpaca_market_data_live_smoke() -> None:
         pytest.skip("ALPACA_API_KEY and ALPACA_API_SECRET are not configured")
     policy = SourcePolicy(
         version="live-smoke",
+        quality_source_roles=(SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR),
         allowed_adapters=("alpaca",),
         allowed_https_domains=("api.alpaca.markets", "data.alpaca.markets"),
         allowed_hosts_by_adapter=FrozenMap(
