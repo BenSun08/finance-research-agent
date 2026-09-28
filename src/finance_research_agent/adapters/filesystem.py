@@ -590,6 +590,33 @@ class FileSystemRunRepository:
                     and _sha256(staged.read_bytes()) == digest
                 for name, digest in checkpoint.artifact_hashes.items()
             )
+            collection_checkpoint = next(
+                (
+                    item
+                    for item in reversed(stored.checkpoints)
+                    if item.stage == "EVIDENCE_COLLECTED"
+                ),
+                None,
+            )
+            valid_quality_evaluation = (
+                checkpoint.stage == "QUALITY_EVALUATED"
+                and checkpoint.execution_status is ExecutionStatus.ANALYZING
+                and not checkpoint.resumable
+                and checkpoint.written_at >= stored.evidence_cutoff_at
+                and bool(stored.checkpoints)
+                and stored.checkpoints[-1].stage == "EVIDENCE_FROZEN"
+                and checkpoint.delivery_status is stored.checkpoints[-1].delivery_status
+                and collection_checkpoint is not None
+                and collection_checkpoint.evidence_cutoff_at is None
+                and collection_checkpoint.resumable
+                and set(collection_checkpoint.artifact_hashes) == {"market_data_collection"}
+                and set(checkpoint.artifact_hashes)
+                == {"market_data_collection", "data_quality"}
+                and checkpoint.artifact_hashes.get("market_data_collection")
+                == collection_checkpoint.artifact_hashes.get("market_data_collection")
+                and not self._staged_artifact_path(run_id, "research_packet").is_file()
+                and staged_hashes_valid
+            )
             validation_artifacts = (
                 sum(name.startswith("brief_draft_") for name in checkpoint.artifact_hashes) == 1
                 and sum(
@@ -622,6 +649,11 @@ class FileSystemRunRepository:
                 checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}
                 and checkpoint.execution_status.value == checkpoint.stage
                 and not checkpoint.resumable
+                and not (
+                    checkpoint.stage == "AWAITING_SYNTHESIS"
+                    and stored.checkpoints[-1].stage == "QUALITY_EVALUATED"
+                    and checkpoint.data_quality_status is DataQualityStatus.FAIL
+                )
                 and (
                     checkpoint.stage == "AWAITING_SYNTHESIS"
                     and set(checkpoint.artifact_hashes) in (
@@ -659,7 +691,8 @@ class FileSystemRunRepository:
                 )
                 and (
                     checkpoint.stage == "AWAITING_SYNTHESIS"
-                    and stored.checkpoints[-1].stage == "EVIDENCE_FROZEN"
+                    and stored.checkpoints[-1].stage
+                    in {"EVIDENCE_FROZEN", "QUALITY_EVALUATED"}
                     or checkpoint.stage == "VALIDATING"
                     and stored.checkpoints[-1].stage
                     in {"AWAITING_SYNTHESIS", "VALIDATING"}
@@ -671,7 +704,12 @@ class FileSystemRunRepository:
                     )
                 )
             )
-            if not (valid_freeze or valid_retry or operational_publication):
+            if not (
+                valid_freeze
+                or valid_quality_evaluation
+                or valid_retry
+                or operational_publication
+            ):
                 raise ValueError(
                     f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required"
                 )
