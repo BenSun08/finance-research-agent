@@ -339,7 +339,7 @@ def test_daily_bars_preserve_provenance_and_provider_identity() -> None:
     assert bars[0].quality_flags
 
 
-def test_daily_bars_fail_closed_without_explicit_evidence_cutoff() -> None:
+def test_daily_bars_reject_completed_session_on_retrieval_market_date() -> None:
     provider = _provider(
         "daily-bars.json",
         path="/v2/stocks/bars",
