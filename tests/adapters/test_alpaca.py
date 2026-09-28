@@ -207,6 +207,41 @@ def test_readiness_exposes_configuration_without_secret_content() -> None:
     assert "fixture-key" not in repr(readiness)
 
 
+def test_daily_bars_support_collection_before_run_cutoff_is_frozen() -> None:
+    provider = _provider(
+        "daily-bars.json",
+        path="/v2/stocks/bars",
+        clock=DAILY_EVIDENCE_CUTOFF,
+    )
+
+    result = provider.fetch_daily_bars(
+        ["AAPL"],
+        date(2026, 8, 18),
+        date(2026, 8, 19),
+        expected_sessions=EXPECTED_SESSIONS,
+        completed_through_session=EXPECTED_SESSIONS[-1],
+        evidence_cutoff_at=None,
+        instrument_identities={"AAPL": _fixture_identity("AAPL")},
+    )
+
+    bars = result["AAPL"]
+    assert isinstance(bars, tuple)
+    assert bars
+    assert all(bar.retrieved_at == DAILY_EVIDENCE_CUTOFF for bar in bars)
+    assert all(bar.evidence_cutoff_at == DAILY_EVIDENCE_CUTOFF for bar in bars)
+
+
+def test_premarket_observation_supports_collection_before_run_cutoff_is_frozen() -> None:
+    provider = _provider("premarket-iex.json", clock=AS_OF + timedelta(seconds=1))
+
+    result = provider.fetch_premarket_observations(["AAPL"], as_of=None)
+
+    observation = result["AAPL"]
+    assert isinstance(observation, PriceObservation)
+    assert observation.retrieved_at == AS_OF + timedelta(seconds=1)
+    assert observation.observed_at <= observation.retrieved_at
+
+
 def test_instruments_are_normalized_to_provider_neutral_identity() -> None:
     provider = _provider("instruments.json", path="/v2/assets")
     result = provider.fetch_instruments(["AAPL"])
@@ -304,7 +339,7 @@ def test_daily_bars_preserve_provenance_and_provider_identity() -> None:
     assert bars[0].quality_flags
 
 
-def test_daily_bars_fail_closed_without_explicit_evidence_cutoff() -> None:
+def test_daily_bars_reject_completed_session_on_retrieval_market_date() -> None:
     provider = _provider(
         "daily-bars.json",
         path="/v2/stocks/bars",
