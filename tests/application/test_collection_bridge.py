@@ -138,6 +138,140 @@ def test_collection_bridge_is_deterministic_and_preserves_source_provenance() ->
     )
 
 
+def test_collection_bridge_preserves_original_daily_bar_evidence_ids() -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collection_to_packet_inputs,
+    )
+
+    earlier = _bar().model_copy(
+        update={"session_date": date(2026, 9, 24), "evidence_id": "provider-bar-older"}
+    )
+    later = _bar().model_copy(update={"evidence_id": "provider-bar-newer"})
+    collection = MarketDataCollection(
+        symbols=(
+            SymbolMarketCollection(
+                symbol="AAPL",
+                instrument=_instrument(),
+                daily_bars=(later, earlier),
+                premarket_observation=ProviderFailure(
+                    provider="alpaca",
+                    symbol="AAPL",
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                ),
+            ),
+        ),
+        completed_at=_RETRIEVED,
+    )
+
+    result = collection_to_packet_inputs(collection, authority_tier=2)
+    bar_evidence = next(
+        item for item in result.evidence if item.citation_label == "AAPL completed daily bars"
+    )
+
+    assert bar_evidence.structured_fields["source_evidence_ids"] == (
+        "provider-bar-older",
+        "provider-bar-newer",
+    )
+
+
+def test_collection_bridge_preserves_original_price_evidence_id() -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collection_to_packet_inputs,
+    )
+
+    collection = MarketDataCollection(
+        symbols=(
+            SymbolMarketCollection(
+                symbol="AAPL",
+                instrument=_instrument(),
+                daily_bars=ProviderFailure(
+                    provider="alpaca",
+                    symbol="AAPL",
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                ),
+                premarket_observation=_price(),
+            ),
+        ),
+        completed_at=_RETRIEVED,
+    )
+
+    result = collection_to_packet_inputs(collection, authority_tier=2)
+    price_evidence = next(
+        item
+        for item in result.evidence
+        if item.citation_label == "AAPL premarket price observation"
+    )
+
+    assert price_evidence.structured_fields["source_evidence_id"] == "provider-price-evidence"
+
+
+def test_collection_bridge_rejects_daily_bars_from_mixed_providers() -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collection_to_packet_inputs,
+    )
+
+    mixed_provider_bar = _bar().model_copy(
+        update={"session_date": date(2026, 9, 24), "provider": "other-provider"}
+    )
+    collection = MarketDataCollection(
+        symbols=(
+            SymbolMarketCollection(
+                symbol="AAPL",
+                instrument=_instrument(),
+                daily_bars=(_bar(), mixed_provider_bar),
+                premarket_observation=ProviderFailure(
+                    provider="alpaca",
+                    symbol="AAPL",
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                ),
+            ),
+        ),
+        completed_at=_RETRIEVED,
+    )
+
+    with pytest.raises(ValueError, match="daily bars contain multiple providers"):
+        collection_to_packet_inputs(collection, authority_tier=2)
+
+
+def test_global_provider_failure_remains_globally_scoped_in_evidence() -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collection_to_packet_inputs,
+    )
+
+    collection = MarketDataCollection(
+        symbols=(
+            SymbolMarketCollection(
+                symbol="AAPL",
+                instrument=_instrument(),
+                daily_bars=ProviderFailure(
+                    provider="alpaca",
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                ),
+                premarket_observation=ProviderFailure(
+                    provider="alpaca",
+                    symbol="AAPL",
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                ),
+            ),
+        ),
+        completed_at=_RETRIEVED,
+    )
+
+    result = collection_to_packet_inputs(collection, authority_tier=2)
+    global_failure = next(
+        item for item in result.evidence if item.structured_fields["outcome"] == "DAILY_BARS"
+    )
+
+    assert global_failure.instrument_id is None
+    assert global_failure.structured_fields["scope"] == "global"
+    assert global_failure.structured_fields["requested_symbol"] == "AAPL"
+
+
 def test_collection_bridge_records_failure_codes_without_provider_message() -> None:
     from finance_research_agent.application.collection_bridge import (
         collection_to_packet_inputs,

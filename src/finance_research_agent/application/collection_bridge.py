@@ -190,9 +190,13 @@ def _project_symbol(
             raise ValueError("collection daily-bar retrieval is after collection completion")
         if daily_bars:
             ordered_bars = tuple(sorted(daily_bars, key=lambda bar: bar.session_date))
+            providers = {bar.provider for bar in ordered_bars}
+            if len(providers) != 1:
+                raise ValueError("collection daily bars contain multiple providers")
             payload: dict[str, JsonValue] = {
                 "outcome": "DAILY_BARS",
                 "symbol": item.symbol,
+                "source_evidence_ids": tuple(bar.evidence_id for bar in ordered_bars),
                 "bars": tuple(
                     _json_value(bar.model_dump(mode="json", exclude={"evidence_id"}))
                     for bar in ordered_bars
@@ -245,6 +249,7 @@ def _project_symbol(
         price_payload: dict[str, JsonValue] = {
             "outcome": "PREMARKET_PRICE",
             "symbol": item.symbol,
+            "source_evidence_id": price_result.evidence_id,
             "price": _json_value(
                 price_result.model_dump(mode="json", exclude={"evidence_id"})
             ),
