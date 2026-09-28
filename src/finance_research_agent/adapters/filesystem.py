@@ -349,7 +349,7 @@ class FileSystemRunRepository:
                 market_date=market_date,
                 revision=revision,
                 invoked_at=seed.invoked_at,
-                evidence_cutoff_at=seed.invoked_at,
+                evidence_cutoff_at=None,
                 execution_status=ExecutionStatus.CREATED,
                 data_quality_status=DataQualityStatus.PASS,
                 delivery_status=seed.delivery_status,

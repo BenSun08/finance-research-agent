@@ -360,7 +360,7 @@ class RunContext(StrictModel):
     market_date: date
     revision: Annotated[int, Field(gt=0)]
     invoked_at: UtcDatetime
-    evidence_cutoff_at: UtcDatetime
+    evidence_cutoff_at: UtcDatetime | None
     execution_status: ExecutionStatus
     data_quality_status: DataQualityStatus
     delivery_status: DeliveryStatus
