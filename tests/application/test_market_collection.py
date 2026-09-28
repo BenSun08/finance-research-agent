@@ -1,17 +1,30 @@
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import cast
 
 import pytest
 
 from finance_research_agent.domain.enums import Coverage, Session
 from finance_research_agent.domain.errors import ErrorCode
+from finance_research_agent.domain.market_calendar import TradingCalendar
 from finance_research_agent.domain.models import (
     CompletedDailyBar,
     InstrumentIdentity,
     PriceObservation,
     ProviderFailure,
 )
+
+
+class _TradingCalendar:
+    def __init__(self, trading_days: set[date]) -> None:
+        self.trading_days = trading_days
+
+    def is_trading_day(self, market_date: date) -> bool:
+        return market_date in self.trading_days
+
+    def session_open_close(self, market_date: date) -> tuple[datetime, datetime]:
+        raise AssertionError("session_open_close is not needed for session selection")
 
 COLLECTED_AT = datetime(2026, 9, 28, 12, 46, tzinfo=UTC)
 RETRIEVED_AT = datetime(2026, 9, 28, 12, 45, tzinfo=UTC)
@@ -317,6 +330,109 @@ def test_collect_market_data_rejects_noncanonical_ticker_before_provider_call() 
         )
 
     assert calls == []
+
+
+def test_resolve_completed_session_window_skips_weekends_and_holidays() -> None:
+    from finance_research_agent.application import market_collection
+
+    calendar = _TradingCalendar(
+        {
+            date(2026, 9, 28),  # Requested market date must remain exclusive
+            date(2026, 9, 25),  # Friday
+            date(2026, 9, 24),  # Thursday
+            date(2026, 9, 23),  # Wednesday
+            date(2026, 9, 21),  # Monday; Tuesday is a holiday
+        }
+    )
+
+    sessions = market_collection.resolve_completed_session_window(
+        cast(TradingCalendar, calendar),
+        before=date(2026, 9, 28),  # Monday
+        session_count=4,
+    )
+
+    assert sessions == (
+        date(2026, 9, 21),
+        date(2026, 9, 23),
+        date(2026, 9, 24),
+        date(2026, 9, 25),
+    )
+
+
+def test_resolve_completed_session_window_rejects_invalid_count() -> None:
+    from finance_research_agent.application import market_collection
+
+    calendar = _TradingCalendar({date(2026, 9, 25)})
+
+    with pytest.raises(ValueError, match="positive integer"):
+        market_collection.resolve_completed_session_window(
+            cast(TradingCalendar, calendar),
+            before=date(2026, 9, 28),
+            session_count=0,
+        )
+
+
+def test_resolve_completed_session_window_rejects_datetime_as_exclusive_date() -> None:
+    from finance_research_agent.application import market_collection
+
+    with pytest.raises(TypeError, match="before must be a date"):
+        market_collection.resolve_completed_session_window(
+            cast(TradingCalendar, _TradingCalendar(set())),
+            before=datetime(2026, 9, 28, tzinfo=UTC),
+            session_count=1,
+        )
+
+
+def test_resolve_completed_session_window_rejects_minimum_date() -> None:
+    from finance_research_agent.application import market_collection
+
+    with pytest.raises(ValueError, match="before must be after the minimum date"):
+        market_collection.resolve_completed_session_window(
+            cast(TradingCalendar, _TradingCalendar(set())),
+            before=date.min,
+            session_count=1,
+        )
+
+
+def test_resolve_completed_session_window_wraps_calendar_failure() -> None:
+    from finance_research_agent.application import market_collection
+
+    class FailingCalendar(_TradingCalendar):
+        def is_trading_day(self, market_date: date) -> bool:
+            raise OSError("calendar unavailable")
+
+    with pytest.raises(RuntimeError, match="MARKET_CALENDAR_UNAVAILABLE"):
+        market_collection.resolve_completed_session_window(
+            cast(TradingCalendar, FailingCalendar(set())),
+            before=date(2026, 9, 28),
+            session_count=1,
+        )
+
+
+def test_resolve_completed_session_window_rejects_non_boolean_calendar_result() -> None:
+    from finance_research_agent.application import market_collection
+
+    class MalformedCalendar(_TradingCalendar):
+        def is_trading_day(self, market_date: date) -> bool:
+            return cast(bool, None)
+
+    with pytest.raises(RuntimeError, match="invalid trading-day result"):
+        market_collection.resolve_completed_session_window(
+            cast(TradingCalendar, MalformedCalendar(set())),
+            before=date(2026, 9, 28),
+            session_count=1,
+        )
+
+
+def test_resolve_completed_session_window_bounds_empty_calendar_search() -> None:
+    from finance_research_agent.application import market_collection
+
+    with pytest.raises(RuntimeError, match="enough sessions within bounded search"):
+        market_collection.resolve_completed_session_window(
+            cast(TradingCalendar, _TradingCalendar(set())),
+            before=date(2026, 9, 28),
+            session_count=1,
+        )
 
 
 def test_collect_market_data_requires_final_expected_session_before_provider_call() -> None:

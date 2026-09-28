@@ -8,8 +8,9 @@ from datetime import date, datetime, timedelta
 
 from pydantic import TypeAdapter, ValidationError
 
-from finance_research_agent.application.ports import Clock, MarketDataProvider
+from finance_research_agent.application.ports import Clock, MarketDataProvider, TradingCalendar
 from finance_research_agent.domain.enums import Session
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     CompletedDailyBar,
     InstrumentIdentity,
@@ -19,6 +20,49 @@ from finance_research_agent.domain.models import (
 )
 
 _SYMBOL_ADAPTER = TypeAdapter(Symbol)
+
+
+def resolve_completed_session_window(
+    calendar: TradingCalendar,
+    *,
+    before: date,
+    session_count: int,
+) -> tuple[date, ...]:
+    """Return the latest bounded number of trading sessions before before.
+
+    before is exclusive so a premarket collection for a market date cannot
+    request that day's not-yet-completed regular session.
+    """
+    if type(before) is not date:
+        raise TypeError("before must be a date")
+    if before == date.min:
+        raise ValueError("before must be after the minimum date")
+    if type(session_count) is not int or not 1 <= session_count <= 252:
+        raise ValueError("session_count must be a positive integer no greater than 252")
+
+    sessions: list[date] = []
+    candidate = before - timedelta(days=1)
+    search_days = session_count * 4 + 14
+    for _ in range(search_days):
+        try:
+            is_trading_day = calendar.is_trading_day(candidate)
+        except Exception as error:
+            raise RuntimeError(
+                f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}: market calendar unavailable"
+            ) from error
+        if type(is_trading_day) is not bool:
+            raise RuntimeError(
+                f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}: invalid trading-day result"
+            )
+        if is_trading_day:
+            sessions.append(candidate)
+            if len(sessions) == session_count:
+                return tuple(reversed(sessions))
+        candidate -= timedelta(days=1)
+
+    raise RuntimeError(
+        "trading calendar did not return enough sessions within bounded search"
+    )
 
 
 @dataclass(frozen=True, slots=True)
