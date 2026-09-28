@@ -8,7 +8,12 @@ from typing import Self
 
 from pydantic import Field, model_validator
 
-from finance_research_agent.domain.enums import Capability, DataQualityStatus, PlanStatus
+from finance_research_agent.domain.enums import (
+    Capability,
+    DataQualityStatus,
+    PlanStatus,
+    SourceRole,
+)
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     CapabilityState,
@@ -36,10 +41,10 @@ _SIZING_INPUTS = (
     "minimum_reward_risk_ratio",
 )
 _HEALTH_ROLE_PROVIDERS = (
-    ("market-data", {"alpaca"}),
-    ("market-calendar", {"market-calendar"}),
-    ("macro-calendar", _MACRO_PROVIDERS),
-    ("official-verification", _OFFICIAL_VERIFICATION_PROVIDERS),
+    (SourceRole.MARKET_DATA, {"alpaca"}),
+    (SourceRole.MARKET_CALENDAR, {"market-calendar"}),
+    (SourceRole.MACRO_CALENDAR, _MACRO_PROVIDERS),
+    (SourceRole.OFFICIAL_VERIFICATION, _OFFICIAL_VERIFICATION_PROVIDERS),
 )
 _SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$")
 _PLAN_STATUS_STRENGTH = {
@@ -173,13 +178,50 @@ def _dependencies(provider: str, *, required: bool) -> tuple[Capability, ...]:
     )
 
 
-def _incomplete_health_roles(source_health: Sequence[SourceHealth]) -> tuple[str, ...]:
-    return tuple(
-        role
-        for role, alternatives in _HEALTH_ROLE_PROVIDERS
-        if not any(
-            health.required and health.provider in alternatives for health in source_health
-        )
+def _configured_role_health_is_valid(
+    role: SourceRole, source_health: Sequence[SourceHealth]
+) -> bool:
+    alternatives = _providers_for_role(role)
+    matching = tuple(health for health in source_health if health.provider in alternatives)
+    return len(matching) == 1 and matching[0].required
+
+
+def _providers_for_role(role: SourceRole) -> set[str]:
+    return next(alternatives for declared_role, alternatives in _HEALTH_ROLE_PROVIDERS
+                if declared_role is role)
+
+
+def _validate_source_roles(
+    source_roles: tuple[SourceRole, ...],
+    source_health: Sequence[SourceHealth],
+    provider_failures: Sequence[ProviderFailure],
+) -> tuple[SourceRole, ...]:
+    if not isinstance(source_roles, tuple):
+        raise ValueError("source_roles must be a tuple")
+    if any(not isinstance(role, SourceRole) for role in source_roles):
+        raise ValueError("source_roles must contain SourceRole values")
+    if len(set(source_roles)) != len(source_roles):
+        raise ValueError("source_roles must be unique")
+    mandatory = {SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR}
+    if not mandatory.issubset(source_roles):
+        raise ValueError("source_roles must include market data and market calendar")
+
+    configured = set(source_roles)
+    for health in source_health:
+        role = _role_for_provider(health.provider)
+        if role is not None and role not in configured:
+            raise ValueError(f"source health provider {health.provider!r} is not configured")
+    for failure in provider_failures:
+        role = _role_for_provider(failure.provider)
+        if role is not None and role not in configured:
+            raise ValueError(f"provider failure {failure.provider!r} is not configured")
+    return source_roles
+
+
+def _role_for_provider(provider: str) -> SourceRole | None:
+    return next(
+        (role for role, alternatives in _HEALTH_ROLE_PROVIDERS if provider in alternatives),
+        None,
     )
 
 
@@ -190,12 +232,11 @@ def _validate_source_health(source_health: Sequence[SourceHealth]) -> None:
 
 
 def _missing_health_dependencies(
-    source_health: Sequence[SourceHealth],
+    source_roles: tuple[SourceRole, ...], source_health: Sequence[SourceHealth],
 ) -> dict[Capability, tuple[ErrorCode, ...]]:
-    incomplete_roles = set(_incomplete_health_roles(source_health))
     disabled: dict[Capability, tuple[ErrorCode, ...]] = {}
     for role, alternatives in _HEALTH_ROLE_PROVIDERS:
-        if role in incomplete_roles:
+        if role in source_roles and not _configured_role_health_is_valid(role, source_health):
             _disable(
                 disabled,
                 _dependencies(next(iter(alternatives)), required=True),
@@ -259,6 +300,7 @@ def _risk_dependencies(risk_policy: RiskPolicy | None) -> dict[Capability, tuple
 
 def evaluate_capabilities(
     *,
+    source_roles: tuple[SourceRole, ...],
     source_health: Sequence[SourceHealth],
     provider_failures: Sequence[ProviderFailure] = (),
     historical_request_failure: HistoricalBarsRequestFailure | None = None,
@@ -266,9 +308,10 @@ def evaluate_capabilities(
 ) -> tuple[CapabilityState, ...]:
     """Evaluate global dependencies; per-symbol failures remain outside this result."""
 
+    source_roles = _validate_source_roles(source_roles, source_health, provider_failures)
     _validate_source_health(source_health)
     disabled = _risk_dependencies(risk_policy)
-    for capability, reasons in _missing_health_dependencies(source_health).items():
+    for capability, reasons in _missing_health_dependencies(source_roles, source_health).items():
         for reason in reasons:
             _disable(disabled, (capability,), reason)
     for health in source_health:
@@ -288,11 +331,30 @@ def evaluate_capabilities(
                 _dependencies(failure.provider, required=True),
                 failure.error_code,
             )
+    if SourceRole.MACRO_CALENDAR not in source_roles:
+        _disable(
+            disabled,
+            (
+                Capability.EVENT_RISK_CHECK_AVAILABLE,
+                Capability.SETUP_DETECTION_AVAILABLE,
+                Capability.PLAN_DRAFT_AVAILABLE,
+                Capability.POSITION_SIZING_AVAILABLE,
+                Capability.PORTFOLIO_HEAT_CHECK_AVAILABLE,
+            ),
+            ErrorCode.SOURCE_NOT_CONFIGURED,
+        )
+    if SourceRole.OFFICIAL_VERIFICATION not in source_roles:
+        _disable(
+            disabled,
+            (Capability.PLAN_DRAFT_AVAILABLE,),
+            ErrorCode.SOURCE_NOT_CONFIGURED,
+        )
     return _states(disabled)
 
 
 def evaluate_data_quality(
     *,
+    source_roles: tuple[SourceRole, ...],
     source_health: Sequence[SourceHealth],
     provider_failures: Sequence[ProviderFailure] = (),
     historical_failures: Sequence[HistoricalBarsFailure] = (),
@@ -302,7 +364,13 @@ def evaluate_data_quality(
 ) -> DataQualityResult:
     """Aggregate failure-matrix inputs while retaining global, source, and symbol scope."""
 
+    source_roles = _validate_source_roles(
+        source_roles,
+        source_health,
+        (*provider_failures, *current_price_failures),
+    )
     capabilities = evaluate_capabilities(
+        source_roles=source_roles,
         source_health=source_health,
         provider_failures=provider_failures,
         historical_request_failure=historical_request_failure,
@@ -312,7 +380,10 @@ def evaluate_data_quality(
     global_reasons.extend(
         health.error_code for health in source_health if not health.available and health.error_code
     )
-    incomplete_health_roles = _incomplete_health_roles(source_health)
+    incomplete_health_roles = tuple(
+        role for role in source_roles
+        if not _configured_role_health_is_valid(role, source_health)
+    )
     if incomplete_health_roles:
         global_reasons.append(ErrorCode.CONFIGURATION_INVALID)
     if historical_request_failure is not None:
@@ -367,7 +438,7 @@ def evaluate_data_quality(
     ) or any(
         not health.available and health.provider in _MARKET_PREREQUISITES
         for health in source_health
-    ) or bool({"market-data", "market-calendar"}.intersection(incomplete_health_roles))
+    ) or bool(incomplete_health_roles)
     status = (
         DataQualityStatus.FAIL
         if hard_global

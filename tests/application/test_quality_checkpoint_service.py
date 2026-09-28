@@ -9,6 +9,7 @@ from finance_research_agent.adapters.filesystem import FileSystemRunRepository
 from finance_research_agent.domain.enums import (
     DataQualityStatus,
     ExecutionStatus,
+    SourceRole,
 )
 from finance_research_agent.domain.models import RunCheckpoint
 from finance_research_agent.domain.quality import evaluate_data_quality
@@ -45,6 +46,7 @@ def _quality_result():
     from finance_research_agent.domain.models import SourceHealth
 
     return evaluate_data_quality(
+        source_roles=tuple(SourceRole),
         source_health=(
             SourceHealth(provider="alpaca", available=True, required=True),
             SourceHealth(provider="market-calendar", available=True, required=True),

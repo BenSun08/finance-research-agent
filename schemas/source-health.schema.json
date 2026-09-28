@@ -2,6 +2,7 @@
   "$defs": {
     "ErrorCode": {
       "enum": [
+        "SOURCE_NOT_CONFIGURED",
         "CONFIGURATION_INVALID",
         "CREDENTIALS_MISSING",
         "PERMISSION_DENIED",

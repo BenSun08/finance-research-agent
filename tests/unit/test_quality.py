@@ -3,12 +3,18 @@ from decimal import Decimal
 
 import pytest
 
-from finance_research_agent.domain.enums import Capability, DataQualityStatus, PlanStatus
+from finance_research_agent.domain.enums import (
+    Capability,
+    DataQualityStatus,
+    PlanStatus,
+    SourceRole,
+)
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import CapabilityState, ProviderFailure, SourceHealth
 from finance_research_agent.domain.policies import RiskPolicy
 from finance_research_agent.domain.quality import (
     DataQualityResult,
+    evaluate_capabilities,
 )
 from finance_research_agent.domain.quality import evaluate_data_quality as _evaluate_data_quality
 from finance_research_agent.domain.regime import Regime
@@ -24,6 +30,9 @@ from finance_research_agent.market_data.historical import (
     MarketDataCoverage,
     MarketDataFeed,
 )
+
+_BASE_SOURCE_ROLES = (SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR)
+_ALL_SOURCE_ROLES = tuple(SourceRole)
 
 
 def _complete_risk_policy(*, sizing_enabled: bool = True) -> RiskPolicy:
@@ -57,8 +66,11 @@ def _complete_source_health(*overrides: SourceHealth) -> tuple[SourceHealth, ...
 
 def evaluate_data_quality(**kwargs: object) -> DataQualityResult:
     source_health = kwargs.pop("source_health", ())
+    source_roles = kwargs.pop("source_roles", _ALL_SOURCE_ROLES)
     assert isinstance(source_health, tuple)
+    assert isinstance(source_roles, tuple)
     return _evaluate_data_quality(
+        source_roles=source_roles,  # type: ignore[arg-type]
         source_health=_complete_source_health(*source_health),  # type: ignore[arg-type]
         **kwargs,  # type: ignore[arg-type]
     )
@@ -73,6 +85,226 @@ def _states(*, disabled: Capability | None = None) -> tuple[CapabilityState, ...
             evidence_ids=(),
         )
         for capability in Capability
+    )
+
+
+def test_quality_omitted_roles_disable_only_dependent_capabilities() -> None:
+    source_health = (
+        SourceHealth(provider="alpaca", available=True, required=True),
+        SourceHealth(provider="market-calendar", available=True, required=True),
+    )
+    quality = _evaluate_data_quality(
+        source_roles=_BASE_SOURCE_ROLES,
+        source_health=source_health,
+        risk_policy=_complete_risk_policy(),
+    )
+    capability_states = evaluate_capabilities(
+        source_roles=_BASE_SOURCE_ROLES,
+        source_health=source_health,
+        risk_policy=_complete_risk_policy(),
+    )
+
+    source_not_configured = ErrorCode.SOURCE_NOT_CONFIGURED
+    disabled = {
+        Capability.EVENT_RISK_CHECK_AVAILABLE,
+        Capability.SETUP_DETECTION_AVAILABLE,
+        Capability.PLAN_DRAFT_AVAILABLE,
+        Capability.POSITION_SIZING_AVAILABLE,
+        Capability.PORTFOLIO_HEAT_CHECK_AVAILABLE,
+    }
+    assert quality.status is DataQualityStatus.DEGRADED
+    assert {state.capability for state in quality.capabilities if not state.available} == disabled
+    assert all(
+        quality.capability(capability).reason_codes == (source_not_configured,)
+        for capability in disabled
+    )
+    assert all(
+        next(state for state in capability_states if state.capability is capability).reason_codes
+        == (source_not_configured,)
+        for capability in disabled
+    )
+    assert all(
+        quality.capability(capability).available
+        for capability in (
+            Capability.MARKET_SUMMARY_AVAILABLE,
+            Capability.REGIME_CLASSIFICATION_AVAILABLE,
+            Capability.WATCHLIST_METRICS_AVAILABLE,
+        )
+    )
+
+    macro_configured = (*_BASE_SOURCE_ROLES, SourceRole.MACRO_CALENDAR)
+    quality_with_macro = _evaluate_data_quality(
+        source_roles=macro_configured,
+        source_health=(
+            *source_health,
+            SourceHealth(provider="macro-calendar", available=True, required=True),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+    assert quality_with_macro.status is DataQualityStatus.DEGRADED
+    assert quality_with_macro.capability(Capability.PLAN_DRAFT_AVAILABLE).reason_codes == (
+        source_not_configured,
+    )
+    assert all(
+        quality_with_macro.capability(capability).available
+        for capability in (
+            Capability.EVENT_RISK_CHECK_AVAILABLE,
+            Capability.SETUP_DETECTION_AVAILABLE,
+            Capability.POSITION_SIZING_AVAILABLE,
+            Capability.PORTFOLIO_HEAT_CHECK_AVAILABLE,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "source_health",
+    [
+        (SourceHealth(provider="market-calendar", available=True, required=True),),
+        (SourceHealth(provider="alpaca", available=True, required=True),),
+        (
+            SourceHealth(provider="alpaca", available=True, required=False),
+            SourceHealth(provider="market-calendar", available=True, required=True),
+        ),
+    ],
+)
+def test_quality_requires_health_for_every_configured_role(
+    source_health: tuple[SourceHealth, ...],
+) -> None:
+    quality = _evaluate_data_quality(
+        source_roles=_BASE_SOURCE_ROLES,
+        source_health=source_health,
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert quality.status is DataQualityStatus.FAIL
+    assert quality.global_reason_codes == (ErrorCode.CONFIGURATION_INVALID,)
+    assert all(
+        ErrorCode.CONFIGURATION_INVALID in state.reason_codes
+        for state in quality.capabilities
+    )
+
+
+def test_configured_role_rejects_multiple_alternative_health_records() -> None:
+    quality = _evaluate_data_quality(
+        source_roles=(*_BASE_SOURCE_ROLES, SourceRole.MACRO_CALENDAR),
+        source_health=(
+            SourceHealth(provider="alpaca", available=True, required=True),
+            SourceHealth(provider="market-calendar", available=True, required=True),
+            SourceHealth(provider="macro-calendar", available=True, required=True),
+            SourceHealth(provider="macro", available=True, required=True),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert quality.status is DataQualityStatus.FAIL
+    assert ErrorCode.CONFIGURATION_INVALID in quality.global_reason_codes
+    assert quality.capability(Capability.EVENT_RISK_CHECK_AVAILABLE).reason_codes == (
+        ErrorCode.CONFIGURATION_INVALID,
+    )
+
+
+@pytest.mark.parametrize(
+    ("failed_provider", "error_code", "healthy_provider"),
+    [
+        ("alpaca", ErrorCode.CREDENTIALS_MISSING, "market-calendar"),
+        ("market-calendar", ErrorCode.MARKET_CALENDAR_UNAVAILABLE, "alpaca"),
+    ],
+)
+def test_unavailable_market_data_or_calendar_role_fails_globally(
+    failed_provider: str, error_code: ErrorCode, healthy_provider: str
+) -> None:
+    quality = _evaluate_data_quality(
+        source_roles=_BASE_SOURCE_ROLES,
+        source_health=(
+            SourceHealth(provider=healthy_provider, available=True, required=True),
+            SourceHealth(
+                provider=failed_provider,
+                available=False,
+                required=True,
+                error_code=error_code,
+                message="configured source unavailable",
+            ),
+        ),
+        risk_policy=_complete_risk_policy(),
+    )
+
+    assert quality.status is DataQualityStatus.FAIL
+    assert quality.global_reason_codes == (error_code,)
+    assert all(not state.available for state in quality.capabilities)
+    assert all(error_code in state.reason_codes for state in quality.capabilities)
+
+
+def test_quality_rejects_health_for_an_omitted_role() -> None:
+    with pytest.raises(ValueError, match="not configured"):
+        _evaluate_data_quality(
+            source_roles=_BASE_SOURCE_ROLES,
+            source_health=(
+                SourceHealth(provider="alpaca", available=True, required=True),
+                SourceHealth(provider="market-calendar", available=True, required=True),
+                SourceHealth(provider="macro-calendar", available=True, required=True),
+            ),
+            risk_policy=_complete_risk_policy(),
+        )
+
+
+def test_quality_rejects_failures_for_an_omitted_role() -> None:
+    with pytest.raises(ValueError, match="not configured"):
+        _evaluate_data_quality(
+            source_roles=_BASE_SOURCE_ROLES,
+            source_health=(
+                SourceHealth(provider="alpaca", available=True, required=True),
+                SourceHealth(provider="market-calendar", available=True, required=True),
+            ),
+            provider_failures=(
+                ProviderFailure(
+                    provider="macro-calendar",
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=False,
+                ),
+            ),
+            risk_policy=_complete_risk_policy(),
+        )
+    with pytest.raises(ValueError, match="not configured"):
+        _evaluate_data_quality(
+            source_roles=_BASE_SOURCE_ROLES,
+            source_health=(
+                SourceHealth(provider="alpaca", available=True, required=True),
+                SourceHealth(provider="market-calendar", available=True, required=True),
+            ),
+            current_price_failures=(
+                ProviderFailure(
+                    provider="macro-calendar",
+                    symbol="MSFT",
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=False,
+                ),
+            ),
+            risk_policy=_complete_risk_policy(),
+        )
+
+
+@pytest.mark.parametrize(
+    "source_roles",
+    [
+        [SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR],
+        (SourceRole.MARKET_DATA, SourceRole.MARKET_DATA),
+        (SourceRole.MARKET_DATA,),
+        (SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR, "macro-calendar"),
+    ],
+)
+def test_both_quality_evaluators_reject_invalid_source_role_tuples(
+    source_roles: object,
+) -> None:
+    health = (
+        SourceHealth(provider="alpaca", available=True, required=True),
+        SourceHealth(provider="market-calendar", available=True, required=True),
+    )
+    for evaluator in (evaluate_capabilities, _evaluate_data_quality):
+        with pytest.raises(ValueError):
+            evaluator(  # type: ignore[call-arg]
+                source_roles=source_roles,  # type: ignore[arg-type]
+                source_health=health,
+                risk_policy=_complete_risk_policy(),
     )
 
 
@@ -348,6 +580,7 @@ def test_each_historical_failure_reason_blocks_only_its_symbol(
 
 def test_incomplete_health_snapshot_fails_closed_with_stable_reason() -> None:
     result = _evaluate_data_quality(
+        source_roles=_ALL_SOURCE_ROLES,
         source_health=(SourceHealth(provider="alpaca", available=True, required=True),),
         risk_policy=_complete_risk_policy(),
     )
@@ -360,6 +593,7 @@ def test_incomplete_health_snapshot_fails_closed_with_stable_reason() -> None:
 
 def test_empty_health_snapshot_fails_closed_with_stable_reason() -> None:
     result = _evaluate_data_quality(
+        source_roles=_ALL_SOURCE_ROLES,
         source_health=(),
         risk_policy=_complete_risk_policy(),
     )
@@ -377,6 +611,7 @@ def test_required_health_role_must_be_affirmatively_required() -> None:
     )
 
     result = _evaluate_data_quality(
+        source_roles=_ALL_SOURCE_ROLES,
         source_health=health,
         risk_policy=_complete_risk_policy(),
     )
@@ -392,6 +627,7 @@ def test_duplicate_source_health_provider_is_rejected_as_ambiguous() -> None:
 
     with pytest.raises(ValueError, match="source health providers must be unique"):
         _evaluate_data_quality(
+            source_roles=_ALL_SOURCE_ROLES,
             source_health=(*health, health[0]),
             risk_policy=_complete_risk_policy(),
         )
@@ -399,6 +635,7 @@ def test_duplicate_source_health_provider_is_rejected_as_ambiguous() -> None:
 
 def test_effective_symbol_capabilities_combine_global_and_symbol_restrictions() -> None:
     result = _evaluate_data_quality(
+        source_roles=_ALL_SOURCE_ROLES,
         source_health=_complete_source_health(
             SourceHealth(
                 provider="macro-calendar",
@@ -429,6 +666,7 @@ def test_effective_symbol_capabilities_combine_global_and_symbol_restrictions() 
 
 def test_symbol_plan_status_keeps_strongest_restriction_independent_of_failure_order() -> None:
     result = _evaluate_data_quality(
+        source_roles=_ALL_SOURCE_ROLES,
         source_health=_complete_source_health(),
         provider_failures=(
             ProviderFailure(
@@ -464,6 +702,7 @@ def test_symbol_provider_failures_follow_source_role_dependencies(
     provider: str, expected_disabled: tuple[Capability, ...]
 ) -> None:
     result = _evaluate_data_quality(
+        source_roles=_ALL_SOURCE_ROLES,
         source_health=_complete_source_health(),
         provider_failures=(
             ProviderFailure(

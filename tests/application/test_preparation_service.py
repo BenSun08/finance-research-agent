@@ -13,6 +13,7 @@ from finance_research_agent.domain.enums import (
     DataQualityStatus,
     ExecutionStatus,
     GateStatus,
+    SourceRole,
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
@@ -133,6 +134,7 @@ def test_stage_research_packet_continues_after_quality_checkpoint(tmp_path, vali
     )
     frozen = repository.freeze_evidence(packet.run.run_id, packet.run.evidence_cutoff_at)
     quality = evaluate_data_quality(
+        source_roles=tuple(SourceRole),
         source_health=(
             SourceHealth(provider="alpaca", available=True, required=True),
             SourceHealth(provider="market-calendar", available=True, required=True),
@@ -191,6 +193,7 @@ def test_failed_quality_checkpoint_cannot_stage_research_packet(tmp_path, valid_
         failed_packet.run.run_id, failed_packet.run.evidence_cutoff_at
     )
     quality = evaluate_data_quality(
+        source_roles=tuple(SourceRole),
         source_health=(
             SourceHealth(provider="alpaca", available=True, required=True),
             SourceHealth(provider="market-calendar", available=True, required=True),
@@ -313,6 +316,48 @@ def test_staged_reduced_report_discloses_gates_capabilities_and_exclusions(
     assert b"gate-stale: WARNING (STALE\\_DATA)" in report
     assert b"Disabled capability: PLAN_DRAFT_AVAILABLE (STALE_DATA)" in report
     assert b"AAA: STALE\\_DATA" in report
+
+
+def test_staged_reduced_report_discloses_source_not_configured_capabilities(
+    tmp_path, valid_packet
+) -> None:
+    quality = evaluate_data_quality(
+        source_roles=(SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR),
+        source_health=(
+            SourceHealth(provider="alpaca", available=True, required=True),
+            SourceHealth(provider="market-calendar", available=True, required=True),
+        ),
+        risk_policy=None,
+    )
+    run = valid_packet.run.model_copy(update={"data_quality_status": quality.status})
+    packet = _awaiting_packet(
+        build_research_packet(
+            run=run,
+            evidence=valid_packet.evidence,
+            snapshots=valid_packet.market,
+            events=valid_packet.events,
+            metrics=valid_packet.metrics,
+            gates=valid_packet.gates,
+            candidates=valid_packet.candidates,
+            exclusions=valid_packet.candidate_exclusions,
+            plans=valid_packet.deterministic_plan_inputs,
+            capabilities=quality.capabilities,
+            observations=valid_packet.prior_plan_observations,
+            max_serialized_bytes=valid_packet.synthesis_constraints.max_serialized_bytes,
+        )
+    )
+    repository = _repository_for_packet(tmp_path, packet)
+
+    stage_research_packet(
+        repository, packet, packet.run.evidence_cutoff_at + timedelta(seconds=1)
+    )
+
+    report = repository.read_staged_artifact(packet.run.run_id, "reduced_report")
+    assert report is not None
+    assert b"Data quality status: DEGRADED" in report
+    assert b"Disabled capability: EVENT_RISK_CHECK_AVAILABLE (SOURCE_NOT_CONFIGURED)" in report
+    assert b"Disabled capability: PLAN_DRAFT_AVAILABLE (SOURCE_NOT_CONFIGURED)" in report
+    assert b"event-risk check passed" not in report.lower()
 
 
 def test_stage_research_packet_retry_is_idempotent(tmp_path, valid_packet) -> None:
