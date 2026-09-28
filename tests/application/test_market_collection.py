@@ -451,3 +451,85 @@ def test_collect_market_data_requires_final_expected_session_before_provider_cal
         )
 
     assert calls == []
+
+
+def test_collect_market_data_for_market_date_resolves_completed_session_bounds() -> None:
+    from finance_research_agent.application.market_collection import (
+        collect_market_data_for_market_date,
+    )
+
+    calls: list[str] = []
+    requests: list[tuple[date, date, tuple[date, ...], date]] = []
+
+    class RecordingMarketData(_MarketData):
+        def fetch_daily_bars(
+            self,
+            symbols: Sequence[str],
+            start: date,
+            end: date,
+            *,
+            expected_sessions: tuple[date, ...] | None = None,
+            completed_through_session: date | None = None,
+            evidence_cutoff_at: datetime | None = None,
+            instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+        ) -> Mapping[str, tuple[CompletedDailyBar, ...] | ProviderFailure]:
+            assert expected_sessions is not None
+            assert completed_through_session is not None
+            requests.append((start, end, expected_sessions, completed_through_session))
+            return super().fetch_daily_bars(
+                symbols,
+                start,
+                end,
+                expected_sessions=expected_sessions,
+                completed_through_session=completed_through_session,
+                evidence_cutoff_at=evidence_cutoff_at,
+                instrument_identities=instrument_identities,
+            )
+
+    calendar = _TradingCalendar(
+        {
+            date(2026, 9, 24),
+            date(2026, 9, 25),
+            date(2026, 9, 28),  # The requested market date is exclusive.
+        }
+    )
+    market_data = RecordingMarketData(calls)
+
+    result = collect_market_data_for_market_date(
+        market_data,
+        _Clock(calls),
+        cast(TradingCalendar, calendar),
+        ("AAPL", "MSFT"),
+        market_date=date(2026, 9, 28),
+        session_count=2,
+    )
+
+    assert requests == [
+        (
+            date(2026, 9, 24),
+            date(2026, 9, 25),
+            (date(2026, 9, 24), date(2026, 9, 25)),
+            date(2026, 9, 25),
+        )
+    ]
+    assert calls == ["instruments", "daily_bars", "premarket", "clock"]
+    assert result.completed_at == COLLECTED_AT
+
+
+def test_collect_market_data_for_market_date_rejects_invalid_window_before_provider_call() -> None:
+    from finance_research_agent.application.market_collection import (
+        collect_market_data_for_market_date,
+    )
+
+    calls: list[str] = []
+    with pytest.raises(ValueError, match="session_count"):
+        collect_market_data_for_market_date(
+            _MarketData(calls),
+            _Clock(calls),
+            cast(TradingCalendar, _TradingCalendar({date(2026, 9, 25)})),
+            ("AAPL", "MSFT"),
+            market_date=date(2026, 9, 28),
+            session_count=0,
+        )
+
+    assert calls == []
