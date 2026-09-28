@@ -5,7 +5,7 @@ from datetime import datetime
 
 from finance_research_agent.application.ports import RunRepository
 from finance_research_agent.application.reduced_report import render_reduced_report_base
-from finance_research_agent.domain.enums import ExecutionStatus
+from finance_research_agent.domain.enums import DataQualityStatus, ExecutionStatus
 from finance_research_agent.domain.models import RunCheckpoint
 from finance_research_agent.domain.packets import ResearchPacket
 from finance_research_agent.domain.types import FrozenMap
@@ -58,10 +58,16 @@ def stage_research_packet(
     latest = stored.checkpoints[-1]
     if latest.stage not in {
         "EVIDENCE_FROZEN",
+        "QUALITY_EVALUATED",
         ExecutionStatus.AWAITING_SYNTHESIS.value,
         ExecutionStatus.VALIDATING.value,
     }:
         raise ValueError("research packet cannot be staged from the current checkpoint")
+    if (
+        latest.stage == "QUALITY_EVALUATED"
+        and latest.data_quality_status is DataQualityStatus.FAIL
+    ):
+        raise ValueError("FAIL quality requires the operational report path")
     if (
         latest.data_quality_status is not packet_context.data_quality_status
         or latest.delivery_status is not packet_context.delivery_status

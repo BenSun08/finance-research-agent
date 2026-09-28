@@ -8,9 +8,21 @@ from finance_research_agent.adapters.filesystem import FileSystemRunRepository
 from finance_research_agent.application.packet_service import build_research_packet
 from finance_research_agent.application.preparation_service import stage_research_packet
 from finance_research_agent.application.reduced_report import render_reduced_report_base
-from finance_research_agent.domain.enums import Capability, ExecutionStatus, GateStatus
+from finance_research_agent.domain.enums import (
+    Capability,
+    DataQualityStatus,
+    ExecutionStatus,
+    GateStatus,
+)
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.models import CapabilityState, GateResult, RunCheckpoint
+from finance_research_agent.domain.models import (
+    CapabilityState,
+    GateResult,
+    ProviderFailure,
+    RunCheckpoint,
+    SourceHealth,
+)
+from finance_research_agent.domain.quality import evaluate_data_quality
 from finance_research_agent.domain.setups import CandidateExclusion
 from finance_research_agent.domain.types import FrozenMap
 
@@ -86,6 +98,128 @@ def test_stage_research_packet_persists_canonical_bytes_and_checkpoint(
         "reduced_report": hashlib.sha256(reduced).hexdigest(),
     })
     assert stored.checkpoints[-1].execution_status is ExecutionStatus.AWAITING_SYNTHESIS
+
+
+def test_stage_research_packet_continues_after_quality_checkpoint(tmp_path, valid_packet) -> None:
+    from finance_research_agent.application.quality_checkpoint import (
+        checkpoint_market_data_quality,
+    )
+
+    packet = _awaiting_packet(valid_packet)
+    repository = FileSystemRunRepository(tmp_path)
+    initial = packet.run.model_copy(
+        update={
+            "execution_status": ExecutionStatus.ANALYZING,
+            "evidence_cutoff_at": None,
+        }
+    )
+    repository.create(initial)
+    collection_digest = repository.stage_artifact(
+        packet.run.run_id, "market_data_collection", b"canonical collection fixture"
+    )
+    repository.checkpoint(
+        packet.run.run_id,
+        RunCheckpoint(
+            run_id=packet.run.run_id,
+            stage="EVIDENCE_COLLECTED",
+            execution_status=ExecutionStatus.ANALYZING,
+            data_quality_status=packet.run.data_quality_status,
+            delivery_status=packet.run.delivery_status,
+            written_at=initial.invoked_at,
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({"market_data_collection": collection_digest}),
+            resumable=True,
+        ),
+    )
+    frozen = repository.freeze_evidence(packet.run.run_id, packet.run.evidence_cutoff_at)
+    quality = evaluate_data_quality(
+        source_health=(
+            SourceHealth(provider="alpaca", available=True, required=True),
+            SourceHealth(provider="market-calendar", available=True, required=True),
+            SourceHealth(provider="macro", available=True, required=True),
+            SourceHealth(provider="sec_edgar", available=True, required=True),
+        ),
+        risk_policy=None,
+    )
+    assert quality.status is packet.run.data_quality_status
+    quality_checkpoint = checkpoint_market_data_quality(
+        repository,
+        frozen,
+        quality,
+        checkpointed_at=packet.run.evidence_cutoff_at + timedelta(seconds=1),
+    )
+
+    stage_research_packet(
+        repository, packet, packet.run.evidence_cutoff_at + timedelta(seconds=2)
+    )
+
+    stored = repository.load(packet.run.run_id)
+    assert stored is not None
+    assert stored.checkpoints[-2] == quality_checkpoint.checkpoints[-1]
+    assert stored.checkpoints[-1].stage == "AWAITING_SYNTHESIS"
+
+
+def test_failed_quality_checkpoint_cannot_stage_research_packet(tmp_path, valid_packet) -> None:
+    from finance_research_agent.application.quality_checkpoint import (
+        checkpoint_market_data_quality,
+    )
+
+    packet = _awaiting_packet(valid_packet)
+    failed_run = packet.run.model_copy(update={"data_quality_status": DataQualityStatus.FAIL})
+    failed_packet = _packet_with_run(packet, failed_run)
+    repository = FileSystemRunRepository(tmp_path)
+    initial = failed_packet.run.model_copy(update={"evidence_cutoff_at": None})
+    repository.create(initial)
+    collection_digest = repository.stage_artifact(
+        failed_packet.run.run_id, "market_data_collection", b"canonical collection fixture"
+    )
+    repository.checkpoint(
+        failed_packet.run.run_id,
+        RunCheckpoint(
+            run_id=failed_packet.run.run_id,
+            stage="EVIDENCE_COLLECTED",
+            execution_status=ExecutionStatus.ANALYZING,
+            data_quality_status=DataQualityStatus.PASS,
+            delivery_status=failed_packet.run.delivery_status,
+            written_at=initial.invoked_at,
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({"market_data_collection": collection_digest}),
+            resumable=True,
+        ),
+    )
+    frozen = repository.freeze_evidence(
+        failed_packet.run.run_id, failed_packet.run.evidence_cutoff_at
+    )
+    quality = evaluate_data_quality(
+        source_health=(
+            SourceHealth(provider="alpaca", available=True, required=True),
+            SourceHealth(provider="market-calendar", available=True, required=True),
+            SourceHealth(provider="macro", available=True, required=True),
+            SourceHealth(provider="sec_edgar", available=True, required=True),
+        ),
+        provider_failures=(
+            ProviderFailure(
+                provider="alpaca",
+                symbol=None,
+                error_code=ErrorCode.CREDENTIALS_MISSING,
+                retryable=False,
+            ),
+        ),
+        risk_policy=None,
+    )
+    checkpoint_market_data_quality(
+        repository,
+        frozen,
+        quality,
+        checkpointed_at=failed_packet.run.evidence_cutoff_at + timedelta(seconds=1),
+    )
+
+    with pytest.raises(ValueError, match="FAIL quality requires the operational report path"):
+        stage_research_packet(
+            repository,
+            failed_packet,
+            failed_packet.run.evidence_cutoff_at + timedelta(seconds=2),
+        )
 
 
 def test_staged_reduced_report_uses_only_deterministic_packet_fields(
