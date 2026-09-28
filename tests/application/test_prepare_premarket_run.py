@@ -166,6 +166,73 @@ def test_duplicate_scheduled_run_reuses_stored_context_without_loading_configura
     assert config.calls == 0
 
 
+def test_late_scheduled_retry_uses_the_existing_runs_original_window_decision(
+    tmp_path: Path,
+) -> None:
+    first_dependencies, _, _, _ = _dependencies(tmp_path)
+    first = prepare_premarket_run(_request(), first_dependencies)
+    assert first.stored_run is not None
+
+    late_dependencies, config, _, _ = _dependencies(
+        tmp_path,
+        CountingConfigurationRepository(fail_on_load=True),
+        clock=FixedClock(datetime(2026, 9, 28, 13, 30, tzinfo=UTC)),
+    )
+    retry = prepare_premarket_run(_request(), late_dependencies)
+
+    assert retry.stored_run == first.stored_run
+    assert retry.window_decision.delivery_status is DeliveryStatus.ON_TIME
+    assert retry.window_decision.publish_missed_report is False
+    assert retry.window_decision.reason_code == "ON_TIME"
+    assert config.calls == 0
+
+
+def test_published_missed_window_retry_does_not_request_publication_again(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    late_clock = FixedClock(datetime(2026, 9, 28, 13, 30, tzinfo=UTC))
+    dependencies, config, _, repository = _dependencies(tmp_path, clock=late_clock)
+    first = prepare_premarket_run(_request(), dependencies)
+    assert first.stored_run is not None
+    assert first.window_decision.publish_missed_report
+
+    published_stored_run = first.stored_run.model_copy(update={"published": True})
+    monkeypatch.setattr(repository, "load", lambda _run_id: published_stored_run)
+
+    retry = prepare_premarket_run(_request(), dependencies)
+
+    assert retry.stored_run is not None and retry.stored_run.published
+    assert retry.window_decision.publish_missed_report is False
+    assert config.calls == 1
+
+
+def test_scheduled_retry_reuses_existing_manual_revision_with_its_original_decision(
+    tmp_path: Path,
+) -> None:
+    manual_dependencies, _, _, _ = _dependencies(
+        tmp_path,
+        clock=FixedClock(datetime(2026, 9, 28, 12, 50, tzinfo=UTC)),
+    )
+    manual = prepare_premarket_run(
+        _request(InvocationType.MANUAL, requested_revision=1), manual_dependencies
+    )
+    assert manual.stored_run is not None
+    assert manual.stored_run.run.delivery_status is DeliveryStatus.MANUAL
+
+    scheduled_dependencies, config, _, _ = _dependencies(
+        tmp_path,
+        CountingConfigurationRepository(fail_on_load=True),
+        clock=FixedClock(datetime(2026, 9, 28, 12, 55, tzinfo=UTC)),
+    )
+    retry = prepare_premarket_run(_request(), scheduled_dependencies)
+
+    assert retry.stored_run == manual.stored_run
+    assert retry.window_decision.delivery_status is DeliveryStatus.MANUAL
+    assert retry.window_decision.reason_code == "MANUAL"
+    assert config.calls == 0
+
+
 def test_exact_unpublished_manual_revision_resumes_without_loading_configuration(
     tmp_path: Path,
 ) -> None:

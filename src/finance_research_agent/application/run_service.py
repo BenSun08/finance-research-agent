@@ -1,6 +1,6 @@
 """Deterministic Product A premarket run preparation service."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 from finance_research_agent import __version__
@@ -12,9 +12,7 @@ from finance_research_agent.application.ports import (
     MarketDataProvider,
     RunRepository,
 )
-from finance_research_agent.domain.enums import (
-    InvocationType,
-)
+from finance_research_agent.domain.enums import DeliveryStatus, InvocationType
 from finance_research_agent.domain.market_calendar import (
     RunWindowDecision,
     TradingCalendar,
@@ -104,7 +102,25 @@ def prepare_premarket_run(
         if stored is not None:
             if request.invocation is InvocationType.MANUAL and stored.published:
                 raise ValueError("cannot resume a published manual revision")
-            return PreparePremarketRunResult(decision, stored)
+            stored_invocation = (
+                InvocationType.MANUAL
+                if stored.run.delivery_status is DeliveryStatus.MANUAL
+                else InvocationType.SCHEDULED
+            )
+            stored_decision = resolve_run_window(
+                stored.run.invoked_at,
+                dependencies.calendar,
+                stored.run.market_date,
+                stored_invocation,
+            )
+            if (
+                not stored_decision.should_run
+                or stored_decision.delivery_status is not stored.run.delivery_status
+            ):
+                raise RuntimeError("stored run window decision does not match its context")
+            if stored.published and stored_decision.publish_missed_report:
+                stored_decision = replace(stored_decision, publish_missed_report=False)
+            return PreparePremarketRunResult(stored_decision, stored)
 
     if decision.delivery_status is None:
         raise RuntimeError("runnable window decision must include delivery status")
