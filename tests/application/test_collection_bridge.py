@@ -236,6 +236,83 @@ def test_collection_bridge_rejects_daily_bars_from_mixed_providers() -> None:
         collection_to_packet_inputs(collection, authority_tier=2)
 
 
+def test_collection_bridge_rejects_conflicting_data_identities_without_instrument() -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collection_to_packet_inputs,
+    )
+
+    collection = MarketDataCollection(
+        symbols=(
+            SymbolMarketCollection(
+                symbol="AAPL",
+                instrument=ProviderFailure(
+                    provider="alpaca",
+                    symbol="AAPL",
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                ),
+                daily_bars=(_bar(),),
+                premarket_observation=_price().model_copy(
+                    update={"instrument_id": "NASDAQ:MSFT"}
+                ),
+            ),
+        ),
+        completed_at=_RETRIEVED,
+    )
+
+    with pytest.raises(ValueError, match="market outcomes contain multiple instrument identities"):
+        collection_to_packet_inputs(collection, authority_tier=2)
+
+
+def test_collection_bridge_rejects_daily_bar_retrieval_after_completion() -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collection_to_packet_inputs,
+    )
+
+    late_bar = _bar().model_copy(update={"retrieved_at": _RETRIEVED + timedelta(seconds=1)})
+    collection = MarketDataCollection(
+        symbols=(
+            SymbolMarketCollection(
+                symbol="AAPL",
+                instrument=_instrument(),
+                daily_bars=(late_bar,),
+                premarket_observation=_price(),
+            ),
+        ),
+        completed_at=_RETRIEVED,
+    )
+
+    with pytest.raises(ValueError, match="daily-bar retrieval is after collection completion"):
+        collection_to_packet_inputs(collection, authority_tier=2)
+
+
+def test_collection_bridge_rejects_price_retrieval_after_completion() -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collection_to_packet_inputs,
+    )
+
+    late_price = _price().model_copy(update={"retrieved_at": _RETRIEVED + timedelta(seconds=1)})
+    collection = MarketDataCollection(
+        symbols=(
+            SymbolMarketCollection(
+                symbol="AAPL",
+                instrument=_instrument(),
+                daily_bars=ProviderFailure(
+                    provider="alpaca",
+                    symbol="AAPL",
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                ),
+                premarket_observation=late_price,
+            ),
+        ),
+        completed_at=_RETRIEVED,
+    )
+
+    with pytest.raises(ValueError, match="price retrieval is after collection completion"):
+        collection_to_packet_inputs(collection, authority_tier=2)
+
+
 def test_global_provider_failure_remains_globally_scoped_in_evidence() -> None:
     from finance_research_agent.application.collection_bridge import (
         collection_to_packet_inputs,

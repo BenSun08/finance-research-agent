@@ -145,6 +145,7 @@ def _project_symbol(
 ) -> tuple[MarketSnapshot | None, tuple[EvidenceItem, ...]]:
     evidence: list[EvidenceItem] = []
     sources: list[SourceObservation] = []
+    outcome_instrument_ids: set[str] = set()
     instrument_result = item.instrument
     if isinstance(instrument_result, ProviderFailure):
         source, failure_evidence = _failure_input(
@@ -182,6 +183,7 @@ def _project_symbol(
         ):
             raise TypeError("collection daily-bars result is invalid")
         bar_instrument_ids = {bar.instrument_id for bar in daily_bars}
+        outcome_instrument_ids.update(bar_instrument_ids)
         if instrument is not None and bar_instrument_ids != {instrument.instrument_id}:
             raise ValueError("collection daily-bar identity differs from its instrument")
         if len(bar_instrument_ids) > 1:
@@ -246,6 +248,7 @@ def _project_symbol(
             raise ValueError("collection price identity differs from its instrument")
         if price_result.retrieved_at > completed_at:
             raise ValueError("collection price retrieval is after collection completion")
+        outcome_instrument_ids.add(price_result.instrument_id)
         price_payload: dict[str, JsonValue] = {
             "outcome": "PREMARKET_PRICE",
             "symbol": item.symbol,
@@ -269,6 +272,9 @@ def _project_symbol(
         sources.append(source)
         evidence.append(price_evidence)
         latest_price = price_result.model_copy(update={"evidence_id": price_evidence.evidence_id})
+
+    if len(outcome_instrument_ids) > 1:
+        raise ValueError("collection market outcomes contain multiple instrument identities")
 
     if instrument is None:
         return None, tuple(evidence)
