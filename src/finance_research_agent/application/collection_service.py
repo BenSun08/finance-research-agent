@@ -117,6 +117,31 @@ def collect_market_data_for_run(
     )
 
 
+def load_frozen_market_data_for_run(
+    run: RunContext,
+    repository: RunRepository,
+) -> CollectedRunMarketData:
+    """Reload the exact stored collection after evidence has been frozen."""
+    stored = repository.load(run.run_id)
+    if stored is None or stored.published:
+        raise ValueError("frozen collection requires the current unpublished run")
+    if stored.run.model_copy(update={"evidence_cutoff_at": None}) != run.model_copy(
+        update={"evidence_cutoff_at": None}
+    ):
+        raise ValueError("frozen collection requires the current stored run context")
+    if (
+        stored.evidence_cutoff_at is None
+        or run.evidence_cutoff_at not in (None, stored.evidence_cutoff_at)
+    ):
+        raise ValueError("frozen collection requires a matching evidence cutoff")
+    collection = _stored_collection(stored, repository)
+    if stored.evidence_cutoff_at != collection.completed_at:
+        raise ValueError("frozen evidence cutoff differs from collected completion time")
+    if not _collection_symbols_match(run, collection):
+        raise ValueError("staged market-data collection symbols differ from frozen configuration")
+    return CollectedRunMarketData(frozen_run=stored, collection=collection)
+
+
 def collect_and_freeze_market_data_for_run(
     run: RunContext,
     repository: RunRepository,
@@ -138,14 +163,7 @@ def collect_and_freeze_market_data_for_run(
         raise ValueError("run evidence cutoff differs from the stored run")
 
     if stored.evidence_cutoff_at is not None:
-        collection = _stored_collection(stored, repository)
-        if stored.evidence_cutoff_at != collection.completed_at:
-            raise ValueError("frozen evidence cutoff differs from collected completion time")
-        if not _collection_symbols_match(run, collection):
-            raise ValueError(
-                "staged market-data collection symbols differ from frozen configuration"
-            )
-        return CollectedRunMarketData(frozen_run=stored, collection=collection)
+        return load_frozen_market_data_for_run(run, repository)
     if stored.run.evidence_cutoff_at is not None or run.evidence_cutoff_at is not None:
         raise ValueError("run evidence cutoff is inconsistent")
 
