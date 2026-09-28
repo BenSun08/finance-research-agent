@@ -332,3 +332,119 @@ def test_collect_market_data_for_run_rejects_collection_after_cutoff(valid_packe
         )
 
     assert market_data.requested_symbols is None
+
+
+def test_collect_and_freeze_run_binds_cutoff_after_successful_collection(
+    valid_packet, tmp_path: Path
+) -> None:
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.collection_service import (
+        collect_and_freeze_market_data_for_run,
+    )
+
+    repository = FileSystemRunRepository(tmp_path)
+    run = _run(valid_packet)
+    repository.create(run)
+    market_data = _MarketData()
+
+    result = collect_and_freeze_market_data_for_run(
+        run,
+        repository,
+        cast(MarketDataProvider, market_data),
+        cast(Clock, _Clock()),
+        cast(TradingCalendar, _Calendar()),
+    )
+
+    assert result.collection.completed_at == COMPLETED_AT
+    assert result.frozen_run.run_id == run.run_id
+    assert result.frozen_run.evidence_cutoff_at == COMPLETED_AT
+    assert result.frozen_run.run.evidence_cutoff_at == COMPLETED_AT
+    assert result.frozen_run.checkpoints[-1].stage == "EVIDENCE_FROZEN"
+    assert result.frozen_run.checkpoints[-1].evidence_cutoff_at == COMPLETED_AT
+    assert repository.load(run.run_id) == result.frozen_run
+
+
+def test_collect_and_freeze_run_does_not_freeze_after_collection_failure(
+    valid_packet, tmp_path: Path
+) -> None:
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.collection_service import (
+        collect_and_freeze_market_data_for_run,
+    )
+
+    class FailingMarketData(_MarketData):
+        def fetch_instruments(
+            self, symbols: Sequence[str]
+        ) -> Mapping[str, InstrumentIdentity | ProviderFailure]:
+            self.requested_symbols = tuple(symbols)
+            raise RuntimeError("offline provider failure")
+
+    repository = FileSystemRunRepository(tmp_path)
+    run = _run(valid_packet)
+    repository.create(run)
+
+    with pytest.raises(RuntimeError, match="offline provider failure"):
+        collect_and_freeze_market_data_for_run(
+            run,
+            repository,
+            cast(MarketDataProvider, FailingMarketData()),
+            cast(Clock, _Clock()),
+            cast(TradingCalendar, _Calendar()),
+        )
+
+    stored = repository.load(run.run_id)
+    assert stored is not None
+    assert stored.evidence_cutoff_at is None
+    assert stored.run.evidence_cutoff_at is None
+    assert stored.checkpoints == ()
+
+
+def test_collect_and_freeze_run_rejects_already_frozen_before_provider_call(
+    valid_packet, tmp_path: Path
+) -> None:
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.collection_service import (
+        collect_and_freeze_market_data_for_run,
+    )
+
+    repository = FileSystemRunRepository(tmp_path)
+    run = _run(valid_packet)
+    repository.create(run)
+    repository.freeze_evidence(run.run_id, COMPLETED_AT)
+    market_data = _MarketData()
+
+    with pytest.raises(ValueError, match="already frozen"):
+        collect_and_freeze_market_data_for_run(
+            run,
+            repository,
+            cast(MarketDataProvider, market_data),
+            cast(Clock, _Clock()),
+            cast(TradingCalendar, _Calendar()),
+        )
+
+    assert market_data.requested_symbols is None
+
+
+def test_collect_and_freeze_run_rejects_stale_context_before_provider_call(
+    valid_packet, tmp_path: Path
+) -> None:
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.collection_service import (
+        collect_and_freeze_market_data_for_run,
+    )
+
+    repository = FileSystemRunRepository(tmp_path)
+    run = _run(valid_packet)
+    repository.create(run)
+    market_data = _MarketData()
+
+    with pytest.raises(ValueError, match="stored run"):
+        collect_and_freeze_market_data_for_run(
+            run.model_copy(update={"execution_status": type(run.execution_status).FAILED}),
+            repository,
+            cast(MarketDataProvider, market_data),
+            cast(Clock, _Clock()),
+            cast(TradingCalendar, _Calendar()),
+        )
+
+    assert market_data.requested_symbols is None
