@@ -14,6 +14,7 @@ from finance_research_agent.adapters.http_client import (
     RequestTransportUnavailable,
     SafeHttpClient,
 )
+from finance_research_agent.domain.enums import SourceRole
 from finance_research_agent.domain.models import (
     CompletedDailyBar,
     InstrumentIdentity,
@@ -79,6 +80,7 @@ def _provider(
 
     policy = SourcePolicy(
         version="1",
+        quality_source_roles=(SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR),
         allowed_adapters=("alpaca",),
         allowed_https_domains=("api.alpaca.markets", "data.alpaca.markets"),
         allowed_hosts_by_adapter=FrozenMap(

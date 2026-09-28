@@ -1,5 +1,6 @@
 import pytest
 
+import finance_research_agent.domain.enums as enums
 from finance_research_agent.domain.enums import (
     Capability,
     ClaimType,
@@ -74,3 +75,17 @@ def test_error_codes_are_closed_typed_product_a_failures() -> None:
     assert ErrorCode("PORTFOLIO_HEAT_UNAVAILABLE") is ErrorCode.PORTFOLIO_HEAT_UNAVAILABLE
     with pytest.raises(ValueError):
         ErrorCode("ORDER_REJECTED")
+
+
+def test_source_role_values_are_closed_and_stable() -> None:
+    assert hasattr(enums, "SourceRole"), "SourceRole must define the quality role vocabulary"
+    source_role = getattr(enums, "SourceRole")
+
+    assert {member.value for member in source_role} == {
+        "market-data",
+        "market-calendar",
+        "macro-calendar",
+        "official-verification",
+    }
+    with pytest.raises(ValueError):
+        source_role("unconfigured-source")

@@ -16,6 +16,7 @@ from finance_research_agent.adapters.http_client import (
     SafeHttpClient,
     _PinnedNetworkBackend,
 )
+from finance_research_agent.domain.enums import SourceRole
 from finance_research_agent.domain.policies import SourcePolicy
 from finance_research_agent.domain.types import FrozenMap
 
@@ -27,6 +28,7 @@ TEST_DEADLINE = datetime(2026, 9, 21, 13, tzinfo=UTC)
 def source_policy() -> SourcePolicy:
     return SourcePolicy(
         version="1",
+        quality_source_roles=(SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR),
         allowed_adapters=("company_ir", "sec"),
         allowed_https_domains=("example.test",),
         allowed_hosts_by_adapter=FrozenMap(

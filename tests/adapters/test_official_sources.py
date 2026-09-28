@@ -15,6 +15,7 @@ from finance_research_agent.adapters.company_ir import CompanyIrAdapter
 from finance_research_agent.adapters.http_client import SafeHttpClient
 from finance_research_agent.adapters.macro import MacroCalendarAdapter, MacroCalendarSource
 from finance_research_agent.adapters.sec import SecEdgarAdapter
+from finance_research_agent.domain.enums import SourceRole
 from finance_research_agent.domain.models import EventRecord, EvidenceItem, SourceHealth
 from finance_research_agent.domain.policies import SourcePolicy, WatchlistItem
 from finance_research_agent.domain.types import FrozenMap
@@ -37,6 +38,7 @@ def _policy() -> SourcePolicy:
     )
     return SourcePolicy(
         version="1",
+        quality_source_roles=(SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR),
         allowed_adapters=("sec_edgar", "macro", "company_ir", "alpaca_news"),
         allowed_https_domains=hosts,
         allowed_hosts_by_adapter=FrozenMap(

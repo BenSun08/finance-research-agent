@@ -30,6 +30,13 @@ class DataQualityStatus(StrEnum):
     FAIL = "FAIL"
 
 
+class SourceRole(StrEnum):
+    MARKET_DATA = "market-data"
+    MARKET_CALENDAR = "market-calendar"
+    MACRO_CALENDAR = "macro-calendar"
+    OFFICIAL_VERIFICATION = "official-verification"
+
+
 class DeliveryStatus(StrEnum):
     ON_TIME = "ON_TIME"
     DELAYED = "DELAYED"

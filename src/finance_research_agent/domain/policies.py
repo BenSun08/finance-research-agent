@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 
+from finance_research_agent.domain.enums import SourceRole
 from finance_research_agent.domain.regime import Regime, RegimePolicy
 from finance_research_agent.domain.types import FrozenMap
 
@@ -55,11 +56,13 @@ class PolicyModel(BaseModel):
     def copy_collection_inputs(cls, value: object) -> object:
         """Copy YAML-style arrays into immutable tuple inputs without reordering."""
 
-        def copy(item: object) -> object:
+        def copy(item: object, *, key: str | None = None) -> object:
             if isinstance(item, list):
+                if key == "quality_source_roles":
+                    return item
                 return tuple(copy(child) for child in item)
             if isinstance(item, dict):
-                return {key: copy(child) for key, child in item.items()}
+                return {key: copy(child, key=key) for key, child in item.items()}
             return item
 
         return copy(value)
@@ -328,6 +331,7 @@ class SetupPolicy(PolicyModel):
 
 class SourcePolicy(PolicyModel):
     version: str
+    quality_source_roles: tuple[SourceRole, ...]
     allowed_adapters: tuple[str, ...]
     allowed_https_domains: tuple[str, ...]
     allowed_hosts_by_adapter: FrozenMap[str, tuple[str, ...]] | None = None
@@ -358,6 +362,33 @@ class SourcePolicy(PolicyModel):
     @classmethod
     def source_decimals(cls, value: object, info: object) -> Decimal:
         return _decimal(value, "source timing", positive=True)
+
+    @field_validator("quality_source_roles", mode="before")
+    @classmethod
+    def immutable_quality_source_roles(cls, value: object) -> tuple[SourceRole, ...]:
+        if not isinstance(value, tuple):
+            raise ValueError("quality_source_roles must be an immutable tuple")
+        roles: list[SourceRole] = []
+        try:
+            for item in value:
+                if isinstance(item, SourceRole):
+                    roles.append(item)
+                elif type(item) is str:
+                    roles.append(SourceRole(item))
+                else:
+                    raise ValueError("quality_source_roles must contain source-role values")
+        except ValueError as error:
+            raise ValueError("quality_source_roles contains an unknown source role") from error
+        return tuple(roles)
+
+    @model_validator(mode="after")
+    def valid_quality_source_roles(self) -> SourcePolicy:
+        if len(self.quality_source_roles) != len(set(self.quality_source_roles)):
+            raise ValueError("quality_source_roles must not contain duplicates")
+        required = {SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR}
+        if not required.issubset(self.quality_source_roles):
+            raise ValueError("quality_source_roles must include market data and market calendar")
+        return self
 
     @field_validator("allowed_adapters")
     @classmethod
