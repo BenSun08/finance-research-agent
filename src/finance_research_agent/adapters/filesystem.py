@@ -436,6 +436,8 @@ class FileSystemRunRepository:
         if cutoff_bytes is not None:
             cutoff_payload = json.loads(cutoff_bytes)
             cutoff = self._require_utc(datetime.fromisoformat(cutoff_payload["evidence_cutoff_at"]))
+            if context.evidence_cutoff_at != cutoff:
+                context = context.model_copy(update={"evidence_cutoff_at": cutoff})
         return StoredRun(
             run=context,
             checkpoints=tuple(checkpoints),
@@ -694,6 +696,8 @@ class FileSystemRunRepository:
         if stored.evidence_cutoff_at is not None:
             raise ValueError("evidence cutoff is immutable; create a new revision")
         cutoff_at = self._require_utc(cutoff_at)
+        if cutoff_at < stored.run.invoked_at:
+            raise ValueError("evidence cutoff cannot precede run invocation")
         self._atomic_write(
             staging / "frozen-evidence.json",
             json.dumps(

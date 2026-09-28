@@ -358,6 +358,42 @@ def test_checkpoint_and_cutoff_are_persisted_and_cutoff_is_immutable(tmp_path: P
         repository.freeze_evidence(context.run_id, NOW + timedelta(minutes=14))
 
 
+def test_evidence_freeze_binds_actual_cutoff_to_reloaded_run_context(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context().model_copy(update={"evidence_cutoff_at": None})
+    repository.create(context)
+
+    before_freeze = repository.load(context.run_id)
+    assert before_freeze is not None
+    assert before_freeze.run.evidence_cutoff_at is None
+
+    cutoff = NOW + timedelta(minutes=13)
+    frozen = repository.freeze_evidence(context.run_id, cutoff)
+    reloaded = FileSystemRunRepository(tmp_path).load(context.run_id)
+
+    assert frozen.evidence_cutoff_at == cutoff
+    assert frozen.run.evidence_cutoff_at == cutoff
+    assert frozen.run.run_id == context.run_id
+    assert frozen.run.invoked_at == context.invoked_at
+    assert reloaded == frozen
+    with pytest.raises(ValueError, match="immutable"):
+        repository.freeze_evidence(context.run_id, cutoff + timedelta(seconds=1))
+
+
+def test_evidence_freeze_rejects_a_cutoff_before_run_invocation(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context().model_copy(update={"evidence_cutoff_at": None})
+    repository.create(context)
+
+    with pytest.raises(ValueError, match="cannot precede run invocation"):
+        repository.freeze_evidence(context.run_id, NOW - timedelta(seconds=1))
+
+    stored = repository.load(context.run_id)
+    assert stored is not None
+    assert stored.evidence_cutoff_at is None
+    assert stored.run.evidence_cutoff_at is None
+
+
 def test_staged_artifact_is_hash_addressed_readable_and_immutable(tmp_path: Path) -> None:
     repository = FileSystemRunRepository(tmp_path)
     context = _context()

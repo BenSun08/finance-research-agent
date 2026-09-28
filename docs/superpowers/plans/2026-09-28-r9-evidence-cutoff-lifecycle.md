@@ -29,20 +29,20 @@
 
 **Files:** `domain/models.py`, `adapters/filesystem.py`, `tests/application/test_prepare_premarket_run.py`, focused model tests.
 
-- [ ] Add a failing test that a new allocated `RunContext.evidence_cutoff_at` is `None` while `invoked_at` stays fixed.
-- [ ] Run the focused test and confirm it fails because allocation binds invocation time as the cutoff.
-- [ ] Make `RunContext.evidence_cutoff_at` optional and allocate it unbound.
-- [ ] Run focused tests and confirm new allocations are unbound while directly constructed frozen contexts remain valid.
-- [ ] Commit this task with its tests.
+- [x] Add a failing test that a new allocated `RunContext.evidence_cutoff_at` is `None` while `invoked_at` stays fixed.
+- [x] Run the focused test and confirm it fails because allocation binds invocation time as the cutoff.
+- [x] Make `RunContext.evidence_cutoff_at` optional and allocate it unbound.
+- [x] Run focused tests and confirm new allocations are unbound while directly constructed frozen contexts remain valid.
+- [x] Commit this task with its tests.
 
 ### Task 2: Bind the Cutoff Exactly Once at Evidence Freeze
 
 **Files:** `adapters/filesystem.py`, `tests/unit/test_filesystem_store.py`.
 
-- [ ] Add failing tests that freeze rejects a cutoff before invocation, accepts a later cutoff, survives reload with `StoredRun.evidence_cutoff_at == StoredRun.run.evidence_cutoff_at`, and rejects rebinding.
-- [ ] Run the focused tests and confirm the cutoff is currently not bound to the loaded run.
-- [ ] Overlay the persisted freeze timestamp onto the loaded immutable run snapshot; validate consistency when loading old already-bound contexts; reject cutoff timestamps before invocation.
-- [ ] Run focused storage tests and existing freeze/checkpoint tests.
+- [x] Add failing tests that freeze rejects a cutoff before invocation, accepts a later cutoff, survives reload with `StoredRun.evidence_cutoff_at == StoredRun.run.evidence_cutoff_at`, and rejects rebinding.
+- [x] Run the focused tests and confirm the cutoff is currently not bound to the loaded run.
+- [x] Overlay the persisted freeze timestamp onto the loaded immutable run snapshot; preserve old pre-freeze fixture compatibility; reject cutoff timestamps before invocation.
+- [x] Run focused storage tests and existing freeze/checkpoint tests.
 - [ ] Commit this task with its tests.
 
 ### Task 3: Enforce the Bound Cutoff at Artifact Boundaries
