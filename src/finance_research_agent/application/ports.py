@@ -73,7 +73,7 @@ class MarketDataProvider(Protocol):
     def fetch_premarket_observations(
         self,
         symbols: Sequence[str],
-        as_of: datetime,
+        as_of: datetime | None,
         *,
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
     ) -> Mapping[str, PriceObservation | ProviderFailure]: ...

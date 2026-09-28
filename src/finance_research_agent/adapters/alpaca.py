@@ -644,7 +644,7 @@ class AlpacaMarketDataProvider:
                 message="daily-bars calendar sessions are required",
             )
             return {symbol: request_failure for symbol in requested}
-        if (
+        if evidence_cutoff_at is not None and (
             not isinstance(evidence_cutoff_at, datetime)
             or evidence_cutoff_at.tzinfo is None
             or evidence_cutoff_at.utcoffset() != timedelta(0)
@@ -719,7 +719,8 @@ class AlpacaMarketDataProvider:
             return {symbol: schema_failure for symbol in requested}
 
         retrieved_at = self._now()
-        if retrieved_at > evidence_cutoff_at:
+        effective_cutoff_at = evidence_cutoff_at or retrieved_at
+        if retrieved_at > effective_cutoff_at:
             request_failure = self._failure(
                 error_code=ErrorCode.INVALID_REQUEST,
                 retryable=False,
@@ -735,7 +736,7 @@ class AlpacaMarketDataProvider:
                 completed_through_session=completed_through_session,
                 feed=feed,
                 adjustment=adjustment,
-                evidence_cutoff_at=evidence_cutoff_at,
+                evidence_cutoff_at=effective_cutoff_at,
             )
         except InvalidMarketDataError:
             request_failure = self._failure(
@@ -804,7 +805,7 @@ class AlpacaMarketDataProvider:
     def fetch_premarket_observations(
         self,
         symbols: Sequence[str],
-        as_of: datetime,
+        as_of: datetime | None,
         *,
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
     ) -> dict[str, PriceObservation | ProviderFailure]:
@@ -824,7 +825,9 @@ class AlpacaMarketDataProvider:
             }
         if not requested:
             return {}
-        if as_of.tzinfo is None or as_of.utcoffset() != timedelta(0):
+        if as_of is not None and (
+            as_of.tzinfo is None or as_of.utcoffset() != timedelta(0)
+        ):
             request_failure = self._failure(
                 error_code=ErrorCode.INVALID_REQUEST,
                 retryable=False,
@@ -865,7 +868,7 @@ class AlpacaMarketDataProvider:
             return {symbol: schema_failure for symbol in requested}
 
         retrieved_at = self._now()
-        if retrieved_at > as_of:
+        if as_of is not None and retrieved_at > as_of:
             cutoff_failure = self._failure(
                 error_code=ErrorCode.EVIDENCE_CUTOFF_VIOLATION,
                 retryable=False,
@@ -901,7 +904,7 @@ class AlpacaMarketDataProvider:
                     value = ask if ask > 0 else bid
                     observed_at = _utc_timestamp(item.timestamp)
                     raw_payload = item.model_dump(mode="json", by_alias=True)
-                if observed_at > as_of or observed_at > retrieved_at:
+                if (as_of is not None and observed_at > as_of) or observed_at > retrieved_at:
                     raise ValueError("premarket observation is after the evidence cutoff")
                 local_time = observed_at.astimezone(_NEW_YORK).time()
                 if not _PREMARKET_START <= local_time < _PREMARKET_END:
