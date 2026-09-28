@@ -3,6 +3,7 @@
 import re
 import unicodedata
 from datetime import date, timedelta
+from math import isclose
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -286,6 +287,48 @@ class StoredRun(StrictModel):
     def run_id(self) -> str:
         return self.run.run_id
 
+
+NonNegativeCount = Annotated[int, Field(ge=0)]
+BoundedAttemptCount = Annotated[int, Field(ge=0, le=3)]
+PositiveDurationMs = Annotated[int, Field(gt=0)]
+
+
+class PerformanceTelemetry(StrictModel):
+    """Secret-free aggregate resource counters for one bounded run operation.
+
+    Serialized ratio and remaining-budget fields are checked against their
+    source counters so they cannot drift from the immutable measurements.
+    """
+
+    provider_request_counts: FrozenMap[Identifier, NonNegativeCount]
+    response_bytes_by_provider: FrozenMap[Identifier, NonNegativeCount]
+    response_bytes_total: NonNegativeCount
+    stage_durations_ms: FrozenMap[Identifier, NonNegativeCount]
+    synthesis_attempts: BoundedAttemptCount
+    validation_attempts: BoundedAttemptCount
+    research_packet_bytes: NonNegativeCount
+    cache_hits: NonNegativeCount
+    cache_misses: NonNegativeCount
+    cache_hit_ratio: Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
+    deadline_budget_ms: PositiveDurationMs
+    deadline_consumed_ms: NonNegativeCount
+    remaining_budget_ms: NonNegativeCount
+
+    @model_validator(mode="after")
+    def _consistent_counters(self) -> Self:
+        if set(self.provider_request_counts) != set(self.response_bytes_by_provider):
+            raise ValueError("provider request and response maps must have the same keys")
+        if self.response_bytes_total != sum(self.response_bytes_by_provider.values()):
+            raise ValueError("response_bytes_total must equal the per-provider byte sum")
+        if self.deadline_consumed_ms > self.deadline_budget_ms:
+            raise ValueError("deadline_consumed_ms must not exceed deadline_budget_ms")
+        if self.remaining_budget_ms + self.deadline_consumed_ms != self.deadline_budget_ms:
+            raise ValueError("remaining_budget_ms must match deadline budget consumption")
+        cache_lookups = self.cache_hits + self.cache_misses
+        expected_cache_ratio = self.cache_hits / cache_lookups if cache_lookups else 0.0
+        if not isclose(self.cache_hit_ratio, expected_cache_ratio, rel_tol=0.0, abs_tol=1e-12):
+            raise ValueError("cache_hit_ratio must match the cache hit and miss counters")
+        return self
 
 class PublishedRunBundle(StrictModel):
     """Small storage-facing bundle envelope; later tasks own its contents."""
