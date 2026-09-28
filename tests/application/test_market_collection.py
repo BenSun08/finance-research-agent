@@ -267,3 +267,53 @@ def test_collect_market_data_rejects_bars_for_a_different_instrument() -> None:
             expected_sessions=SESSIONS,
             completed_through_session=SESSIONS[-1],
         )
+
+
+def test_collect_market_data_rejects_non_premarket_observation() -> None:
+    class RegularSessionMarketData(_MarketData):
+        def fetch_premarket_observations(
+            self,
+            symbols: Sequence[str],
+            as_of: datetime | None,
+            *,
+            instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+        ) -> Mapping[str, PriceObservation | ProviderFailure]:
+            result = dict(
+                super().fetch_premarket_observations(
+                    symbols, as_of, instrument_identities=instrument_identities
+                )
+            )
+            result["MSFT"] = _price("MSFT").model_copy(
+                update={"session": Session.REGULAR}
+            )
+            return result
+
+    calls: list[str] = []
+
+    with pytest.raises(ValueError, match="premarket observation must use PRE_MARKET session"):
+        _collect_market_data(
+            RegularSessionMarketData(calls),
+            _Clock(calls),
+            ("AAPL", "MSFT"),
+            start=date(2026, 9, 25),
+            end=date(2026, 9, 25),
+            expected_sessions=SESSIONS,
+            completed_through_session=SESSIONS[-1],
+        )
+
+
+def test_collect_market_data_rejects_noncanonical_ticker_before_provider_call() -> None:
+    calls: list[str] = []
+
+    with pytest.raises(ValueError, match="ticker symbol must match the canonical format"):
+        _collect_market_data(
+            _MarketData(calls),
+            _Clock(calls),
+            ("aapl",),
+            start=date(2026, 9, 25),
+            end=date(2026, 9, 25),
+            expected_sessions=SESSIONS,
+            completed_through_session=SESSIONS[-1],
+        )
+
+    assert calls == []

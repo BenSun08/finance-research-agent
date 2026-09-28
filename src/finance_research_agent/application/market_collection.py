@@ -6,13 +6,19 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from pydantic import TypeAdapter, ValidationError
+
 from finance_research_agent.application.ports import Clock, MarketDataProvider
+from finance_research_agent.domain.enums import Session
 from finance_research_agent.domain.models import (
     CompletedDailyBar,
     InstrumentIdentity,
     PriceObservation,
     ProviderFailure,
+    Symbol,
 )
+
+_SYMBOL_ADAPTER = TypeAdapter(Symbol)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +92,8 @@ def _validate_premarket(
             if item.symbol not in (None, symbol):
                 raise ValueError("premarket failure symbol does not match its request key")
         else:
+            if item.session is not Session.PRE_MARKET:
+                raise ValueError("premarket observation must use PRE_MARKET session")
             instrument = instruments[symbol]
             if (
                 isinstance(instrument, InstrumentIdentity)
@@ -118,6 +126,11 @@ def collect_market_data(
     requested = tuple(symbols)
     if not requested or any(not isinstance(symbol, str) or not symbol for symbol in requested):
         raise ValueError("market collection requires non-empty symbols")
+    for symbol in requested:
+        try:
+            _SYMBOL_ADAPTER.validate_python(symbol, strict=True)
+        except ValidationError:
+            raise ValueError("ticker symbol must match the canonical format") from None
     if len(requested) != len(set(requested)):
         raise ValueError("market collection symbols must be unique")
     if start > end:
