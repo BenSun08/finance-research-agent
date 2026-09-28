@@ -13,6 +13,7 @@ from finance_research_agent.application.regime_research import (
     run_regime_research,
 )
 from finance_research_agent.application.regime_workflow import run_regime_workflow
+from finance_research_agent.application.source_health import read_configured_source_health
 
 __all__ = [
     "HistoricalBarsFetcher",
@@ -25,4 +26,5 @@ __all__ = [
     "historical_to_canonical_snapshot",
     "run_regime_research",
     "run_regime_workflow",
+    "read_configured_source_health",
 ]
