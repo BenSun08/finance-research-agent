@@ -187,6 +187,27 @@ def test_late_scheduled_retry_uses_the_existing_runs_original_window_decision(
     assert config.calls == 0
 
 
+def test_post_close_scheduled_retry_uses_the_existing_runs_original_window_decision(
+    tmp_path: Path,
+) -> None:
+    first_dependencies, _, _, _ = _dependencies(tmp_path)
+    first = prepare_premarket_run(_request(), first_dependencies)
+    assert first.stored_run is not None
+
+    after_close_dependencies, config, _, _ = _dependencies(
+        tmp_path,
+        CountingConfigurationRepository(fail_on_load=True),
+        clock=FixedClock(datetime(2026, 9, 28, 21, 5, tzinfo=UTC)),
+    )
+    retry = prepare_premarket_run(_request(), after_close_dependencies)
+
+    assert retry.stored_run == first.stored_run
+    assert retry.window_decision.delivery_status is DeliveryStatus.ON_TIME
+    assert retry.window_decision.publish_missed_report is False
+    assert retry.window_decision.reason_code == "ON_TIME"
+    assert config.calls == 0
+
+
 def test_published_missed_window_retry_does_not_request_publication_again(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -199,6 +220,7 @@ def test_published_missed_window_retry_does_not_request_publication_again(
 
     published_stored_run = first.stored_run.model_copy(update={"published": True})
     monkeypatch.setattr(repository, "load", lambda _run_id: published_stored_run)
+    late_clock.now = datetime(2026, 9, 28, 21, 5, tzinfo=UTC)
 
     retry = prepare_premarket_run(_request(), dependencies)
 

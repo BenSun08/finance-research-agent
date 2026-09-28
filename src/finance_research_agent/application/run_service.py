@@ -88,9 +88,6 @@ def prepare_premarket_run(
         request.market_date,
         request.invocation,
     )
-    if not decision.should_run:
-        return PreparePremarketRunResult(decision, None)
-
     existing_revision = (
         1
         if request.invocation is InvocationType.SCHEDULED
@@ -121,6 +118,9 @@ def prepare_premarket_run(
             if stored.published and stored_decision.publish_missed_report:
                 stored_decision = replace(stored_decision, publish_missed_report=False)
             return PreparePremarketRunResult(stored_decision, stored)
+
+    if not decision.should_run:
+        return PreparePremarketRunResult(decision, None)
 
     if decision.delivery_status is None:
         raise RuntimeError("runnable window decision must include delivery status")
