@@ -129,6 +129,7 @@ def test_quality_source_roles_change_configuration_snapshot_hash(tmp_path: Path)
     assert base_snapshot.policy_hashes is not None
     assert expanded_snapshot.policy_hashes is not None
     assert base_snapshot.policy_hashes["source"] != expanded_snapshot.policy_hashes["source"]
+    assert base_snapshot.content_hash_sha256 != expanded_snapshot.content_hash_sha256
 
 
 def test_watchlist_service_increments_version_and_rejects_stale_mutation(tmp_path: Path) -> None:
