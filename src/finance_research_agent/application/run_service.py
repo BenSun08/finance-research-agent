@@ -3,7 +3,15 @@
 from dataclasses import dataclass
 from datetime import date
 
+from finance_research_agent.application.ports import (
+    Clock,
+    ConfigurationRepository,
+    EventProvider,
+    MarketDataProvider,
+    RunRepository,
+)
 from finance_research_agent.domain.enums import InvocationType
+from finance_research_agent.domain.market_calendar import TradingCalendar
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,3 +31,19 @@ class PreparePremarketRunRequest:
             raise ValueError("requested_revision must be a positive integer or None")
         if not isinstance(self.invocation, InvocationType):
             raise TypeError("invocation must be a declared InvocationType")
+
+
+@dataclass(frozen=True, slots=True)
+class RunDependencies:
+    """Trusted injected ports for one deterministic preparation operation."""
+
+    clock: Clock
+    calendar: TradingCalendar
+    config_repository: ConfigurationRepository
+    run_repository: RunRepository
+    market_data: MarketDataProvider
+    event_providers: tuple[EventProvider, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.event_providers) is not tuple:
+            raise TypeError("event_providers must be a tuple")
