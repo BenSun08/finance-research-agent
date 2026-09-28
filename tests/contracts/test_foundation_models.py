@@ -27,6 +27,7 @@ from finance_research_agent.domain.models import (
     InstrumentIdentity,
     PriceObservation,
     RunContext,
+    RunContextSeed,
     SourceObservation,
     StrictModel,
 )
@@ -59,6 +60,73 @@ def configuration() -> ConfigurationSnapshot:
             "file_hashes": FrozenMap({"watchlist.yaml": "b" * 64}),
         }
     )
+
+
+def run_context_seed(**changes: object) -> RunContextSeed:
+    return RunContextSeed.model_validate(
+        {
+            "market_date": date(2026, 9, 16),
+            "invoked_at": NOW,
+            "delivery_status": DeliveryStatus.ON_TIME,
+            "configuration_snapshot": configuration(),
+            "component_versions": ComponentVersions.model_validate(
+                {**COMPONENT_VERSIONS, **POLICY_VERSIONS}
+            ),
+            **changes,
+        }
+    )
+
+
+def test_run_context_seed_is_immutable_and_contains_only_initial_context_inputs() -> None:
+    value = run_context_seed()
+
+    assert value.market_date == date(2026, 9, 16)
+    assert value.invoked_at is NOW
+    assert value.delivery_status is DeliveryStatus.ON_TIME
+    assert value.configuration_snapshot == configuration()
+    assert value.component_versions.core_version == "0.5.0.dev0"
+    with pytest.raises(ValidationError):
+        RunContextSeed.model_validate(
+            {
+                "market_date": date(2026, 9, 16),
+                "invoked_at": NOW,
+                "delivery_status": DeliveryStatus.ON_TIME,
+                "configuration_snapshot": configuration(),
+                "component_versions": ComponentVersions.model_validate(
+                    {**COMPONENT_VERSIONS, **POLICY_VERSIONS}
+                ),
+                "run_id": "premarket-2026-09-16-r1",
+            }
+        )
+    with pytest.raises(ValidationError):
+        value.market_date = date(2026, 9, 17)  # type: ignore[misc]
+
+
+def test_run_context_seed_requires_utc_invocation_time() -> None:
+    with pytest.raises(ValidationError):
+        run_context_seed(
+            invoked_at=datetime(2026, 9, 16, 12, 45, tzinfo=timezone(timedelta(hours=8)))
+        )
+
+
+@pytest.mark.parametrize(
+    "component_field",
+    [
+        "watchlist_version",
+        "regime_policy_version",
+        "setup_policy_version",
+        "risk_policy_version",
+        "source_policy_version",
+    ],
+)
+def test_run_context_seed_rejects_policy_version_mismatch(
+    component_field: str,
+) -> None:
+    component_versions = ComponentVersions.model_validate(
+        {**COMPONENT_VERSIONS, **POLICY_VERSIONS, component_field: "999"}
+    )
+    with pytest.raises(ValidationError):
+        run_context_seed(component_versions=component_versions)
 
 
 def run(**changes: object) -> RunContext:
