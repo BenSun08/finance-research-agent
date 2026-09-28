@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from finance_research_agent.adapters.filesystem import FileSystemRunRepository, PublicationError
+from finance_research_agent.adapters.filesystem import (
+    FileSystemRunRepository,
+    PathNotAllowedError,
+    PublicationError,
+)
 from finance_research_agent.domain.enums import DeliveryStatus, InvocationType
 from finance_research_agent.domain.models import (
     ComponentVersions,
@@ -126,6 +130,65 @@ def test_requested_unpublished_manual_revision_is_reused(tmp_path: Path) -> None
     assert repository.read_staged_artifact(original.run_id, "checkpoint") == b"original"
 
 
+@pytest.mark.parametrize(
+    ("invocation", "requested_revision"),
+    [(InvocationType.MANUAL, 1), (InvocationType.SCHEDULED, None)],
+)
+def test_existing_revision_with_different_context_identity_is_rejected(
+    tmp_path: Path,
+    invocation: InvocationType,
+    requested_revision: int | None,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    first = repository.allocate_revision(_seed(), InvocationType.MANUAL)
+    second = repository.allocate_revision(_seed(version="2"), InvocationType.MANUAL)
+    first_staging, _, _ = repository._paths(first.run_id)
+    second_staging, _, _ = repository._paths(second.run_id)
+    first_run_path = first_staging / "run.json"
+    first_run_path.write_bytes((second_staging / "run.json").read_bytes())
+    corrupted_first = first_run_path.read_bytes()
+    second_bytes = (second_staging / "run.json").read_bytes()
+
+    with pytest.raises(PublicationError):
+        repository.allocate_revision(
+            _seed(), invocation, requested_revision=requested_revision
+        )
+
+    assert first_run_path.read_bytes() == corrupted_first
+    assert (second_staging / "run.json").read_bytes() == second_bytes
+
+
+def test_published_manual_revision_cannot_be_resumed_through_staging_symlink(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = repository.allocate_revision(_seed(), InvocationType.MANUAL)
+    report = "# Published report\n"
+    repository.publish_atomically(
+        PublishedRunBundle(
+            run=context,
+            report_markdown=report,
+            markdown_sha256=hashlib.sha256(report.encode()).hexdigest(),
+        )
+    )
+    _, published, _ = repository._paths(context.run_id)
+    staging_link = (
+        tmp_path / "runs/2026/2026-08-19/.staging" / context.run_id
+    )
+    staging_link.symlink_to(published, target_is_directory=True)
+    published_bytes = (published / "run.json").read_bytes()
+    bundle_bytes = (published / "bundle.json").read_bytes()
+
+    with pytest.raises(PathNotAllowedError):
+        repository.allocate_revision(
+            _seed(version="2"), InvocationType.MANUAL, requested_revision=1
+        )
+
+    assert (published / "run.json").read_bytes() == published_bytes
+    assert (published / "bundle.json").read_bytes() == bundle_bytes
+    assert staging_link.is_symlink()
+
+
 def test_requested_manual_revision_creates_only_next_revision(tmp_path: Path) -> None:
     repository = FileSystemRunRepository(tmp_path)
     first = repository.allocate_revision(_seed(), InvocationType.MANUAL)
@@ -230,6 +293,80 @@ def test_scheduled_invocation_rejects_explicit_revision_without_changes(tmp_path
         )
 
     assert _run_ids(repository, MARKET_DATE) == before
+
+
+def test_scheduled_invocation_reuses_published_r1(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    original = repository.allocate_revision(
+        _seed(delivery_status=DeliveryStatus.ON_TIME), InvocationType.SCHEDULED
+    )
+    report = "# Scheduled report\n"
+    repository.publish_atomically(
+        PublishedRunBundle(
+            run=original,
+            report_markdown=report,
+            markdown_sha256=hashlib.sha256(report.encode()).hexdigest(),
+        )
+    )
+
+    resumed = repository.allocate_revision(
+        _seed(invoked_at=NOW + timedelta(minutes=1), version="2"),
+        InvocationType.SCHEDULED,
+    )
+
+    assert resumed == original
+    stored = repository.load(original.run_id)
+    assert stored is not None and stored.published
+
+
+@pytest.mark.parametrize(
+    ("invocation", "requested_revision"),
+    [(InvocationType.MANUAL, 1), (InvocationType.SCHEDULED, None)],
+)
+def test_conflicting_staging_and_final_directories_are_rejected(
+    tmp_path: Path,
+    invocation: InvocationType,
+    requested_revision: int | None,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = repository.allocate_revision(_seed(), InvocationType.MANUAL)
+    report = "# Published report\n"
+    repository.publish_atomically(
+        PublishedRunBundle(
+            run=context,
+            report_markdown=report,
+            markdown_sha256=hashlib.sha256(report.encode()).hexdigest(),
+        )
+    )
+    _, final, _ = repository._paths(context.run_id)
+    staging = tmp_path / "runs/2026/2026-08-19/.staging" / context.run_id
+    staging.mkdir()
+    (staging / "run.json").write_bytes((final / "run.json").read_bytes())
+    original_bytes = (final / "run.json").read_bytes()
+
+    with pytest.raises(PublicationError):
+        repository.allocate_revision(
+            _seed(), invocation, requested_revision=requested_revision
+        )
+
+    assert (final / "run.json").read_bytes() == original_bytes
+    assert (staging / "run.json").read_bytes() == original_bytes
+
+
+def test_requested_revision_rejects_conflicting_final_directory(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    run_id = "premarket-2026-08-19-r1"
+    _, final, _ = repository._paths(run_id)
+    final.mkdir(parents=True)
+    (final / "run.json").write_bytes(b"not a valid published run")
+    original_bytes = (final / "run.json").read_bytes()
+
+    with pytest.raises(PublicationError):
+        repository.allocate_revision(
+            _seed(), InvocationType.MANUAL, requested_revision=1
+        )
+
+    assert (final / "run.json").read_bytes() == original_bytes
 
 
 def test_requested_manual_revision_rejects_gap_without_staging_changes(tmp_path: Path) -> None:

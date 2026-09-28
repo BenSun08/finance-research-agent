@@ -116,6 +116,29 @@ class FileSystemRunRepository:
         lease = self._safe_path("runs", year, day, ".lease.json")
         return staging, final, lease
 
+    def _assert_unaliased_run_paths(self, run_id: str) -> None:
+        market_date, _ = self._validated_run_id(run_id)
+        year = f"{market_date.year:04d}"
+        day = market_date.isoformat()
+        for parts in (
+            ("runs", year, day, ".staging", run_id),
+            ("runs", year, day, run_id),
+        ):
+            candidate = self.root
+            for part in parts:
+                candidate = candidate / part
+                if candidate.is_symlink():
+                    raise _path_error()
+
+    def _ensure_run_identity(self, run: RunContext, run_id: str) -> None:
+        market_date, revision = self._validated_run_id(run_id)
+        if (
+            run.run_id != run_id
+            or run.market_date != market_date
+            or run.revision != revision
+        ):
+            raise PublicationError("stored context identity does not match its run directory")
+
     def _staged_artifact_path(self, run_id: str, artifact_name: str) -> Path:
         if not isinstance(artifact_name, str) or not _ARTIFACT_NAME.fullmatch(artifact_name):
             raise ValueError("artifact name must be a bounded identifier, not a caller path")
@@ -280,16 +303,30 @@ class FileSystemRunRepository:
                 revision = 1
                 run_id = format_run_id(market_date, revision)
                 if run_id in existing:
+                    self._assert_unaliased_run_paths(run_id)
+                    staging, final, _ = self._paths(run_id)
+                    if staging.exists() and final.exists():
+                        raise PublicationError("scheduled revision has conflicting storage paths")
                     loaded = self.load(run_id)
                     if loaded is not None:
+                        self._ensure_run_identity(loaded.run, run_id)
                         return loaded.run
                     raise PublicationError("existing scheduled revision has no readable context")
             elif requested_revision is not None:
                 run_id = format_run_id(market_date, requested_revision)
                 if run_id in existing:
+                    self._assert_unaliased_run_paths(run_id)
+                    staging, final, _ = self._paths(run_id)
+                    if staging.exists() and final.exists():
+                        raise PublicationError("manual revision has conflicting storage paths")
+                    if final.exists():
+                        if self._published_payloads(run_id, final) is not None:
+                            raise ValueError("published manual revision cannot be resumed")
+                        raise PublicationError("manual revision has a conflicting final directory")
                     loaded = self.load(run_id)
                     if loaded is None:
                         raise PublicationError("existing revision has no readable context")
+                    self._ensure_run_identity(loaded.run, run_id)
                     if loaded.published:
                         raise ValueError("published manual revision cannot be resumed")
                     return loaded.run
