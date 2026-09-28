@@ -3,6 +3,7 @@
 from datetime import UTC, date, datetime
 
 from finance_research_agent.domain.errors import ErrorCode
+from finance_research_agent.domain.models import ProviderReadiness
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -23,6 +24,14 @@ class ExchangeCalendarAdapter:
             raise RuntimeError(
                 f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}: market calendar unavailable"
             ) from error
+
+    def readiness(self) -> ProviderReadiness:
+        """Report that the calendar dependency initialized and is configured."""
+        return ProviderReadiness(
+            provider="market-calendar",
+            configured=True,
+            available=True,
+        )
 
     def is_trading_day(self, market_date: date) -> bool:
         try:

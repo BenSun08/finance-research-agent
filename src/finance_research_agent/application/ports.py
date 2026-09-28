@@ -49,6 +49,12 @@ class Clock(Protocol):
     def now_utc(self) -> datetime: ...
 
 
+class MarketCalendarReadinessProvider(TradingCalendar, Protocol):
+    """Trading calendar that reports its configured source readiness."""
+
+    def readiness(self) -> ProviderReadiness: ...
+
+
 class MarketDataProvider(Protocol):
     """Provider-neutral Product A market-data collection boundary."""
 

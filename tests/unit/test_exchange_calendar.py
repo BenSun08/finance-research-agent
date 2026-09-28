@@ -24,6 +24,19 @@ def test_constructor_failure_is_redacted_and_stable(monkeypatch: pytest.MonkeyPa
     assert "provider secret" not in str(caught.value)
 
 
+def test_successfully_initialized_calendar_reports_provider_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(exchange_calendars, "get_calendar", lambda name: object())
+
+    readiness = ExchangeCalendarAdapter().readiness()
+
+    assert readiness.provider == "market-calendar"
+    assert readiness.configured is True
+    assert readiness.available is True
+    assert readiness.error_code is None
+
+
 def test_is_trading_day_provider_failure_is_redacted_and_stable() -> None:
     class BrokenCalendar:
         def is_session(self, value: str) -> bool:
