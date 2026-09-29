@@ -1,9 +1,11 @@
 """Provider-neutral outbound capabilities required by application use cases."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from finance_research_agent.domain.enums import InvocationType
 from finance_research_agent.domain.market_calendar import TradingCalendar
@@ -29,11 +31,15 @@ from finance_research_agent.market_data.historical import (
     HistoricalDailyBarsRequest,
 )
 
+if TYPE_CHECKING:
+    from finance_research_agent.application.feedback_service import RecordedFeedback
+
 __all__ = [
     "Clock",
     "ConfigurationRepository",
     "ConfigurationRepositoryFactory",
     "EventProvider",
+    "FeedbackRepository",
     "HistoricalBarsFetcher",
     "MarketDataProvider",
     "ProviderRequestObserver",
@@ -188,3 +194,11 @@ class PublishedArtifactReader(Protocol):
     def get_report(self, run_id: str) -> str | None: ...
 
     def get_published_artifact(self, run_id: str) -> PublishedArtifact | None: ...
+
+
+class FeedbackRepository(Protocol):
+    """Append-only local persistence for immutable run feedback records."""
+
+    def append_feedback(self, feedback: RecordedFeedback) -> None: ...
+
+    def list_feedback(self) -> tuple[RecordedFeedback, ...]: ...
