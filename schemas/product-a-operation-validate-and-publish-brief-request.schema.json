@@ -1,0 +1,548 @@
+{
+  "$defs": {
+    "BriefOrigin": {
+      "enum": [
+        "SYNTHESIZED",
+        "DETERMINISTIC_REDUCED",
+        "OPERATIONAL"
+      ],
+      "title": "BriefOrigin",
+      "type": "string"
+    },
+    "Capability": {
+      "enum": [
+        "MARKET_SUMMARY_AVAILABLE",
+        "REGIME_CLASSIFICATION_AVAILABLE",
+        "WATCHLIST_METRICS_AVAILABLE",
+        "EVENT_RISK_CHECK_AVAILABLE",
+        "SETUP_DETECTION_AVAILABLE",
+        "PLAN_DRAFT_AVAILABLE",
+        "POSITION_SIZING_AVAILABLE",
+        "PORTFOLIO_HEAT_CHECK_AVAILABLE"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
+    "CapabilityExplanation": {
+      "additionalProperties": false,
+      "description": "Required user-facing reason for a disabled deterministic capability.",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/Capability"
+        },
+        "reason_codes": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability",
+        "reason_codes"
+      ],
+      "title": "CapabilityExplanation",
+      "type": "object"
+    },
+    "Claim": {
+      "additionalProperties": false,
+      "description": "One node in the structured, evidence-reachable brief claim graph.",
+      "properties": {
+        "claim_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "claim_type": {
+          "$ref": "#/$defs/ClaimType"
+        },
+        "counter_evidence_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Counter Evidence Ids",
+          "type": "array"
+        },
+        "evidence_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "field": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field"
+        },
+        "invalidation": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invalidation"
+        },
+        "metric_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Metric Ids",
+          "type": "array"
+        },
+        "numeric_value": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Numeric Value"
+        },
+        "plan_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plan Id"
+        },
+        "plan_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "subject_symbol": {
+          "anyOf": [
+            {
+              "maxLength": 16,
+              "minLength": 1,
+              "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subject Symbol"
+        },
+        "supports_claim_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Supports Claim Ids",
+          "type": "array"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "time_end": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time End"
+        },
+        "time_start": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Start"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "claim_id",
+        "claim_type",
+        "text"
+      ],
+      "title": "Claim",
+      "type": "object"
+    },
+    "ClaimType": {
+      "enum": [
+        "FACT",
+        "CALCULATION",
+        "INFERENCE",
+        "HYPOTHESIS"
+      ],
+      "title": "ClaimType",
+      "type": "string"
+    },
+    "DataQualityStatus": {
+      "enum": [
+        "PASS",
+        "DEGRADED",
+        "FAIL"
+      ],
+      "title": "DataQualityStatus",
+      "type": "string"
+    },
+    "DeliveryStatus": {
+      "enum": [
+        "ON_TIME",
+        "DELAYED",
+        "MANUAL",
+        "MISSED_WINDOW"
+      ],
+      "title": "DeliveryStatus",
+      "type": "string"
+    },
+    "ExecutionStatus": {
+      "enum": [
+        "CREATED",
+        "COLLECTING",
+        "NORMALIZING",
+        "ANALYZING",
+        "AWAITING_SYNTHESIS",
+        "VALIDATING",
+        "PUBLISHED",
+        "FAILED",
+        "SKIPPED"
+      ],
+      "title": "ExecutionStatus",
+      "type": "string"
+    },
+    "PlanNarrative": {
+      "additionalProperties": false,
+      "description": "Narrative claims associated with one deterministic plan identifier.",
+      "properties": {
+        "claim_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "plan_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 3000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "text",
+        "claim_ids"
+      ],
+      "title": "PlanNarrative",
+      "type": "object"
+    },
+    "PlanStatus": {
+      "enum": [
+        "DRAFT",
+        "REVIEW_REQUIRED",
+        "BLOCKED",
+        "EXPIRED"
+      ],
+      "title": "PlanStatus",
+      "type": "string"
+    },
+    "ReportSection": {
+      "enum": [
+        "Run Status",
+        "Market Posture",
+        "What Changed",
+        "Today\u2019s Event Clock",
+        "Core Market Risks",
+        "Watchlist Priorities",
+        "Trade Plan Drafts",
+        "Data Warnings",
+        "Market Regime",
+        "Macro and Event Calendar",
+        "Broad-Market Radar",
+        "Sector Rotation",
+        "Cross-Asset Risk Signals",
+        "Core Monitor",
+        "Watchlist Dashboard",
+        "Eligible Setups",
+        "Trade Plan Drafts",
+        "Blocked and Excluded Candidates",
+        "Changes Since Prior Run",
+        "Data Quality and Limitations",
+        "Evidence Index",
+        "Methodology and Risk Notice"
+      ],
+      "title": "ReportSection",
+      "type": "string"
+    },
+    "ReportSectionClaims": {
+      "additionalProperties": false,
+      "description": "A required report section and its ordered claim references.",
+      "properties": {
+        "claim_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 500,
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "section": {
+          "$ref": "#/$defs/ReportSection"
+        }
+      },
+      "required": [
+        "section",
+        "claim_ids"
+      ],
+      "title": "ReportSectionClaims",
+      "type": "object"
+    },
+    "ResearchBriefDraft": {
+      "additionalProperties": false,
+      "description": "Structured synthesis output; it carries no runtime or provider provenance.",
+      "properties": {
+        "claims": {
+          "items": {
+            "$ref": "#/$defs/Claim"
+          },
+          "maxItems": 500,
+          "title": "Claims",
+          "type": "array"
+        },
+        "data_quality_status": {
+          "$ref": "#/$defs/DataQualityStatus"
+        },
+        "data_warnings": {
+          "items": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Data Warnings",
+          "type": "array"
+        },
+        "delivery_status": {
+          "$ref": "#/$defs/DeliveryStatus"
+        },
+        "detailed_sections": {
+          "items": {
+            "$ref": "#/$defs/ReportSectionClaims"
+          },
+          "maxItems": 14,
+          "title": "Detailed Sections",
+          "type": "array"
+        },
+        "disabled_capability_explanations": {
+          "items": {
+            "$ref": "#/$defs/CapabilityExplanation"
+          },
+          "maxItems": 32,
+          "title": "Disabled Capability Explanations",
+          "type": "array"
+        },
+        "execution_status": {
+          "$ref": "#/$defs/ExecutionStatus"
+        },
+        "executive_sections": {
+          "items": {
+            "$ref": "#/$defs/ReportSectionClaims"
+          },
+          "maxItems": 8,
+          "title": "Executive Sections",
+          "type": "array"
+        },
+        "origin": {
+          "$ref": "#/$defs/BriefOrigin"
+        },
+        "plan_narratives": {
+          "items": {
+            "$ref": "#/$defs/PlanNarrative"
+          },
+          "maxItems": 32,
+          "title": "Plan Narratives",
+          "type": "array"
+        },
+        "run_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "origin",
+        "execution_status",
+        "data_quality_status",
+        "delivery_status",
+        "executive_sections",
+        "detailed_sections",
+        "claims",
+        "plan_narratives",
+        "disabled_capability_explanations",
+        "data_warnings"
+      ],
+      "title": "ResearchBriefDraft",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "draft": {
+      "$ref": "#/$defs/ResearchBriefDraft"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "draft"
+  ],
+  "title": "ValidateAndPublishBriefRequest",
+  "type": "object"
+}

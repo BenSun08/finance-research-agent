@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
+from finance_research_agent.application.operations import OPERATION_SCHEMA_MODELS
 from finance_research_agent.domain.metrics import MetricResult
 from finance_research_agent.domain.models import (
     CapabilityState,
@@ -28,24 +29,24 @@ from finance_research_agent.domain.models import (
     SourceObservation,
 )
 
-SCHEMA_MODELS: Mapping[str, type[Any]] = MappingProxyType(
-    {
-        "capability-state.schema.json": CapabilityState,
-        "component-versions.schema.json": ComponentVersions,
-        "configuration-snapshot.schema.json": ConfigurationSnapshot,
-        "event-collection.schema.json": EventCollection,
-        "event-record.schema.json": EventRecord,
-        "evidence-item.schema.json": EvidenceItem,
-        "gate-result.schema.json": GateResult,
-        "instrument-identity.schema.json": InstrumentIdentity,
-        "market-snapshot.schema.json": MarketSnapshot,
-        "metric-result.schema.json": MetricResult,
-        "price-observation.schema.json": PriceObservation,
-        "run-context.schema.json": RunContext,
-        "source-observation.schema.json": SourceObservation,
-        "source-health.schema.json": SourceHealth,
-    }
-)
+_SCHEMA_MODELS: dict[str, type[Any]] = {
+    "capability-state.schema.json": CapabilityState,
+    "component-versions.schema.json": ComponentVersions,
+    "configuration-snapshot.schema.json": ConfigurationSnapshot,
+    "event-collection.schema.json": EventCollection,
+    "event-record.schema.json": EventRecord,
+    "evidence-item.schema.json": EvidenceItem,
+    "gate-result.schema.json": GateResult,
+    "instrument-identity.schema.json": InstrumentIdentity,
+    "market-snapshot.schema.json": MarketSnapshot,
+    "metric-result.schema.json": MetricResult,
+    "price-observation.schema.json": PriceObservation,
+    "run-context.schema.json": RunContext,
+    "source-observation.schema.json": SourceObservation,
+    "source-health.schema.json": SourceHealth,
+}
+_SCHEMA_MODELS.update(OPERATION_SCHEMA_MODELS)
+SCHEMA_MODELS: Mapping[str, type[Any]] = MappingProxyType(_SCHEMA_MODELS)
 
 
 def _schema_bytes(model: type[Any]) -> bytes:

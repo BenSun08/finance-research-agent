@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "CitationEntailmentReview": {
+      "additionalProperties": false,
+      "properties": {
+        "citation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Citation Id",
+          "type": "string"
+        },
+        "claim_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "entails_claim": {
+          "title": "Entails Claim",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "citation_id",
+        "claim_id",
+        "entails_claim"
+      ],
+      "title": "CitationEntailmentReview",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "citation_reviews": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CitationEntailmentReview"
+      },
+      "maxItems": 5,
+      "title": "Citation Reviews",
+      "type": "array"
+    },
+    "clarity_score": {
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Clarity Score",
+      "type": "integer"
+    },
+    "evidence_score": {
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Evidence Score",
+      "type": "integer"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notes"
+    },
+    "run_id": {
+      "maxLength": 128,
+      "minLength": 18,
+      "pattern": "^premarket-\\d{4}-\\d{2}-\\d{2}-r[1-9]\\d*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "usefulness_score": {
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Usefulness Score",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "run_id",
+    "clarity_score",
+    "evidence_score",
+    "usefulness_score"
+  ],
+  "title": "RecordRunFeedbackRequest",
+  "type": "object"
+}
