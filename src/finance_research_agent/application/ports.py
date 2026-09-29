@@ -36,6 +36,7 @@ __all__ = [
     "EventProvider",
     "HistoricalBarsFetcher",
     "MarketDataProvider",
+    "ProviderRequestObserver",
     "RunRepository",
     "PublishedArtifactReader",
     "WatchlistRepository",
@@ -53,6 +54,14 @@ class MarketCalendarReadinessProvider(TradingCalendar, Protocol):
     """Trading calendar that reports its configured source readiness."""
 
     def readiness(self) -> ProviderReadiness: ...
+
+
+class ProviderRequestObserver(Protocol):
+    """Secret-free observer for bounded provider transport totals."""
+
+    def record_http_exchange(
+        self, adapter: str, request_attempts: int, response_bytes: int
+    ) -> None: ...
 
 
 class MarketDataProvider(Protocol):

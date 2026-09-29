@@ -41,19 +41,19 @@
 
 **Interfaces:**
 - `ProviderRequestObserver.record_http_exchange(adapter: str, request_attempts: int, response_bytes: int) -> None`
-- `RunTelemetryRecorder(run: RunContext, *, now_utc: Callable[[], datetime], monotonic_ns: Callable[[], int], initial: PerformanceTelemetry | None = None)`
-- `RunTelemetryRecorder.measure_stage(stage: str) -> ContextManager[None]`
+- `RunTelemetryRecorder(*, monotonic_ns: Callable[[], int], initial: PerformanceTelemetry | None = None)`
+- `RunTelemetryRecorder.measure_stage(stage: str) -> AbstractContextManager[None]`
 - `RunTelemetryRecorder.record_http_exchange(adapter: str, request_attempts: int, response_bytes: int) -> None`
 - `RunTelemetryRecorder.snapshot(*, research_packet_bytes: int = 0, validation_attempts: int = 0) -> PerformanceTelemetry`
 - `load_checkpoint_telemetry(repository: RunRepository, checkpoint: RunCheckpoint) -> PerformanceTelemetry | None`
 - `checkpoint_with_telemetry(repository: RunRepository, checkpoint: RunCheckpoint, telemetry: PerformanceTelemetry) -> RunCheckpoint`
 
-- [ ] **Step 1: Write failing tests** for exact stage accumulation, bounded provider counters, 900,000 ms target arithmetic including an over-target run, zero-filled `alpaca`/`market-calendar` metrics, strict adapter allowlisting, and checkpoint artifact hash round-trip.
-- [ ] **Step 2: Run the focused tests and confirm the intended missing-interface failures.**
-- [ ] **Step 3: Implement the recorder, observer protocol, canonical snapshot serialization, and hash-bound checkpoint helpers. Preserve actual elapsed time above the target and clamp remaining budget to zero.**
-- [ ] **Step 4: Run the focused tests and existing telemetry contract tests.**
-- [ ] **Step 5: Run Ruff and mypy on changed source files; inspect the diff for secret-bearing fields.**
-- [ ] **Step 6: Commit** as `feat: add run-scoped telemetry recorder`.
+- [x] **Step 1: Write failing tests** for exact stage accumulation, bounded provider counters, 900,000 ms target arithmetic including an over-target run, zero-filled `alpaca`/`market-calendar` metrics, strict adapter allowlisting, and checkpoint artifact hash round-trip.
+- [x] **Step 2: Run the focused tests and confirm the intended missing-interface failures.**
+- [x] **Step 3: Implement the recorder, observer protocol, canonical snapshot serialization, and hash-bound checkpoint helpers. Preserve actual elapsed time above the target and clamp remaining budget to zero.**
+- [x] **Step 4: Run the focused tests and existing telemetry contract tests.**
+- [x] **Step 5: Run Ruff and mypy on changed source files; inspect the diff for secret-bearing fields.**
+- [x] **Step 6: Commit** as `feat: add run-scoped telemetry recorder`.
 
 ### Task 2: Measure approved outbound market-data attempts without changing request policy
 

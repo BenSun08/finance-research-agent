@@ -98,6 +98,27 @@ def test_performance_telemetry_empty_cache_and_no_provider_reads_are_well_define
     assert telemetry.remaining_budget_ms == 1
 
 
+def test_performance_telemetry_preserves_elapsed_time_above_duration_target() -> None:
+    telemetry = _telemetry_model()(
+        provider_request_counts=FrozenMap({"alpaca": 0, "market-calendar": 0}),
+        response_bytes_by_provider=FrozenMap({"alpaca": 0, "market-calendar": 0}),
+        response_bytes_total=0,
+        stage_durations_ms=FrozenMap({"MARKET_COLLECTION": 900001}),
+        synthesis_attempts=0,
+        validation_attempts=0,
+        research_packet_bytes=0,
+        cache_hits=0,
+        cache_misses=0,
+        cache_hit_ratio=0.0,
+        deadline_budget_ms=900000,
+        deadline_consumed_ms=900001,
+        remaining_budget_ms=0,
+    )
+
+    assert telemetry.deadline_consumed_ms == 900001
+    assert telemetry.remaining_budget_ms == 0
+
+
 def test_performance_telemetry_rejects_provider_set_drift() -> None:
     payload = {
         "provider_request_counts": FrozenMap({"alpaca": 3}),
