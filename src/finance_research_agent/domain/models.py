@@ -320,10 +320,9 @@ class PerformanceTelemetry(StrictModel):
             raise ValueError("provider request and response maps must have the same keys")
         if self.response_bytes_total != sum(self.response_bytes_by_provider.values()):
             raise ValueError("response_bytes_total must equal the per-provider byte sum")
-        if self.deadline_consumed_ms > self.deadline_budget_ms:
-            raise ValueError("deadline_consumed_ms must not exceed deadline_budget_ms")
-        if self.remaining_budget_ms + self.deadline_consumed_ms != self.deadline_budget_ms:
-            raise ValueError("remaining_budget_ms must match deadline budget consumption")
+        expected_remaining = max(0, self.deadline_budget_ms - self.deadline_consumed_ms)
+        if self.remaining_budget_ms != expected_remaining:
+            raise ValueError("remaining_budget_ms must match the remaining duration target")
         cache_lookups = self.cache_hits + self.cache_misses
         expected_cache_ratio = self.cache_hits / cache_lookups if cache_lookups else 0.0
         if not isclose(self.cache_hit_ratio, expected_cache_ratio, rel_tol=0.0, abs_tol=1e-12):

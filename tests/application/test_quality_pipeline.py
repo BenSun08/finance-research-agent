@@ -178,6 +178,45 @@ def test_checkpoint_quality_uses_frozen_source_policy_and_stored_collection(
     assert market_data.calls == calendar.calls == 1
 
 
+def test_quality_checkpoint_carries_forward_and_measures_telemetry(
+    tmp_path: Path, valid_packet
+) -> None:
+    from finance_research_agent.application.performance_telemetry import (
+        RunTelemetryRecorder,
+        load_latest_checkpoint_telemetry,
+    )
+    from finance_research_agent.application.quality_pipeline import (
+        checkpoint_collected_market_data_quality,
+    )
+
+    class Monotonic:
+        value = 0
+
+        def __call__(self) -> int:
+            self.value += 400_000_000
+            return self.value
+
+    repository = FileSystemRunRepository(tmp_path)
+    collected = _stored_collection(repository, valid_packet)
+    telemetry = RunTelemetryRecorder(monotonic_ns=Monotonic())
+    telemetry.record_http_exchange("alpaca", 3, 22)
+    result = checkpoint_collected_market_data_quality(
+        repository,
+        collected,
+        cast(MarketDataProvider, _MarketData()),
+        cast(MarketCalendarReadinessProvider, _Calendar()),
+        checkpointed_at=_COLLECTED_AT + timedelta(seconds=1),
+        telemetry=telemetry,
+    )
+
+    frozen = load_latest_checkpoint_telemetry(repository, result.stored_run)
+
+    assert frozen is not None
+    assert frozen.provider_request_counts["alpaca"] == 3
+    assert frozen.response_bytes_total == 22
+    assert frozen.stage_durations_ms["QUALITY_EVALUATION"] == 400
+
+
 def test_unavailable_configured_market_data_source_records_global_quality_failure(
     tmp_path: Path, valid_packet
 ) -> None:

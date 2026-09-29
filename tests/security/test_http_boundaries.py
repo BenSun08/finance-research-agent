@@ -211,6 +211,141 @@ def test_retryable_responses_are_retried_with_injected_delay(
     assert delays == [Decimal("0.6")]
 
 
+@pytest.mark.parametrize(
+    ("responses", "expected_attempts", "expected_bytes"),
+    [
+        (
+            (
+                httpx.Response(503, headers={"content-type": "application/json"}),
+                httpx.Response(
+                    200, headers={"content-type": "application/json"}, content=b"{\"ok\":true}"
+                ),
+            ),
+            2,
+            11,
+        ),
+        (
+            (
+                httpx.Response(
+                    302,
+                    headers={"location": "/next", "content-type": "application/json"},
+                ),
+                httpx.Response(
+                    200, headers={"content-type": "application/json"}, content=b"{}"
+                ),
+            ),
+            2,
+            2,
+        ),
+    ],
+    ids=("retry", "redirect"),
+)
+def test_http_telemetry_reports_only_attempt_count_and_consumed_body_bytes(
+    source_policy: SourcePolicy,
+    fixed_clock: Callable[[], datetime],
+    responses: tuple[httpx.Response, ...],
+    expected_attempts: int,
+    expected_bytes: int,
+) -> None:
+    class Observer:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, int, int]] = []
+
+        def record_http_exchange(
+            self, adapter: str, request_attempts: int, response_bytes: int
+        ) -> None:
+            self.events.append((adapter, request_attempts, response_bytes))
+
+    policy = source_policy.model_copy(update={"retry_attempts": 1, "allow_redirects": True})
+    pending = iter(responses)
+    observer = Observer()
+    client = SafeHttpClient(
+        policy,
+        transport=httpx.MockTransport(lambda request: next(pending)),
+        resolver=lambda host, port: ("93.184.216.34",),
+        sleeper=lambda delay: None,
+        jitter=lambda attempt: Decimal("0"),
+        clock=fixed_clock,
+    )
+
+    result = client.request(
+        AllowedRequest.for_adapter(
+            "sec", "/submissions/CIK.json", accepted_content_types=("application/json",)
+        ),
+        deadline=TEST_DEADLINE,
+        telemetry_observer=observer,
+    )
+
+    assert result.content
+    assert observer.events == [("sec", expected_attempts, expected_bytes)]
+
+
+def test_http_telemetry_reports_attempt_on_transport_failure_without_error_text(
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
+) -> None:
+    class Observer:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, int, int]] = []
+
+        def record_http_exchange(
+            self, adapter: str, request_attempts: int, response_bytes: int
+        ) -> None:
+            self.events.append((adapter, request_attempts, response_bytes))
+
+    policy = source_policy.model_copy(update={"retry_attempts": 0})
+    observer = Observer()
+
+    def fail_transport(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("credential=secret and path=/private", request=request)
+
+    client = SafeHttpClient(
+        policy,
+        transport=httpx.MockTransport(fail_transport),
+        resolver=lambda host, port: ("93.184.216.34",),
+        clock=fixed_clock,
+    )
+
+    with pytest.raises(RequestTransportUnavailable):
+        client.request(
+            AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
+            deadline=TEST_DEADLINE,
+            telemetry_observer=observer,
+        )
+
+    assert observer.events == [("sec", 1, 0)]
+    assert "secret" not in repr(observer.events)
+
+
+def test_http_telemetry_observer_failure_does_not_change_successful_response(
+    source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
+) -> None:
+    class FailingObserver:
+        def record_http_exchange(
+            self, adapter: str, request_attempts: int, response_bytes: int
+        ) -> None:
+            raise RuntimeError("telemetry sink unavailable")
+
+    policy = source_policy.model_copy(update={"retry_attempts": 0})
+    client = SafeHttpClient(
+        policy,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, headers={"content-type": "application/json"}, content=b"{}"
+            )
+        ),
+        resolver=lambda host, port: ("93.184.216.34",),
+        clock=fixed_clock,
+    )
+
+    result = client.request(
+        AllowedRequest.for_adapter("sec", "/submissions/CIK.json"),
+        deadline=TEST_DEADLINE,
+        telemetry_observer=FailingObserver(),
+    )
+
+    assert result.content == b"{}"
+
+
 def test_exhausted_transport_errors_have_typed_retryable_signal(
     source_policy: SourcePolicy, fixed_clock: Callable[[], datetime]
 ) -> None:

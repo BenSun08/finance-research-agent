@@ -94,11 +94,47 @@ def test_stage_research_packet_persists_canonical_bytes_and_checkpoint(
     assert reduced is not None
     assert reduced.startswith(b"# Premarket Research Brief\n")
     assert b"DETERMINISTIC_REDUCED" in reduced
-    assert stored.checkpoints[-1].artifact_hashes == FrozenMap({
-        "research_packet": digest,
-        "reduced_report": hashlib.sha256(reduced).hexdigest(),
-    })
+    assert stored.checkpoints[-1].artifact_hashes["research_packet"] == digest
+    assert stored.checkpoints[-1].artifact_hashes["reduced_report"] == hashlib.sha256(
+        reduced
+    ).hexdigest()
+    assert len(
+        [
+            name
+            for name in stored.checkpoints[-1].artifact_hashes
+            if name.startswith("performance_telemetry_")
+        ]
+    ) == 1
     assert stored.checkpoints[-1].execution_status is ExecutionStatus.AWAITING_SYNTHESIS
+
+
+def test_packet_checkpoint_telemetry_records_exact_canonical_packet_size(
+    tmp_path, valid_packet
+) -> None:
+    from finance_research_agent.application.performance_telemetry import (
+        RunTelemetryRecorder,
+        load_latest_checkpoint_telemetry,
+    )
+    from finance_research_agent.application.preparation_service import _canonical_packet_bytes
+
+    packet = _awaiting_packet(valid_packet)
+    repository = _repository_for_packet(tmp_path, packet)
+    telemetry = RunTelemetryRecorder(monotonic_ns=lambda: 0)
+    telemetry.record_http_exchange("alpaca", 2, 19)
+
+    stage_research_packet(
+        repository,
+        packet,
+        packet.run.evidence_cutoff_at + timedelta(seconds=1),
+        telemetry=telemetry,
+    )
+
+    stored = repository.load(packet.run.run_id)
+    assert stored is not None
+    snapshot = load_latest_checkpoint_telemetry(repository, stored)
+    assert snapshot is not None
+    assert snapshot.research_packet_bytes == len(_canonical_packet_bytes(packet))
+    assert snapshot.provider_request_counts["alpaca"] == 2
 
 
 def test_stage_research_packet_continues_after_quality_checkpoint(tmp_path, valid_packet) -> None:

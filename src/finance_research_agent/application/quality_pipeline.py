@@ -12,6 +12,10 @@ from finance_research_agent.application.collection_service import (
     load_frozen_market_data_for_run,
 )
 from finance_research_agent.application.config_service import configuration_from_snapshot
+from finance_research_agent.application.performance_telemetry import (
+    RunTelemetryRecorder,
+    load_latest_checkpoint_telemetry,
+)
 from finance_research_agent.application.ports import (
     MarketCalendarReadinessProvider,
     MarketDataProvider,
@@ -67,6 +71,7 @@ def checkpoint_collected_market_data_quality(
     calendar: MarketCalendarReadinessProvider,
     *,
     checkpointed_at: datetime,
+    telemetry: RunTelemetryRecorder | None = None,
 ) -> CheckpointedMarketDataQuality:
     """Evaluate the exact frozen collection, then persist a restart-safe result.
 
@@ -82,6 +87,11 @@ def checkpoint_collected_market_data_quality(
     if authoritative != collected:
         raise ValueError("quality evaluation collection differs from frozen collection")
     stored = authoritative.frozen_run
+    if telemetry is None:
+        telemetry = RunTelemetryRecorder()
+    previous_telemetry = load_latest_checkpoint_telemetry(repository, stored)
+    if previous_telemetry is not None:
+        telemetry.restore(previous_telemetry)
 
     existing_quality = repository.read_staged_artifact(stored.run_id, "data_quality")
     if stored.checkpoints[-1].stage == "QUALITY_EVALUATED":
@@ -91,21 +101,23 @@ def checkpoint_collected_market_data_quality(
     elif existing_quality is not None:
         quality = _decode_quality(existing_quality)
     else:
-        configuration = configuration_from_snapshot(stored.run.configuration_snapshot)
-        source_health = read_configured_source_health(
-            configuration.source, market_data, calendar
-        )
-        quality = evaluate_collected_market_data_quality(
-            collected.collection,
-            source_health=source_health,
-            source_policy=configuration.source,
-            risk_policy=configuration.risk,
-        )
+        with telemetry.measure_stage("QUALITY_EVALUATION"):
+            configuration = configuration_from_snapshot(stored.run.configuration_snapshot)
+            source_health = read_configured_source_health(
+                configuration.source, market_data, calendar
+            )
+            quality = evaluate_collected_market_data_quality(
+                collected.collection,
+                source_health=source_health,
+                source_policy=configuration.source,
+                risk_policy=configuration.risk,
+            )
 
     updated = checkpoint_market_data_quality(
         repository,
         stored,
         quality,
         checkpointed_at=checkpointed_at,
+        telemetry=telemetry.snapshot(),
     )
     return CheckpointedMarketDataQuality(stored_run=updated, quality=quality)

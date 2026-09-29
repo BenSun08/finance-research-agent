@@ -22,6 +22,7 @@ from finance_research_agent.domain.enums import (
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     ComponentVersions,
+    PerformanceTelemetry,
     PublishedRunBundle,
 )
 from finance_research_agent.domain.packets import ResearchPacket
@@ -51,6 +52,7 @@ class ArtifactReplayResult:
     stored_markdown_sha256: str
     replayed_markdown_sha256: str | None
     component_version_mismatches: tuple[str, ...]
+    telemetry: PerformanceTelemetry | None = None
 
 
 def _recorded_versions(bundle: PublishedRunBundle) -> ComponentVersions:
@@ -101,7 +103,9 @@ def _frozen_model_bytes(value: object) -> bytes:
 
 
 def _reconstructed_report(bundle: PublishedRunBundle) -> str:
-    contents = bundle.model_dump(mode="json")["bundle"]
+    contents = dict(bundle.model_dump(mode="json")["bundle"])
+    contents.pop("performance_telemetry", None)
+    contents.pop("performance_telemetry_sha256", None)
     if bundle.run.execution_status is not ExecutionStatus.PUBLISHED:
         raise ValueError("frozen bundle is not a published run")
     if "brief_draft" in contents:
@@ -172,6 +176,25 @@ def _reconstructed_report(bundle: PublishedRunBundle) -> str:
     return report
 
 
+def _frozen_telemetry(bundle: PublishedRunBundle) -> PerformanceTelemetry | None:
+    contents = bundle.model_dump(mode="json")["bundle"]
+    telemetry_data = contents.get("performance_telemetry")
+    digest = contents.get("performance_telemetry_sha256")
+    if telemetry_data is None and digest is None:
+        return None
+    if telemetry_data is None or not isinstance(digest, str):
+        raise ValueError("published telemetry value and hash must appear together")
+    try:
+        telemetry = PerformanceTelemetry.model_validate(telemetry_data, strict=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("published telemetry is malformed") from exc
+    if sha256(canonical_bytes(telemetry)).hexdigest() != digest:
+        raise ValueError("published telemetry hash does not match its canonical value")
+    if _frozen_model_bytes(telemetry_data) != canonical_bytes(telemetry):
+        raise ValueError("published telemetry is not canonical")
+    return telemetry
+
+
 def replay_published_artifact(
     repository: PublishedArtifactReader,
     run_id: str,
@@ -195,6 +218,7 @@ def replay_published_artifact(
         or markdown_digest != artifact.markdown_sha256
     ):
         raise ValueError("report bytes do not match the frozen bundle")
+    telemetry = _frozen_telemetry(bundle)
     mismatches = _version_mismatches(_recorded_versions(bundle), current_versions)
     if mismatches:
         return ArtifactReplayResult(
@@ -208,6 +232,7 @@ def replay_published_artifact(
             stored_markdown_sha256=artifact.markdown_sha256,
             replayed_markdown_sha256=None,
             component_version_mismatches=mismatches,
+            telemetry=telemetry,
         )
     reconstructed = _reconstructed_report(bundle)
     replayed_markdown_digest = sha256(reconstructed.encode("utf-8")).hexdigest()
@@ -224,4 +249,5 @@ def replay_published_artifact(
         stored_markdown_sha256=artifact.markdown_sha256,
         replayed_markdown_sha256=replayed_markdown_digest,
         component_version_mismatches=(),
+        telemetry=telemetry,
     )

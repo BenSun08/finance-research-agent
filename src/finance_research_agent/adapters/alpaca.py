@@ -27,6 +27,7 @@ from finance_research_agent.adapters.http_client import (
     RequestTransportUnavailable,
     SafeHttpClient,
 )
+from finance_research_agent.application.ports import ProviderRequestObserver
 from finance_research_agent.domain.enums import Coverage, Session
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
@@ -504,7 +505,10 @@ class AlpacaMarketDataProvider:
         )
 
     def fetch_instruments(
-        self, symbols: Sequence[str]
+        self,
+        symbols: Sequence[str],
+        *,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> dict[str, InstrumentIdentity | ProviderFailure]:
         try:
             requested = _symbol_sequence(symbols)
@@ -530,6 +534,7 @@ class AlpacaMarketDataProvider:
             "/v2/assets",
             {"status": "active", "asset_class": "us_equity"},
             host=self._api_host,
+            telemetry_observer=telemetry_observer,
         )
         if request_failure is not None:
             return {symbol: request_failure for symbol in requested}
@@ -602,6 +607,7 @@ class AlpacaMarketDataProvider:
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
         feed: MarketDataFeed = MarketDataFeed.IEX,
         adjustment: BarAdjustment = BarAdjustment.ALL,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> dict[str, tuple[CompletedDailyBar, ...] | ProviderFailure]:
         try:
             requested = _symbol_sequence(symbols)
@@ -665,7 +671,9 @@ class AlpacaMarketDataProvider:
             "adjustment": adjustment.value,
             "sort": "asc",
         }
-        response_failure, payload = self._get_json("/v2/stocks/bars", query)
+        response_failure, payload = self._get_json(
+            "/v2/stocks/bars", query, telemetry_observer=telemetry_observer
+        )
         if response_failure is not None:
             return {symbol: response_failure for symbol in requested}
         assert payload is not None
@@ -697,6 +705,7 @@ class AlpacaMarketDataProvider:
                 next_failure, fetched_payload = self._get_json(
                     "/v2/stocks/bars",
                     {**query, "page_token": token},
+                    telemetry_observer=telemetry_observer,
                 )
                 if next_failure is not None:
                     return {symbol: next_failure for symbol in requested}
@@ -808,6 +817,7 @@ class AlpacaMarketDataProvider:
         as_of: datetime | None,
         *,
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> dict[str, PriceObservation | ProviderFailure]:
         try:
             requested = _symbol_sequence(symbols)
@@ -838,6 +848,7 @@ class AlpacaMarketDataProvider:
         response_failure, payload = self._get_json(
             "/v2/stocks/trades/latest",
             {"symbols": ",".join(requested), "feed": "iex"},
+            telemetry_observer=telemetry_observer,
         )
         if response_failure is not None:
             return {symbol: response_failure for symbol in requested}
@@ -983,6 +994,7 @@ class AlpacaMarketDataProvider:
         query: Mapping[str, str],
         *,
         host: str | None = None,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> tuple[ProviderFailure | None, str | None]:
         if self.readiness().configured is False:
             return (
@@ -1009,6 +1021,7 @@ class AlpacaMarketDataProvider:
                 request,
                 deadline=self._now() + timedelta(seconds=60),
                 provider_credentials=(key.get_secret_value(), secret.get_secret_value()),
+                telemetry_observer=telemetry_observer,
             )
         except RequestTransportUnavailable:
             return (

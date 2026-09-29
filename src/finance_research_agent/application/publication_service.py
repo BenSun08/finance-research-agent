@@ -8,6 +8,12 @@ from hashlib import sha256
 from typing import Protocol
 
 from finance_research_agent.application.operational_report import render_operational_report
+from finance_research_agent.application.performance_telemetry import (
+    RunTelemetryRecorder,
+    checkpoint_with_telemetry,
+    load_checkpoint_telemetry,
+    load_latest_checkpoint_telemetry,
+)
 from finance_research_agent.application.ports import PublishedArtifactReader, RunRepository
 from finance_research_agent.application.preparation_service import _canonical_packet_bytes
 from finance_research_agent.application.reduced_report import (
@@ -24,10 +30,12 @@ from finance_research_agent.domain.enums import (
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
+    PerformanceTelemetry,
     PublishedArtifact,
     PublishedRunBundle,
     RunCheckpoint,
     RunContext,
+    StoredRun,
 )
 from finance_research_agent.domain.packets import ResearchPacket
 from finance_research_agent.domain.types import FrozenMap, JsonValue, canonical_bytes
@@ -44,6 +52,65 @@ class PublicationRepository(RunRepository, PublishedArtifactReader, Protocol):
     """Staged-write and published-read ports required for idempotent publication."""
 
     def get_published_artifact(self, run_id: str) -> PublishedArtifact | None: ...
+
+
+def _published_telemetry(
+    bundle: PublishedRunBundle, checkpoint: RunCheckpoint
+) -> PerformanceTelemetry | None:
+    """Validate frozen telemetry against its final checkpoint hash."""
+    contents = bundle.model_dump(mode="json")["bundle"]
+    value = contents.get("performance_telemetry")
+    digest = contents.get("performance_telemetry_sha256")
+    names = [
+        name for name in checkpoint.artifact_hashes
+        if name.startswith("performance_telemetry_")
+    ]
+    if value is None and digest is None and not names:
+        return None
+    if value is None or not isinstance(digest, str) or len(names) != 1:
+        raise ValueError("published telemetry value and checkpoint hash must appear together")
+    if (
+        checkpoint.artifact_hashes[names[0]] != digest
+        or names[0] != "performance_telemetry_" + digest
+    ):
+        raise ValueError("published telemetry differs from its checkpoint hash")
+    try:
+        telemetry = PerformanceTelemetry.model_validate(value, strict=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("published telemetry is malformed") from exc
+    if sha256(canonical_bytes(telemetry)).hexdigest() != digest:
+        raise ValueError("published telemetry does not match its checkpoint hash")
+    return telemetry
+
+
+def _publication_recorder(
+    repository: PublicationRepository, stored: StoredRun
+) -> RunTelemetryRecorder:
+    return RunTelemetryRecorder(initial=load_latest_checkpoint_telemetry(repository, stored))
+
+
+def _bind_publication_telemetry(
+    repository: PublicationRepository,
+    checkpoint: RunCheckpoint,
+    recorder: RunTelemetryRecorder,
+) -> tuple[RunCheckpoint, PerformanceTelemetry, str]:
+    telemetry = recorder.snapshot()
+    bound = checkpoint_with_telemetry(repository, checkpoint, telemetry)
+    name = next(
+        name for name in bound.artifact_hashes if name.startswith("performance_telemetry_")
+    )
+    return bound, telemetry, bound.artifact_hashes[name]
+
+
+def _telemetry_bundle_fields(
+    telemetry: PerformanceTelemetry, digest: str
+) -> dict[str, JsonValue]:
+    return {
+        "performance_telemetry": FrozenMap[str, JsonValue](
+            telemetry.model_dump(mode="json")
+        ),
+        "performance_telemetry_sha256": digest,
+    }
 
 
 def _staged_packet_hash(
@@ -102,6 +169,8 @@ def validate_staged_brief(
     packet: ResearchPacket,
     draft: ResearchBriefDraft,
     checkpointed_at: datetime,
+    *,
+    telemetry: RunTelemetryRecorder | None = None,
 ) -> tuple[ValidationReport, RepairContext | None]:
     """Record one deterministic attempt; retries of its exact draft are idempotent."""
     packet = ResearchPacket.model_validate(packet, strict=True)
@@ -114,6 +183,11 @@ def validate_staged_brief(
     packet_hash = _staged_packet_hash(repository, packet)
     stored = repository.load(packet.run.run_id)
     assert stored is not None
+    if telemetry is None:
+        telemetry = RunTelemetryRecorder()
+    previous_telemetry = load_latest_checkpoint_telemetry(repository, stored)
+    if previous_telemetry is not None:
+        telemetry.restore(previous_telemetry)
     attempts = tuple(c for c in stored.checkpoints if c.stage == "VALIDATING")
     if attempts:
         previous_draft, previous_report = _recorded_attempt(repository, attempts[-1])
@@ -137,7 +211,8 @@ def validate_staged_brief(
         attempt = 1
     if checkpointed_at < stored.checkpoints[-1].written_at:
         raise ValueError("validation checkpoint cannot precede current checkpoint")
-    report = validate_research_brief(packet, draft, validation_attempt=attempt)
+    with telemetry.measure_stage("VALIDATION"):
+        report = validate_research_brief(packet, draft, validation_attempt=attempt)
     draft_payload = canonical_bytes(draft)
     report_payload = canonical_bytes(report)
     draft_name = "brief_draft_" + sha256(draft_payload).hexdigest()
@@ -152,19 +227,25 @@ def validate_staged_brief(
     }
     if reduced_hash is not None:
         checkpoint_hashes["reduced_report"] = reduced_hash
+    checkpoint = RunCheckpoint(
+        run_id=packet.run.run_id,
+        stage="VALIDATING",
+        execution_status=ExecutionStatus.VALIDATING,
+        data_quality_status=packet.run.data_quality_status,
+        delivery_status=packet.run.delivery_status,
+        written_at=checkpointed_at,
+        evidence_cutoff_at=evidence_cutoff_at,
+        artifact_hashes=FrozenMap(checkpoint_hashes),
+        resumable=False,
+    )
+    telemetry_snapshot = telemetry.snapshot(
+        research_packet_bytes=len(_canonical_packet_bytes(packet)),
+        validation_attempts=attempt,
+    )
+    checkpoint = checkpoint_with_telemetry(repository, checkpoint, telemetry_snapshot)
     repository.checkpoint_if_current(
         packet.run.run_id,
-        RunCheckpoint(
-            run_id=packet.run.run_id,
-            stage="VALIDATING",
-            execution_status=ExecutionStatus.VALIDATING,
-            data_quality_status=packet.run.data_quality_status,
-            delivery_status=packet.run.delivery_status,
-            written_at=checkpointed_at,
-            evidence_cutoff_at=evidence_cutoff_at,
-            artifact_hashes=FrozenMap(checkpoint_hashes),
-            resumable=False,
-        ),
+        checkpoint,
         expected_count=len(stored.checkpoints),
     )
     repair = create_repair_context(packet, report) if report.repairable else None
@@ -199,6 +280,8 @@ def publish_validated_brief(
             or stored.checkpoints[-1].stage != "PUBLISHED"
         ):
             raise ValueError("published artifact origin or frozen packet differs")
+        if bundle is not None:
+            _published_telemetry(bundle, stored.checkpoints[-1])
         return artifact
     evidence_cutoff_at = packet.run.require_evidence_cutoff()
     if checkpointed_at < evidence_cutoff_at:
@@ -217,8 +300,12 @@ def publish_validated_brief(
         or checkpointed_at < latest.written_at
     ):
         raise ValueError("publication requires a valid recorded attempt")
-    markdown = render_markdown_report(packet, draft, validation)
+    telemetry: PerformanceTelemetry
+    telemetry_digest: str
     if latest.stage == "VALIDATING":
+        recorder = _publication_recorder(repository, stored)
+        with recorder.measure_stage("PUBLICATION"):
+            markdown = render_markdown_report(packet, draft, validation)
         latest = RunCheckpoint(
             run_id=run_id,
             stage="PUBLISHED",
@@ -230,16 +317,32 @@ def publish_validated_brief(
             artifact_hashes=latest.artifact_hashes,
             resumable=False,
         )
+        latest, telemetry, telemetry_digest = _bind_publication_telemetry(
+            repository, latest, recorder
+        )
         repository.checkpoint_if_current(
             run_id, latest, expected_count=len(stored.checkpoints)
         )
+    else:
+        frozen_telemetry = load_checkpoint_telemetry(repository, latest)
+        if frozen_telemetry is None:
+            raise ValueError("published checkpoint is missing staged telemetry")
+        telemetry = frozen_telemetry
+        telemetry_name = next(
+            name for name in latest.artifact_hashes
+            if name.startswith("performance_telemetry_")
+        )
+        telemetry_digest = latest.artifact_hashes[telemetry_name]
+        markdown = render_markdown_report(packet, draft, validation)
+    bundle_contents = {
+        "research_packet": json.loads(_canonical_packet_bytes(packet)),
+        "brief_draft": json.loads(canonical_bytes(draft)),
+        "validation_report": json.loads(canonical_bytes(validation)),
+        **_telemetry_bundle_fields(telemetry, telemetry_digest),
+    }
     bundle = PublishedRunBundle(
         run=compose_publication_context(stored.run, latest),
-        bundle=FrozenMap({
-            "research_packet": json.loads(_canonical_packet_bytes(packet)),
-            "brief_draft": json.loads(canonical_bytes(draft)),
-            "validation_report": json.loads(canonical_bytes(validation)),
-        }),
+        bundle=FrozenMap(bundle_contents),
         report_markdown=markdown,
         markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),
     )
@@ -277,6 +380,8 @@ def publish_reduced_report(
             or stored.checkpoints[-1].stage != "PUBLISHED"
         ):
             raise ValueError("published reduced report differs from packet or reason")
+        if bundle is not None:
+            _published_telemetry(bundle, stored.checkpoints[-1])
         return artifact
     evidence_cutoff_at = packet.run.require_evidence_cutoff()
     if checkpointed_at < evidence_cutoff_at:
@@ -319,7 +424,19 @@ def publish_reduced_report(
             != sha256(reason_bytes).hexdigest()
         ):
             raise ValueError("published checkpoint has another reduced reason")
+        telemetry = load_checkpoint_telemetry(repository, latest)
+        if telemetry is None:
+            raise ValueError("published checkpoint is missing staged telemetry")
+        telemetry_name = next(
+            name for name in latest.artifact_hashes
+            if name.startswith("performance_telemetry_")
+        )
+        telemetry_digest = latest.artifact_hashes[telemetry_name]
+        markdown = render_reduced_report(packet, reason)
     else:
+        recorder = _publication_recorder(repository, stored)
+        with recorder.measure_stage("PUBLICATION"):
+            markdown = render_reduced_report(packet, reason)
         reason_hash = repository.stage_artifact(run_id, "reduced_reason", reason_bytes)
         latest = RunCheckpoint(
             run_id=run_id,
@@ -335,30 +452,34 @@ def publish_reduced_report(
             }),
             resumable=False,
         )
+        latest, telemetry, telemetry_digest = _bind_publication_telemetry(
+            repository, latest, recorder
+        )
         repository.checkpoint_if_current(
             run_id, latest, expected_count=len(stored.checkpoints)
         )
-    markdown = render_reduced_report(packet, reason)
+    bundle_contents: dict[str, JsonValue] = {
+        "research_packet": json.loads(_canonical_packet_bytes(packet)),
+        "brief_origin": BriefOrigin.DETERMINISTIC_REDUCED.value,
+        "reduced_report_reason": reason.value,
+        "reduced_report_staged_sha256": reduced_hash,
+        "reduced_plans": tuple(
+            FrozenMap[str, JsonValue]({
+                "plan_id": plan.plan_id,
+                "status": "BLOCKED",
+                "reason": reason.value,
+            })
+            for plan in packet.deterministic_plan_inputs
+        ),
+        "validation_reports": tuple(
+            FrozenMap[str, JsonValue](json.loads(canonical_bytes(report)))
+            for report in reports
+        ),
+    }
+    bundle_contents.update(_telemetry_bundle_fields(telemetry, telemetry_digest))
     bundle = PublishedRunBundle(
         run=compose_publication_context(stored.run, latest),
-        bundle=FrozenMap[str, JsonValue]({
-            "research_packet": json.loads(_canonical_packet_bytes(packet)),
-            "brief_origin": BriefOrigin.DETERMINISTIC_REDUCED.value,
-            "reduced_report_reason": reason.value,
-            "reduced_report_staged_sha256": reduced_hash,
-            "reduced_plans": tuple(
-                FrozenMap[str, JsonValue]({
-                    "plan_id": plan.plan_id,
-                    "status": "BLOCKED",
-                    "reason": reason.value,
-                })
-                for plan in packet.deterministic_plan_inputs
-            ),
-            "validation_reports": tuple(
-                FrozenMap[str, JsonValue](json.loads(canonical_bytes(report)))
-                for report in reports
-            ),
-        }),
+        bundle=FrozenMap[str, JsonValue](bundle_contents),
         report_markdown=markdown,
         markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),
     )
@@ -370,8 +491,15 @@ def publish_operational_report(
     run: RunContext,
     reason: ErrorCode | str,
     checkpointed_at: datetime,
+    *,
+    telemetry_recorder: RunTelemetryRecorder | None = None,
 ) -> PublishedArtifact:
-    """Publish a closed operational failure without a research packet."""
+    """Publish a closed operational failure without a research packet.
+
+    Pass the recorder used by a failed stage so its in-memory measurements are
+    frozen into this failure checkpoint. Without one, the latest persisted
+    snapshot is restored as usual.
+    """
     run = RunContext.model_validate(run, strict=True)
     reason = ErrorCode(reason)
     run_id = run.run_id
@@ -392,9 +520,15 @@ def publish_operational_report(
         report = repository.get_report(run_id)
         artifact = repository.get_published_artifact(run_id)
         contents = bundle.model_dump(mode="json")["bundle"] if bundle is not None else None
+        if bundle is not None:
+            _published_telemetry(bundle, stored.checkpoints[-1])
         if (
-            contents != {"brief_origin": BriefOrigin.OPERATIONAL.value,
-                         "failure_code": reason.value}
+            contents is None
+            or {
+                key: value for key, value in contents.items()
+                if key not in {"performance_telemetry", "performance_telemetry_sha256"}
+            } != {"brief_origin": BriefOrigin.OPERATIONAL.value,
+                 "failure_code": reason.value}
             or report != render_operational_report(run, reason)
             or artifact is None
             or stored.checkpoints[-1].stage != "PUBLISHED"
@@ -424,6 +558,15 @@ def publish_operational_report(
             != reason_bytes
         ):
             raise ValueError("published checkpoint has another operational reason")
+        telemetry = load_checkpoint_telemetry(repository, latest)
+        if telemetry is None:
+            raise ValueError("published checkpoint is missing staged telemetry")
+        telemetry_name = next(
+            name for name in latest.artifact_hashes
+            if name.startswith("performance_telemetry_")
+        )
+        telemetry_digest = latest.artifact_hashes[telemetry_name]
+        markdown = render_operational_report(run, reason)
     else:
         if latest.stage not in {
             "CREATED", "CONFIG_FROZEN", "PRIOR_PLANS_OBSERVED",
@@ -433,6 +576,9 @@ def publish_operational_report(
         } or latest.execution_status is not run.execution_status:
             raise ValueError("operational publication requires pre-synthesis state")
         reason_hash = repository.stage_artifact(run_id, "operational_reason", reason_bytes)
+        recorder = telemetry_recorder or _publication_recorder(repository, stored)
+        with recorder.measure_stage("PUBLICATION"):
+            markdown = render_operational_report(run, reason)
         latest = RunCheckpoint(
             run_id=run_id,
             stage="PUBLISHED",
@@ -446,16 +592,20 @@ def publish_operational_report(
             }),
             resumable=False,
         )
+        latest, telemetry, telemetry_digest = _bind_publication_telemetry(
+            repository, latest, recorder
+        )
         repository.checkpoint_if_current(
             run_id, latest, expected_count=len(stored.checkpoints)
         )
-    markdown = render_operational_report(run, reason)
+    operational_contents: dict[str, JsonValue] = {
+        "brief_origin": BriefOrigin.OPERATIONAL.value,
+        "failure_code": reason.value,
+    }
+    operational_contents.update(_telemetry_bundle_fields(telemetry, telemetry_digest))
     bundle = PublishedRunBundle(
         run=compose_publication_context(stored.run, latest),
-        bundle=FrozenMap[str, JsonValue]({
-            "brief_origin": BriefOrigin.OPERATIONAL.value,
-            "failure_code": reason.value,
-        }),
+        bundle=FrozenMap[str, JsonValue](operational_contents),
         report_markdown=markdown,
         markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),
     )

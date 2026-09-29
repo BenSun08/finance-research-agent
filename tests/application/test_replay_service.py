@@ -5,6 +5,7 @@ from hashlib import sha256
 import pytest
 
 from finance_research_agent.application.operational_report import render_operational_report
+from finance_research_agent.application.performance_telemetry import RunTelemetryRecorder
 from finance_research_agent.application.reduced_report import (
     render_reduced_report,
     render_reduced_report_base,
@@ -101,6 +102,7 @@ def test_replay_returns_the_frozen_bundle_without_collection_or_synthesis(
     assert result.stored_json_sha256 == result.replayed_json_sha256
     assert result.stored_markdown_sha256 == result.replayed_markdown_sha256
     assert result.component_version_mismatches == ()
+    assert result.telemetry is not None
     assert reader.calls == [
         f"bundle:{bundle.run.run_id}", f"report:{bundle.run.run_id}",
         f"artifact:{bundle.run.run_id}",
@@ -196,12 +198,54 @@ def _frozen_bundle(valid_packet, valid_brief_draft, origin: BriefOrigin):
         run = run.model_copy(update={"data_quality_status": DataQualityStatus.FAIL})
         report = render_operational_report(run, reason_code)
         contents = {"brief_origin": origin.value, "failure_code": reason_code.value}
+    telemetry = RunTelemetryRecorder(monotonic_ns=lambda: 0).snapshot()
+    contents["performance_telemetry"] = telemetry.model_dump(mode="json")
+    contents["performance_telemetry_sha256"] = sha256(canonical_bytes(telemetry)).hexdigest()
     return PublishedRunBundle(
         run=run,
         bundle=FrozenMap(contents),
         report_markdown=report,
         markdown_sha256=sha256(report.encode()).hexdigest(),
     )
+
+
+def test_replay_verifies_and_returns_frozen_telemetry_without_live_dependencies(
+    valid_packet,
+) -> None:
+    bundle, report = _published_fixture(valid_packet)
+    reader = _Reader(bundle, report)
+
+    result = replay_published_artifact(reader, bundle.run.run_id, _versions(bundle.run))
+
+    assert result.telemetry == RunTelemetryRecorder(monotonic_ns=lambda: 0).snapshot()
+    assert reader.calls == [
+        f"bundle:{bundle.run.run_id}", f"report:{bundle.run.run_id}",
+        f"artifact:{bundle.run.run_id}",
+    ]
+
+
+def test_replay_rejects_telemetry_digest_mismatch(valid_packet) -> None:
+    bundle, report = _published_fixture(valid_packet)
+    contents = dict(bundle.bundle)
+    contents["performance_telemetry_sha256"] = "0" * 64
+    changed = bundle.model_copy(update={"bundle": FrozenMap(contents)})
+
+    with pytest.raises(ValueError, match="telemetry.*hash"):
+        replay_published_artifact(
+            _Reader(changed, report), bundle.run.run_id, _versions(bundle.run)
+        )
+
+
+def test_replay_rejects_malformed_telemetry(valid_packet) -> None:
+    bundle, report = _published_fixture(valid_packet)
+    contents = dict(bundle.bundle)
+    contents["performance_telemetry"] = {"provider_request_counts": {"secret": 1}}
+    changed = bundle.model_copy(update={"bundle": FrozenMap(contents)})
+
+    with pytest.raises(ValueError, match="telemetry"):
+        replay_published_artifact(
+            _Reader(changed, report), bundle.run.run_id, _versions(bundle.run)
+        )
 
 
 @pytest.mark.parametrize("origin", tuple(BriefOrigin))

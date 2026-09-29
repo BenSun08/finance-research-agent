@@ -21,6 +21,7 @@ import httpcore
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from finance_research_agent.application.ports import ProviderRequestObserver
 from finance_research_agent.domain.policies import SourcePolicy
 from finance_research_agent.domain.types import FrozenMap
 
@@ -437,6 +438,43 @@ class SafeHttpClient:
         *,
         provider_credentials: tuple[str, str] | None = None,
         user_agent: str | None = None,
+        telemetry_observer: ProviderRequestObserver | None = None,
+    ) -> SafeResponse:
+        request_attempts = 0
+        response_bytes = 0
+
+        def _mark_attempt() -> None:
+            nonlocal request_attempts
+            request_attempts += 1
+
+        try:
+            response = self._request_with_observer(
+                request,
+                deadline,
+                provider_credentials=provider_credentials,
+                user_agent=user_agent,
+                on_send=_mark_attempt,
+            )
+            response_bytes = len(response.content)
+            return response
+        finally:
+            if telemetry_observer is not None and request_attempts:
+                try:
+                    telemetry_observer.record_http_exchange(
+                        request.adapter, request_attempts, response_bytes
+                    )
+                except Exception:
+                    # Telemetry is observational and cannot change provider results.
+                    pass
+
+    def _request_with_observer(
+        self,
+        request: AllowedRequest,
+        deadline: datetime,
+        *,
+        provider_credentials: tuple[str, str] | None,
+        user_agent: str | None,
+        on_send: Callable[[], None],
     ) -> SafeResponse:
         if provider_credentials is not None and any(
             type(value) is not str or not value for value in provider_credentials
@@ -474,6 +512,7 @@ class SafeHttpClient:
                 if remaining <= 0:
                     raise RequestDeadlineExceeded("request deadline exceeded")
                 try:
+                    on_send()
                     with client.stream(
                         request.method,
                         url,

@@ -475,6 +475,22 @@ class FileSystemRunRepository:
         if not stored.checkpoints:
             return False
         previous = stored.checkpoints[-1]
+        telemetry_names = {
+            name for name in checkpoint.artifact_hashes
+            if name.startswith("performance_telemetry_")
+        }
+        previous_telemetry_names = {
+            name for name in previous.artifact_hashes
+            if name.startswith("performance_telemetry_")
+        }
+        business_hashes = {
+            name: digest for name, digest in checkpoint.artifact_hashes.items()
+            if name not in telemetry_names
+        }
+        previous_business_hashes = {
+            name: digest for name, digest in previous.artifact_hashes.items()
+            if name not in previous_telemetry_names
+        }
         if (
             checkpoint.stage != "PUBLISHED"
             or checkpoint.execution_status is not ExecutionStatus.PUBLISHED
@@ -492,11 +508,15 @@ class FileSystemRunRepository:
             }
             or any("research_packet" in item.artifact_hashes for item in stored.checkpoints)
             or self._staged_artifact_path(run_id, "research_packet").is_file()
-            or set(checkpoint.artifact_hashes)
-            != set(previous.artifact_hashes) | {"operational_reason"}
+            or set(business_hashes) != set(previous_business_hashes) | {"operational_reason"}
             or any(
-                checkpoint.artifact_hashes[name] != digest
-                for name, digest in previous.artifact_hashes.items()
+                business_hashes[name] != digest
+                for name, digest in previous_business_hashes.items()
+            )
+            or len(telemetry_names) > 1
+            or any(
+                name != "performance_telemetry_" + checkpoint.artifact_hashes[name]
+                for name in telemetry_names
             )
             or any(
                 not (artifact := self._staged_artifact_path(run_id, name)).is_file()
@@ -590,6 +610,16 @@ class FileSystemRunRepository:
                     and _sha256(staged.read_bytes()) == digest
                 for name, digest in checkpoint.artifact_hashes.items()
             )
+            telemetry_names = {
+                name
+                for name in checkpoint.artifact_hashes
+                if name.startswith("performance_telemetry_")
+            }
+            telemetry_artifacts_valid = len(telemetry_names) <= 1 and all(
+                name == "performance_telemetry_" + checkpoint.artifact_hashes[name]
+                for name in telemetry_names
+            )
+            business_artifact_names = set(checkpoint.artifact_hashes) - telemetry_names
             collection_checkpoint = next(
                 (
                     item
@@ -609,9 +639,15 @@ class FileSystemRunRepository:
                 and collection_checkpoint is not None
                 and collection_checkpoint.evidence_cutoff_at is None
                 and collection_checkpoint.resumable
-                and set(collection_checkpoint.artifact_hashes) == {"market_data_collection"}
-                and set(checkpoint.artifact_hashes)
-                == {"market_data_collection", "data_quality"}
+                and set(collection_checkpoint.artifact_hashes)
+                - {
+                    name
+                    for name in collection_checkpoint.artifact_hashes
+                    if name.startswith("performance_telemetry_")
+                }
+                == {"market_data_collection"}
+                and business_artifact_names == {"market_data_collection", "data_quality"}
+                and telemetry_artifacts_valid
                 and checkpoint.artifact_hashes.get("market_data_collection")
                 == collection_checkpoint.artifact_hashes.get("market_data_collection")
                 and not self._staged_artifact_path(run_id, "research_packet").is_file()
@@ -623,24 +659,32 @@ class FileSystemRunRepository:
                     name.startswith("validation_report_")
                     for name in checkpoint.artifact_hashes
                 ) == 1
-                and len(checkpoint.artifact_hashes) in {3, 4}
+                and len(business_artifact_names) in {3, 4}
                 and all(
                     name in {"research_packet", "reduced_report"}
                     or name.startswith("brief_draft_")
                     or name.startswith("validation_report_")
-                    for name in checkpoint.artifact_hashes
+                    for name in business_artifact_names
                 )
             )
             reduced_publication = (
                 checkpoint.stage == "PUBLISHED"
                 and stored.checkpoints[-1].stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
                 and "reduced_report" in stored.checkpoints[-1].artifact_hashes
-                and set(checkpoint.artifact_hashes)
-                == set(stored.checkpoints[-1].artifact_hashes) | {"reduced_reason"}
+                and business_artifact_names
+                == (
+                    set(stored.checkpoints[-1].artifact_hashes)
+                    - {
+                        name for name in stored.checkpoints[-1].artifact_hashes
+                        if name.startswith("performance_telemetry_")
+                    }
+                ) | {"reduced_reason"}
                 and all(
                     checkpoint.artifact_hashes[name] == digest
                     for name, digest in stored.checkpoints[-1].artifact_hashes.items()
+                    if not name.startswith("performance_telemetry_")
                 )
+                and telemetry_artifacts_valid
             )
             operational_publication = self._operational_publication_valid(
                 run_id, stored, checkpoint
@@ -656,14 +700,14 @@ class FileSystemRunRepository:
                 )
                 and (
                     checkpoint.stage == "AWAITING_SYNTHESIS"
-                    and set(checkpoint.artifact_hashes) in (
+                    and business_artifact_names in (
                         {"research_packet"},
                         {"research_packet", "reduced_report"},
                     )
                     or checkpoint.stage in {"VALIDATING", "PUBLISHED"}
                     and (
                         checkpoint.stage == "VALIDATING"
-                        and set(checkpoint.artifact_hashes) in (
+                        and business_artifact_names in (
                             {"research_packet"},
                             {"research_packet", "reduced_report"},
                         )
@@ -672,6 +716,7 @@ class FileSystemRunRepository:
                     )
                 )
                 and staged_hashes_valid
+                and telemetry_artifacts_valid
                 and current_packet_hash is not None
                 and checkpoint.artifact_hashes["research_packet"] == current_packet_hash
                 and (
@@ -696,12 +741,24 @@ class FileSystemRunRepository:
                     or checkpoint.stage == "VALIDATING"
                     and stored.checkpoints[-1].stage
                     in {"AWAITING_SYNTHESIS", "VALIDATING"}
-                    or checkpoint.stage == "PUBLISHED"
-                    and (
-                        stored.checkpoints[-1].stage == "VALIDATING"
-                        and checkpoint.artifact_hashes == stored.checkpoints[-1].artifact_hashes
-                        or reduced_publication
+                or checkpoint.stage == "PUBLISHED"
+                and (
+                    stored.checkpoints[-1].stage == "VALIDATING"
+                    and business_artifact_names
+                    == (
+                        set(stored.checkpoints[-1].artifact_hashes)
+                        - {
+                            name for name in stored.checkpoints[-1].artifact_hashes
+                            if name.startswith("performance_telemetry_")
+                        }
                     )
+                    and all(
+                        checkpoint.artifact_hashes[name] == digest
+                        for name, digest in stored.checkpoints[-1].artifact_hashes.items()
+                        if not name.startswith("performance_telemetry_")
+                    )
+                    or reduced_publication
+                )
                 )
             )
             if not (

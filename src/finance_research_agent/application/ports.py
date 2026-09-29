@@ -36,6 +36,7 @@ __all__ = [
     "EventProvider",
     "HistoricalBarsFetcher",
     "MarketDataProvider",
+    "ProviderRequestObserver",
     "RunRepository",
     "PublishedArtifactReader",
     "WatchlistRepository",
@@ -55,13 +56,24 @@ class MarketCalendarReadinessProvider(TradingCalendar, Protocol):
     def readiness(self) -> ProviderReadiness: ...
 
 
+class ProviderRequestObserver(Protocol):
+    """Secret-free observer for bounded provider transport totals."""
+
+    def record_http_exchange(
+        self, adapter: str, request_attempts: int, response_bytes: int
+    ) -> None: ...
+
+
 class MarketDataProvider(Protocol):
     """Provider-neutral Product A market-data collection boundary."""
 
     def readiness(self) -> ProviderReadiness: ...
 
     def fetch_instruments(
-        self, symbols: Sequence[str]
+        self,
+        symbols: Sequence[str],
+        *,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> Mapping[str, InstrumentIdentity | ProviderFailure]: ...
 
     def fetch_daily_bars(
@@ -74,6 +86,7 @@ class MarketDataProvider(Protocol):
         completed_through_session: date | None = None,
         evidence_cutoff_at: datetime | None = None,
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> Mapping[str, tuple[CompletedDailyBar, ...] | ProviderFailure]: ...
 
     def fetch_premarket_observations(
@@ -82,6 +95,7 @@ class MarketDataProvider(Protocol):
         as_of: datetime | None,
         *,
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> Mapping[str, PriceObservation | ProviderFailure]: ...
 
 

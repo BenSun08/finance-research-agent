@@ -4,9 +4,18 @@ import json
 from datetime import datetime
 from hashlib import sha256
 
+from finance_research_agent.application.performance_telemetry import (
+    checkpoint_with_telemetry,
+    load_checkpoint_telemetry,
+    load_latest_checkpoint_telemetry,
+)
 from finance_research_agent.application.ports import RunRepository
 from finance_research_agent.domain.enums import ExecutionStatus
-from finance_research_agent.domain.models import RunCheckpoint, StoredRun
+from finance_research_agent.domain.models import (
+    PerformanceTelemetry,
+    RunCheckpoint,
+    StoredRun,
+)
 from finance_research_agent.domain.quality import DataQualityResult
 from finance_research_agent.domain.types import FrozenMap
 
@@ -33,6 +42,7 @@ def checkpoint_market_data_quality(
     result: DataQualityResult,
     *,
     checkpointed_at: datetime,
+    telemetry: PerformanceTelemetry | None = None,
 ) -> StoredRun:
     """Bind the evaluated status to the frozen collection for safe restart."""
     if not isinstance(frozen_run, StoredRun):
@@ -63,8 +73,14 @@ def checkpoint_market_data_quality(
     )
     if collection_checkpoint is None:
         raise ValueError("quality checkpoint requires collected market data")
-    if set(collection_checkpoint.artifact_hashes) != {_COLLECTION_ARTIFACT}:
+    collection_names = set(collection_checkpoint.artifact_hashes)
+    telemetry_names = {
+        name for name in collection_names if name.startswith("performance_telemetry_")
+    }
+    if collection_names != {_COLLECTION_ARTIFACT} | telemetry_names:
         raise ValueError("collected checkpoint is missing its collection artifact hash")
+    if telemetry_names:
+        load_checkpoint_telemetry(repository, collection_checkpoint)
     collection_digest = collection_checkpoint.artifact_hashes[_COLLECTION_ARTIFACT]
     collection_bytes = repository.read_staged_artifact(
         stored.run_id, _COLLECTION_ARTIFACT
@@ -74,23 +90,29 @@ def checkpoint_market_data_quality(
 
     quality_bytes = _canonical_quality_bytes(result)
     quality_digest = sha256(quality_bytes).hexdigest()
+    if telemetry is None:
+        telemetry = load_latest_checkpoint_telemetry(repository, stored)
     if latest.stage == _QUALITY_STAGE:
         staged_quality = repository.read_staged_artifact(stored.run_id, _QUALITY_ARTIFACT)
         if (
             latest.execution_status is not ExecutionStatus.ANALYZING
             or latest.data_quality_status is not result.status
             or latest.evidence_cutoff_at != cutoff
-            or latest.artifact_hashes
-            != FrozenMap(
-                {
-                    _COLLECTION_ARTIFACT: collection_digest,
-                    _QUALITY_ARTIFACT: quality_digest,
-                }
-            )
+            or {
+                name: digest
+                for name, digest in latest.artifact_hashes.items()
+                if not name.startswith("performance_telemetry_")
+            }
+            != {
+                _COLLECTION_ARTIFACT: collection_digest,
+                _QUALITY_ARTIFACT: quality_digest,
+            }
             or staged_quality != quality_bytes
             or latest.resumable
         ):
             raise ValueError("resume result differs from the quality checkpoint")
+        if telemetry is not None and load_checkpoint_telemetry(repository, latest) != telemetry:
+            raise ValueError("resume telemetry differs from the quality checkpoint")
         return stored
     if latest.stage != _FROZEN_STAGE or latest.evidence_cutoff_at != cutoff:
         raise ValueError("quality checkpoint must follow EVIDENCE_FROZEN")
@@ -100,24 +122,27 @@ def checkpoint_market_data_quality(
     staged_digest = repository.stage_artifact(stored.run_id, _QUALITY_ARTIFACT, quality_bytes)
     if staged_digest != quality_digest:
         raise RuntimeError("repository returned an invalid quality artifact digest")
+    checkpoint = RunCheckpoint(
+        run_id=stored.run_id,
+        stage=_QUALITY_STAGE,
+        execution_status=ExecutionStatus.ANALYZING,
+        data_quality_status=result.status,
+        delivery_status=latest.delivery_status,
+        written_at=checkpointed_at,
+        evidence_cutoff_at=cutoff,
+        artifact_hashes=FrozenMap(
+            {
+                _COLLECTION_ARTIFACT: collection_digest,
+                _QUALITY_ARTIFACT: quality_digest,
+            }
+        ),
+        resumable=False,
+    )
+    if telemetry is not None:
+        checkpoint = checkpoint_with_telemetry(repository, checkpoint, telemetry)
     repository.checkpoint_if_current(
         stored.run_id,
-        RunCheckpoint(
-            run_id=stored.run_id,
-            stage=_QUALITY_STAGE,
-            execution_status=ExecutionStatus.ANALYZING,
-            data_quality_status=result.status,
-            delivery_status=latest.delivery_status,
-            written_at=checkpointed_at,
-            evidence_cutoff_at=cutoff,
-            artifact_hashes=FrozenMap(
-                {
-                    _COLLECTION_ARTIFACT: collection_digest,
-                    _QUALITY_ARTIFACT: quality_digest,
-                }
-            ),
-            resumable=False,
-        ),
+        checkpoint,
         expected_count=len(stored.checkpoints),
     )
     updated = repository.load(stored.run_id)
