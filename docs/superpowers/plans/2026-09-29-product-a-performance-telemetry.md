@@ -110,7 +110,7 @@
 - [x] **Step 3: Integrate restore/measure/snapshot/checkpoint binding for run preparation, collection, quality evaluation, packet assembly, and validation.**
 - [x] **Step 4: Run the focused application suites and their resume, failure, concurrency, and cutoff cases.**
 - [x] **Step 5: Run Ruff and mypy on changed source files; inspect checkpoint compare-and-swap and artifact hash preservation.**
-- [ ] **Step 6: Commit** as `feat: checkpoint Product A run telemetry`.
+- [x] **Step 6: Commit** as `feat: checkpoint Product A run telemetry`.
 
 ### Task 4: Freeze telemetry through publication and zero-network replay
 
@@ -127,13 +127,14 @@
 - All publication paths load telemetry from the latest verified checkpoint; no public caller may substitute a telemetry value.
 - New bundles carry the canonical telemetry value and its checkpoint-bound digest. Replay verifies the value against that digest and the indexed bundle hash; legacy bundles without telemetry remain replayable and report `telemetry=None`.
 - `PUBLICATION` measures deterministic report rendering before the immutable telemetry snapshot and atomic filesystem publication are persisted; the resulting snapshot is staged, checkpoint-bound, and included in the bundle.
+- Operational failure publication accepts the run's existing telemetry recorder so duration and request totals from a failed stage are included in its failure checkpoint.
 
 - [x] **Step 1: Write failing tests** for normal, reduced, and operational-failure publication; atomic retry with identical telemetry; changed-snapshot rejection; replay parity; malformed telemetry/hash rejection; and zero provider/clock calls during replay.
 - [x] **Step 2: Run focused tests and confirm telemetry is missing from frozen publication/replay values.**
 - [x] **Step 3: Persist the checkpointed snapshot in every immutable published bundle and validate it during retries and replay.**
 - [x] **Step 4: Run publication, operational-report, and replay suites.**
 - [x] **Step 5: Run Ruff and mypy on changed source files; inspect every serialization boundary for secrets and nondeterministic data.**
-- [ ] **Step 6: Commit** as `feat: persist telemetry in published artifacts`.
+- [x] **Step 6: Commit** as `feat: persist telemetry in published artifacts`.
 
 ### Task 5: Verify, review, measure coverage, and deliver the R9 telemetry feature
 

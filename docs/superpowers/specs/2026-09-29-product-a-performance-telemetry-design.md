@@ -113,6 +113,13 @@ remain intact.
    recorded telemetry. It does not invoke clocks, providers, or mutable current
    configuration to regenerate measurements.
 
+When an application stage fails, its caller may carry the same run-scoped
+recorder to `publish_operational_report`; the operational publication freezes
+that recorder so the measured failed-stage duration and request counters are
+included in the failure artifact. The publication API accepts a recorder, not
+a caller-supplied telemetry snapshot. Callers that do not retain an in-memory
+recorder fall back to the latest checkpointed snapshot.
+
 ## Failure and security behavior
 
 - Measurement is best-effort only with respect to unavailable timing detail;

@@ -491,8 +491,15 @@ def publish_operational_report(
     run: RunContext,
     reason: ErrorCode | str,
     checkpointed_at: datetime,
+    *,
+    telemetry_recorder: RunTelemetryRecorder | None = None,
 ) -> PublishedArtifact:
-    """Publish a closed operational failure without a research packet."""
+    """Publish a closed operational failure without a research packet.
+
+    Pass the recorder used by a failed stage so its in-memory measurements are
+    frozen into this failure checkpoint. Without one, the latest persisted
+    snapshot is restored as usual.
+    """
     run = RunContext.model_validate(run, strict=True)
     reason = ErrorCode(reason)
     run_id = run.run_id
@@ -569,7 +576,7 @@ def publish_operational_report(
         } or latest.execution_status is not run.execution_status:
             raise ValueError("operational publication requires pre-synthesis state")
         reason_hash = repository.stage_artifact(run_id, "operational_reason", reason_bytes)
-        recorder = _publication_recorder(repository, stored)
+        recorder = telemetry_recorder or _publication_recorder(repository, stored)
         with recorder.measure_stage("PUBLICATION"):
             markdown = render_operational_report(run, reason)
         latest = RunCheckpoint(

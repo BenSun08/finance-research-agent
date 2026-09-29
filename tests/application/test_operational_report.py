@@ -1,6 +1,7 @@
 """Deterministic operational reports for hard failures before synthesis."""
 
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,14 @@ from finance_research_agent.adapters.filesystem import (
     PublicationError,
 )
 from finance_research_agent.application import publication_service
+from finance_research_agent.application.collection_service import (
+    collect_and_freeze_market_data_for_run,
+)
+from finance_research_agent.application.config_service import (
+    ConfigService,
+    DirectoryConfigurationRepository,
+)
+from finance_research_agent.application.performance_telemetry import RunTelemetryRecorder
 from finance_research_agent.application.replay_service import (
     _recorded_versions,
     replay_published_artifact,
@@ -93,6 +102,66 @@ def test_pre_synthesis_fail_publishes_only_operational_artifact(
     assert publication_service.publish_operational_report(
         repository, run, ErrorCode.MARKET_CALENDAR_UNAVAILABLE, at
     ) == receipt
+
+
+def test_operational_failure_publication_preserves_failed_stage_telemetry(
+    tmp_path, valid_packet
+) -> None:
+    run = valid_packet.run.model_copy(update={
+        "execution_status": ExecutionStatus.CREATED,
+        "data_quality_status": DataQualityStatus.FAIL,
+        "evidence_cutoff_at": None,
+        "configuration_snapshot": ConfigService(
+            DirectoryConfigurationRepository(
+                Path(__file__).resolve().parents[2] / "config" / "examples"
+            )
+        ).validate_and_snapshot(),
+    })
+    repository = FileSystemRunRepository(tmp_path)
+    repository.create(run)
+    repository.checkpoint(run.run_id, RunCheckpoint(
+        run_id=run.run_id,
+        stage="CREATED",
+        execution_status=ExecutionStatus.CREATED,
+        data_quality_status=DataQualityStatus.FAIL,
+        delivery_status=run.delivery_status,
+        written_at=run.invoked_at,
+        evidence_cutoff_at=None,
+        artifact_hashes=FrozenMap({}),
+        resumable=True,
+    ))
+    ticks = iter((0, 4_900_000, 5_000_000, 6_000_000))
+    telemetry = RunTelemetryRecorder(monotonic_ns=lambda: next(ticks))
+
+    class _FailingProvider:
+        def fetch_instruments(self, symbols, *, telemetry_observer=None):
+            raise RuntimeError("failed collection")
+
+    with pytest.raises(RuntimeError, match="failed collection"):
+        collect_and_freeze_market_data_for_run(
+            run,
+            repository,
+            _FailingProvider(),
+            type("Clock", (), {"now_utc": lambda self: run.invoked_at})(),
+            type("Calendar", (), {"is_trading_day": lambda self, _: True})(),
+            telemetry=telemetry,
+        )
+
+    publication_service.publish_operational_report(
+        repository,
+        run,
+        ErrorCode.MARKET_CALENDAR_UNAVAILABLE,
+        run.invoked_at + timedelta(seconds=1),
+        telemetry_recorder=telemetry,
+    )
+    bundle = repository.load_published_bundle(run.run_id)
+    assert bundle is not None
+    replay = replay_published_artifact(
+        repository, run.run_id, _recorded_versions(bundle)
+    )
+
+    assert replay.telemetry is not None
+    assert replay.telemetry.stage_durations_ms["MARKET_COLLECTION"] == 4
 
 
 def test_frozen_global_fail_publishes_without_research_packet(
