@@ -8,6 +8,11 @@ from hashlib import sha256
 from typing import Protocol
 
 from finance_research_agent.application.operational_report import render_operational_report
+from finance_research_agent.application.performance_telemetry import (
+    RunTelemetryRecorder,
+    checkpoint_with_telemetry,
+    load_latest_checkpoint_telemetry,
+)
 from finance_research_agent.application.ports import PublishedArtifactReader, RunRepository
 from finance_research_agent.application.preparation_service import _canonical_packet_bytes
 from finance_research_agent.application.reduced_report import (
@@ -102,6 +107,8 @@ def validate_staged_brief(
     packet: ResearchPacket,
     draft: ResearchBriefDraft,
     checkpointed_at: datetime,
+    *,
+    telemetry: RunTelemetryRecorder | None = None,
 ) -> tuple[ValidationReport, RepairContext | None]:
     """Record one deterministic attempt; retries of its exact draft are idempotent."""
     packet = ResearchPacket.model_validate(packet, strict=True)
@@ -114,6 +121,11 @@ def validate_staged_brief(
     packet_hash = _staged_packet_hash(repository, packet)
     stored = repository.load(packet.run.run_id)
     assert stored is not None
+    if telemetry is None:
+        telemetry = RunTelemetryRecorder()
+    previous_telemetry = load_latest_checkpoint_telemetry(repository, stored)
+    if previous_telemetry is not None:
+        telemetry.restore(previous_telemetry)
     attempts = tuple(c for c in stored.checkpoints if c.stage == "VALIDATING")
     if attempts:
         previous_draft, previous_report = _recorded_attempt(repository, attempts[-1])
@@ -137,7 +149,8 @@ def validate_staged_brief(
         attempt = 1
     if checkpointed_at < stored.checkpoints[-1].written_at:
         raise ValueError("validation checkpoint cannot precede current checkpoint")
-    report = validate_research_brief(packet, draft, validation_attempt=attempt)
+    with telemetry.measure_stage("VALIDATION"):
+        report = validate_research_brief(packet, draft, validation_attempt=attempt)
     draft_payload = canonical_bytes(draft)
     report_payload = canonical_bytes(report)
     draft_name = "brief_draft_" + sha256(draft_payload).hexdigest()
@@ -152,19 +165,25 @@ def validate_staged_brief(
     }
     if reduced_hash is not None:
         checkpoint_hashes["reduced_report"] = reduced_hash
+    checkpoint = RunCheckpoint(
+        run_id=packet.run.run_id,
+        stage="VALIDATING",
+        execution_status=ExecutionStatus.VALIDATING,
+        data_quality_status=packet.run.data_quality_status,
+        delivery_status=packet.run.delivery_status,
+        written_at=checkpointed_at,
+        evidence_cutoff_at=evidence_cutoff_at,
+        artifact_hashes=FrozenMap(checkpoint_hashes),
+        resumable=False,
+    )
+    telemetry_snapshot = telemetry.snapshot(
+        research_packet_bytes=len(_canonical_packet_bytes(packet)),
+        validation_attempts=attempt,
+    )
+    checkpoint = checkpoint_with_telemetry(repository, checkpoint, telemetry_snapshot)
     repository.checkpoint_if_current(
         packet.run.run_id,
-        RunCheckpoint(
-            run_id=packet.run.run_id,
-            stage="VALIDATING",
-            execution_status=ExecutionStatus.VALIDATING,
-            data_quality_status=packet.run.data_quality_status,
-            delivery_status=packet.run.delivery_status,
-            written_at=checkpointed_at,
-            evidence_cutoff_at=evidence_cutoff_at,
-            artifact_hashes=FrozenMap(checkpoint_hashes),
-            resumable=False,
-        ),
+        checkpoint,
         expected_count=len(stored.checkpoints),
     )
     repair = create_repair_context(packet, report) if report.repairable else None

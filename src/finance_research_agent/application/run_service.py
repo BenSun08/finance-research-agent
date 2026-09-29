@@ -1,10 +1,16 @@
 """Deterministic Product A premarket run preparation service."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date
+from time import perf_counter_ns
 
 from finance_research_agent import __version__
 from finance_research_agent.application.config_service import ConfigService
+from finance_research_agent.application.performance_telemetry import (
+    RunTelemetryRecorder,
+    checkpoint_with_telemetry,
+)
 from finance_research_agent.application.ports import (
     Clock,
     ConfigurationRepository,
@@ -21,6 +27,7 @@ from finance_research_agent.domain.market_calendar import (
 )
 from finance_research_agent.domain.models import (
     ComponentVersions,
+    RunCheckpoint,
     RunContextSeed,
     StoredRun,
 )
@@ -56,6 +63,7 @@ class RunDependencies:
     run_repository: RunRepository
     market_data: MarketDataProvider
     event_providers: tuple[EventProvider, ...]
+    monotonic_ns: Callable[[], int] = perf_counter_ns
 
     def __post_init__(self) -> None:
         if type(self.event_providers) is not tuple:
@@ -125,6 +133,8 @@ def prepare_premarket_run(
     if decision.delivery_status is None:
         raise RuntimeError("runnable window decision must include delivery status")
 
+    telemetry = RunTelemetryRecorder(monotonic_ns=dependencies.monotonic_ns)
+    stage_started_ns = dependencies.monotonic_ns()
     configuration_snapshot = ConfigService(
         dependencies.config_repository
     ).validate_and_snapshot()
@@ -157,4 +167,26 @@ def prepare_premarket_run(
     stored = dependencies.run_repository.load(context.run_id)
     if stored is None:
         raise RuntimeError("allocated run context could not be reloaded")
+    if stored.published:
+        return PreparePremarketRunResult(decision, stored)
+    elapsed_ns = max(0, dependencies.monotonic_ns() - stage_started_ns)
+    telemetry.record_stage_duration_ms("RUN_PREPARATION", elapsed_ns // 1_000_000)
+    checkpoint = RunCheckpoint(
+        run_id=context.run_id,
+        stage="CONFIG_FROZEN",
+        execution_status=context.execution_status,
+        data_quality_status=context.data_quality_status,
+        delivery_status=context.delivery_status,
+        written_at=invoked_at,
+        evidence_cutoff_at=None,
+        artifact_hashes=FrozenMap({}),
+        resumable=True,
+    )
+    checkpoint = checkpoint_with_telemetry(
+        dependencies.run_repository, checkpoint, telemetry.snapshot()
+    )
+    dependencies.run_repository.checkpoint(context.run_id, checkpoint)
+    stored = dependencies.run_repository.load(context.run_id)
+    if stored is None:
+        raise RuntimeError("prepared run checkpoint could not be reloaded")
     return PreparePremarketRunResult(decision, stored)

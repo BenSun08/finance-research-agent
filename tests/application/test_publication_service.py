@@ -109,10 +109,41 @@ def test_validation_records_attempt_and_retry_without_using_repair(
     stored = repo.load(packet.run.run_id)
     assert stored is not None
     assert [c.stage for c in stored.checkpoints].count("VALIDATING") == 1
-    assert len(stored.checkpoints[-1].artifact_hashes) == 4
+    assert len(
+        [
+            name
+            for name in stored.checkpoints[-1].artifact_hashes
+            if not name.startswith("performance_telemetry_")
+        ]
+    ) == 4
     assert stored.checkpoints[-1].artifact_hashes["reduced_report"] == (
         stored.checkpoints[-2].artifact_hashes["reduced_report"]
     )
+
+
+def test_validation_checkpoints_count_attempts_without_double_counting_retries(
+    tmp_path, valid_packet, valid_brief_draft
+):
+    from finance_research_agent.application.performance_telemetry import (
+        RunTelemetryRecorder,
+        load_latest_checkpoint_telemetry,
+    )
+
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    telemetry = RunTelemetryRecorder(monotonic_ns=lambda: 0)
+    bad = valid_brief_draft.model_copy(update={"run_id": "premarket-2026-01-01-r2"})
+
+    first, _ = validate_staged_brief(repo, packet, bad, at, telemetry=telemetry)
+    assert first.validation_attempt == 1
+    second = bad.model_copy(update={"execution_status": ExecutionStatus.FAILED})
+    validate_staged_brief(repo, packet, second, at + timedelta(seconds=1), telemetry=telemetry)
+
+    stored = repo.load(packet.run.run_id)
+    assert stored is not None
+    snapshot = load_latest_checkpoint_telemetry(repo, stored)
+    assert snapshot is not None
+    assert snapshot.validation_attempts == 2
+    assert snapshot.research_packet_bytes > 0
 
 
 def test_validation_checkpoint_cannot_drop_staged_reduced_report(

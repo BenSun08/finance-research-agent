@@ -150,6 +150,39 @@ def test_prepare_scheduled_run_starts_without_an_evidence_cutoff(
     assert clock.calls == 1
 
 
+def test_prepare_run_binds_its_duration_to_the_first_checkpoint(tmp_path: Path) -> None:
+    from finance_research_agent.application.performance_telemetry import (
+        load_latest_checkpoint_telemetry,
+    )
+
+    class Monotonic:
+        value = 0
+
+        def __call__(self) -> int:
+            self.value += 2_000_000
+            return self.value
+
+    dependencies, _, _, repository = _dependencies(tmp_path)
+    dependencies = dependencies.__class__(
+        clock=dependencies.clock,
+        calendar=dependencies.calendar,
+        config_repository=dependencies.config_repository,
+        run_repository=dependencies.run_repository,
+        market_data=dependencies.market_data,
+        event_providers=dependencies.event_providers,
+        monotonic_ns=Monotonic(),
+    )
+
+    result = prepare_premarket_run(_request(), dependencies)
+
+    assert result.stored_run is not None
+    checkpoint = result.stored_run.checkpoints[-1]
+    assert checkpoint.stage == "CONFIG_FROZEN"
+    telemetry = load_latest_checkpoint_telemetry(repository, result.stored_run)
+    assert telemetry is not None
+    assert telemetry.stage_durations_ms["RUN_PREPARATION"] == 2
+
+
 def test_duplicate_scheduled_run_reuses_stored_context_without_loading_configuration(
     tmp_path: Path,
 ) -> None:

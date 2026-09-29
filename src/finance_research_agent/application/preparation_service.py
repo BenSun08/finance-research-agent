@@ -3,6 +3,11 @@
 import json
 from datetime import datetime
 
+from finance_research_agent.application.performance_telemetry import (
+    RunTelemetryRecorder,
+    checkpoint_with_telemetry,
+    load_latest_checkpoint_telemetry,
+)
 from finance_research_agent.application.ports import RunRepository
 from finance_research_agent.application.reduced_report import render_reduced_report_base
 from finance_research_agent.domain.enums import DataQualityStatus, ExecutionStatus
@@ -25,6 +30,8 @@ def stage_research_packet(
     repository: RunRepository,
     packet: ResearchPacket,
     checkpointed_at: datetime,
+    *,
+    telemetry: RunTelemetryRecorder | None = None,
 ) -> str:
     """Persist the validated frozen packet and bind its digest to run state."""
     packet = ResearchPacket.model_validate(packet, strict=True)
@@ -74,10 +81,17 @@ def stage_research_packet(
     ):
         raise ValueError("research packet status snapshot differs from frozen checkpoint")
 
-    payload = _canonical_packet_bytes(packet)
+    if telemetry is None:
+        telemetry = RunTelemetryRecorder()
+    previous_telemetry = load_latest_checkpoint_telemetry(repository, stored)
+    if previous_telemetry is not None:
+        telemetry.restore(previous_telemetry)
+    with telemetry.measure_stage("PACKET_ASSEMBLY"):
+        payload = _canonical_packet_bytes(packet)
+        reduced_payload = render_reduced_report_base(packet)
     digest = repository.stage_artifact(packet.run.run_id, "research_packet", payload)
     reduced_digest = repository.stage_artifact(
-        packet.run.run_id, "reduced_report", render_reduced_report_base(packet)
+        packet.run.run_id, "reduced_report", reduced_payload
     )
     artifact_hashes = FrozenMap({"research_packet": digest, "reduced_report": reduced_digest})
     if latest.stage in {
@@ -96,18 +110,24 @@ def stage_research_packet(
             raise ValueError("staged research packet differs from frozen checkpoint")
         return digest
 
+    checkpoint = RunCheckpoint(
+        run_id=packet.run.run_id,
+        stage=ExecutionStatus.AWAITING_SYNTHESIS.value,
+        execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
+        data_quality_status=packet.run.data_quality_status,
+        delivery_status=packet.run.delivery_status,
+        written_at=checkpointed_at,
+        evidence_cutoff_at=packet.run.evidence_cutoff_at,
+        artifact_hashes=artifact_hashes,
+        resumable=False,
+    )
+    checkpoint = checkpoint_with_telemetry(
+        repository,
+        checkpoint,
+        telemetry.snapshot(research_packet_bytes=len(payload)),
+    )
     repository.checkpoint(
         packet.run.run_id,
-        RunCheckpoint(
-            run_id=packet.run.run_id,
-            stage=ExecutionStatus.AWAITING_SYNTHESIS.value,
-            execution_status=ExecutionStatus.AWAITING_SYNTHESIS,
-            data_quality_status=packet.run.data_quality_status,
-            delivery_status=packet.run.delivery_status,
-            written_at=checkpointed_at,
-            evidence_cutoff_at=packet.run.evidence_cutoff_at,
-            artifact_hashes=artifact_hashes,
-            resumable=False,
-        ),
+        checkpoint,
     )
     return digest

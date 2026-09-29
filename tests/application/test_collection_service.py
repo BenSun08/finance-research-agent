@@ -48,7 +48,7 @@ class _MarketData:
         self.daily_request: tuple[date, date, tuple[date, ...], date] | None = None
 
     def fetch_instruments(
-        self, symbols: Sequence[str]
+        self, symbols: Sequence[str], *, telemetry_observer=None
     ) -> Mapping[str, InstrumentIdentity | ProviderFailure]:
         self.requested_symbols = tuple(symbols)
         return {symbol: _failure(symbol) for symbol in symbols}
@@ -63,6 +63,7 @@ class _MarketData:
         completed_through_session: date | None = None,
         evidence_cutoff_at: datetime | None = None,
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+        telemetry_observer=None,
     ) -> Mapping[str, tuple[CompletedDailyBar, ...] | ProviderFailure]:
         assert expected_sessions is not None
         assert completed_through_session is not None
@@ -75,6 +76,7 @@ class _MarketData:
         as_of: datetime | None,
         *,
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+        telemetry_observer=None,
     ) -> Mapping[str, PriceObservation | ProviderFailure]:
         return {symbol: _failure(symbol) for symbol in symbols}
 
@@ -378,6 +380,102 @@ def test_collect_and_freeze_run_binds_cutoff_after_successful_collection(
     assert repository.load(run.run_id) == result.frozen_run
 
 
+def test_collection_telemetry_is_checkpointed_and_restored_on_resume(
+    valid_packet, tmp_path: Path
+) -> None:
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.collection_service import (
+        collect_and_freeze_market_data_for_run,
+    )
+    from finance_research_agent.application.performance_telemetry import (
+        RunTelemetryRecorder,
+        load_latest_checkpoint_telemetry,
+    )
+
+    class Monotonic:
+        value = 0
+
+        def __call__(self) -> int:
+            self.value += 125_000_000
+            return self.value
+
+    class TelemetryMarketData(_MarketData):
+        def fetch_instruments(self, symbols, *, telemetry_observer=None):
+            if telemetry_observer is not None:
+                telemetry_observer.record_http_exchange("alpaca", 1, 7)
+            return super().fetch_instruments(symbols)
+
+        def fetch_daily_bars(
+            self,
+            symbols,
+            start,
+            end,
+            *,
+            expected_sessions=None,
+            completed_through_session=None,
+            evidence_cutoff_at=None,
+            instrument_identities=None,
+            telemetry_observer=None,
+        ):
+            if telemetry_observer is not None:
+                telemetry_observer.record_http_exchange("alpaca", 2, 13)
+            return super().fetch_daily_bars(
+                symbols,
+                start,
+                end,
+                expected_sessions=expected_sessions,
+                completed_through_session=completed_through_session,
+                evidence_cutoff_at=evidence_cutoff_at,
+                instrument_identities=instrument_identities,
+            )
+
+        def fetch_premarket_observations(
+            self,
+            symbols,
+            as_of,
+            *,
+            instrument_identities=None,
+            telemetry_observer=None,
+        ):
+            if telemetry_observer is not None:
+                telemetry_observer.record_http_exchange("alpaca", 1, 5)
+            return super().fetch_premarket_observations(
+                symbols, as_of, instrument_identities=instrument_identities
+            )
+
+    repository = FileSystemRunRepository(tmp_path)
+    run = _run(valid_packet)
+    repository.create(run)
+    telemetry = RunTelemetryRecorder(monotonic_ns=Monotonic())
+    collected = collect_and_freeze_market_data_for_run(
+        run,
+        repository,
+        cast(MarketDataProvider, TelemetryMarketData()),
+        cast(Clock, _Clock()),
+        cast(TradingCalendar, _Calendar()),
+        telemetry=telemetry,
+    )
+
+    frozen_telemetry = load_latest_checkpoint_telemetry(repository, collected.frozen_run)
+    assert frozen_telemetry is not None
+    assert frozen_telemetry.provider_request_counts["alpaca"] == 4
+    assert frozen_telemetry.response_bytes_by_provider["alpaca"] == 25
+    assert frozen_telemetry.stage_durations_ms["MARKET_COLLECTION"] == 125
+
+    resumed_telemetry = RunTelemetryRecorder(monotonic_ns=Monotonic())
+    resumed = collect_and_freeze_market_data_for_run(
+        run,
+        repository,
+        cast(MarketDataProvider, object()),
+        cast(Clock, _Clock()),
+        cast(TradingCalendar, _Calendar()),
+        telemetry=resumed_telemetry,
+    )
+
+    assert resumed == collected
+    assert resumed_telemetry.snapshot() == frozen_telemetry
+
+
 def test_collect_and_freeze_run_does_not_freeze_after_collection_failure(
     valid_packet, tmp_path: Path
 ) -> None:
@@ -388,7 +486,7 @@ def test_collect_and_freeze_run_does_not_freeze_after_collection_failure(
 
     class FailingMarketData(_MarketData):
         def fetch_instruments(
-            self, symbols: Sequence[str]
+            self, symbols: Sequence[str], *, telemetry_observer=None
         ) -> Mapping[str, InstrumentIdentity | ProviderFailure]:
             self.requested_symbols = tuple(symbols)
             raise RuntimeError("offline provider failure")
@@ -454,7 +552,7 @@ def test_collect_and_freeze_run_resumes_from_collected_checkpoint_without_provid
 
     class UnexpectedMarketData(_MarketData):
         def fetch_instruments(
-            self, symbols: Sequence[str]
+            self, symbols: Sequence[str], *, telemetry_observer=None
         ) -> Mapping[str, InstrumentIdentity | ProviderFailure]:
             raise AssertionError("resuming collected evidence must not call a provider")
 
@@ -503,7 +601,7 @@ def test_collect_and_freeze_run_recovers_orphaned_staged_collection_without_prov
 
     class UnexpectedMarketData(_MarketData):
         def fetch_instruments(
-            self, symbols: Sequence[str]
+            self, symbols: Sequence[str], *, telemetry_observer=None
         ) -> Mapping[str, InstrumentIdentity | ProviderFailure]:
             raise AssertionError("an orphaned staged collection must be reused")
 
@@ -544,7 +642,7 @@ def test_collect_and_freeze_run_resumes_frozen_collection_without_provider_call(
 
     class UnexpectedMarketData(_MarketData):
         def fetch_instruments(
-            self, symbols: Sequence[str]
+            self, symbols: Sequence[str], *, telemetry_observer=None
         ) -> Mapping[str, InstrumentIdentity | ProviderFailure]:
             raise AssertionError("resuming frozen evidence must not call a provider")
 

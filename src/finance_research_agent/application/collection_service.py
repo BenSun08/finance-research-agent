@@ -12,6 +12,12 @@ from finance_research_agent.application.market_collection import (
     MarketDataCollection,
     collect_market_data_for_market_date,
 )
+from finance_research_agent.application.performance_telemetry import (
+    RunTelemetryRecorder,
+    checkpoint_with_telemetry,
+    load_checkpoint_telemetry,
+    load_latest_checkpoint_telemetry,
+)
 from finance_research_agent.application.ports import (
     Clock,
     MarketDataProvider,
@@ -19,7 +25,11 @@ from finance_research_agent.application.ports import (
     RunRepository,
     TradingCalendar,
 )
-from finance_research_agent.domain.models import RunCheckpoint, RunContext, StoredRun
+from finance_research_agent.domain.models import (
+    RunCheckpoint,
+    RunContext,
+    StoredRun,
+)
 from finance_research_agent.domain.types import FrozenMap
 
 _COLLECTION_ARTIFACT = "market_data_collection"
@@ -53,8 +63,14 @@ def _stored_collection(stored: StoredRun, repository: RunRepository) -> MarketDa
     )
     if checkpoint is None:
         raise ValueError("run evidence is already frozen without a collected artifact")
-    if set(checkpoint.artifact_hashes) != {_COLLECTION_ARTIFACT}:
+    collection_names = set(checkpoint.artifact_hashes)
+    telemetry_names = {
+        name for name in collection_names if name.startswith("performance_telemetry_")
+    }
+    if collection_names != {_COLLECTION_ARTIFACT} | telemetry_names:
         raise ValueError("collected checkpoint is missing its collection artifact hash")
+    if telemetry_names:
+        load_checkpoint_telemetry(repository, checkpoint)
     if checkpoint.evidence_cutoff_at is not None or not checkpoint.resumable:
         raise ValueError("collected checkpoint has invalid cutoff or resumability")
     digest = checkpoint.artifact_hashes[_COLLECTION_ARTIFACT]
@@ -152,6 +168,8 @@ def collect_and_freeze_market_data_for_run(
     provider: MarketDataProvider,
     clock: Clock,
     calendar: TradingCalendar,
+    *,
+    telemetry: RunTelemetryRecorder | None = None,
 ) -> CollectedRunMarketData:
     """Persist collection before freezing, then resume without refreshing evidence."""
     stored = repository.load(run.run_id)
@@ -163,6 +181,11 @@ def collect_and_freeze_market_data_for_run(
         update={"evidence_cutoff_at": None}
     ):
         raise ValueError("collection requires the current stored run context")
+    if telemetry is None:
+        telemetry = RunTelemetryRecorder()
+    checkpointed_telemetry = load_latest_checkpoint_telemetry(repository, stored)
+    if checkpointed_telemetry is not None:
+        telemetry.restore(checkpointed_telemetry)
     if run.evidence_cutoff_at is not None and run.evidence_cutoff_at != stored.evidence_cutoff_at:
         raise ValueError("run evidence cutoff differs from the stored run")
 
@@ -184,7 +207,10 @@ def collect_and_freeze_market_data_for_run(
     else:
         payload = repository.read_staged_artifact(run.run_id, _COLLECTION_ARTIFACT)
         if payload is None:
-            collection = collect_market_data_for_run(run, provider, clock, calendar)
+            with telemetry.measure_stage("MARKET_COLLECTION"):
+                collection = collect_market_data_for_run(
+                    run, provider, clock, calendar, telemetry=telemetry
+                )
             payload = _canonical_collection_bytes(collection)
             digest = repository.stage_artifact(run.run_id, _COLLECTION_ARTIFACT, payload)
         else:
@@ -210,19 +236,21 @@ def collect_and_freeze_market_data_for_run(
             execution_status = stored.run.execution_status
             data_quality_status = stored.run.data_quality_status
             delivery_status = stored.run.delivery_status
+        checkpoint = RunCheckpoint(
+            run_id=run.run_id,
+            stage=_COLLECTION_CHECKPOINT,
+            execution_status=execution_status,
+            data_quality_status=data_quality_status,
+            delivery_status=delivery_status,
+            written_at=collection.completed_at,
+            evidence_cutoff_at=None,
+            artifact_hashes=FrozenMap({_COLLECTION_ARTIFACT: digest}),
+            resumable=True,
+        )
+        checkpoint = checkpoint_with_telemetry(repository, checkpoint, telemetry.snapshot())
         repository.checkpoint_if_current(
             run.run_id,
-            RunCheckpoint(
-                run_id=run.run_id,
-                stage=_COLLECTION_CHECKPOINT,
-                execution_status=execution_status,
-                data_quality_status=data_quality_status,
-                delivery_status=delivery_status,
-                written_at=collection.completed_at,
-                evidence_cutoff_at=None,
-                artifact_hashes=FrozenMap({_COLLECTION_ARTIFACT: digest}),
-                resumable=True,
-            ),
+            checkpoint,
             expected_count=len(stored.checkpoints),
         )
 

@@ -7,6 +7,7 @@ from finance_research_agent.application.performance_telemetry import (
     RunTelemetryRecorder,
     checkpoint_with_telemetry,
     load_checkpoint_telemetry,
+    load_latest_checkpoint_telemetry,
 )
 from finance_research_agent.domain.models import RunCheckpoint
 from finance_research_agent.domain.types import FrozenMap
@@ -128,6 +129,18 @@ def test_recorder_restores_cumulative_measurements_without_double_counting() -> 
     assert resumed.snapshot().response_bytes_total == 18
 
 
+def test_recorder_can_restore_latest_checkpoint_snapshot() -> None:
+    source = RunTelemetryRecorder(monotonic_ns=lambda: 0)
+    source.record_http_exchange("alpaca", 2, 11)
+    frozen = source.snapshot()
+    resumed = RunTelemetryRecorder(monotonic_ns=lambda: 0)
+    resumed.record_http_exchange("alpaca", 1, 5)
+
+    resumed.restore(frozen)
+
+    assert resumed.snapshot() == frozen
+
+
 def test_checkpoint_telemetry_round_trip_is_hash_bound(
     tmp_path: Path, valid_packet
 ) -> None:
@@ -152,7 +165,9 @@ def test_checkpoint_telemetry_round_trip_is_hash_bound(
 
     checkpointed = checkpoint_with_telemetry(repository, checkpoint, telemetry)
 
-    assert "performance_telemetry" in checkpointed.artifact_hashes
+    assert len(
+        [name for name in checkpointed.artifact_hashes if name.startswith("performance_telemetry_")]
+    ) == 1
     assert load_checkpoint_telemetry(repository, checkpointed) == telemetry
 
 
@@ -177,7 +192,46 @@ def test_checkpoint_telemetry_rejects_tampered_staged_bytes(
         monotonic_ns=lambda: 0,
     ).snapshot()
     checkpointed = checkpoint_with_telemetry(repository, checkpoint, telemetry)
-    next(tmp_path.rglob("performance_telemetry.bin")).write_bytes(b"tampered")
+    next(tmp_path.rglob("performance_telemetry_*.bin")).write_bytes(b"tampered")
 
     with pytest.raises(ValueError, match="hash"):
         load_checkpoint_telemetry(repository, checkpointed)
+
+
+def test_checkpoint_telemetry_uses_content_addressed_snapshots_on_resume(
+    tmp_path: Path, valid_packet
+) -> None:
+    run = valid_packet.run
+    repository = FileSystemRunRepository(tmp_path)
+    repository.create(run)
+    checkpoint = RunCheckpoint(
+        run_id=run.run_id,
+        stage="RUN_PREPARED",
+        execution_status=run.execution_status,
+        data_quality_status=run.data_quality_status,
+        delivery_status=run.delivery_status,
+        written_at=run.invoked_at,
+        evidence_cutoff_at=None,
+        artifact_hashes=FrozenMap({}),
+        resumable=True,
+    )
+    first_recorder = RunTelemetryRecorder(monotonic_ns=lambda: 0)
+    first = checkpoint_with_telemetry(repository, checkpoint, first_recorder.snapshot())
+    repository.checkpoint(run.run_id, first)
+    resumed = RunTelemetryRecorder(monotonic_ns=lambda: 0)
+    resumed.record_http_exchange("alpaca", 1, 9)
+    second = checkpoint_with_telemetry(
+        repository,
+        first.model_copy(update={"stage": "MARKET_COLLECTED"}),
+        resumed.snapshot(),
+    )
+    repository.checkpoint(run.run_id, second)
+
+    telemetry_names = [
+        name for name in second.artifact_hashes if name.startswith("performance_telemetry_")
+    ]
+    stored = repository.load(run.run_id)
+
+    assert len(telemetry_names) == 1
+    assert stored is not None
+    assert load_latest_checkpoint_telemetry(repository, stored) == resumed.snapshot()

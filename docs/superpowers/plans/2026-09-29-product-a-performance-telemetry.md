@@ -90,20 +90,26 @@
 - Modify: `src/finance_research_agent/application/quality_pipeline.py`
 - Modify: `src/finance_research_agent/application/preparation_service.py`
 - Modify: `src/finance_research_agent/application/publication_service.py`
+- Modify: `src/finance_research_agent/application/quality_checkpoint.py`
+- Modify: `src/finance_research_agent/adapters/filesystem.py`
 - Test: `tests/application/test_collection_service.py`
 - Test: `tests/application/test_quality_pipeline.py`
 - Test: `tests/application/test_preparation_service.py`
+- Test: `tests/application/test_prepare_premarket_run.py`
 - Test: `tests/application/test_publication_service.py`
+- Test: `tests/application/test_run_performance_telemetry.py`
 
 **Interfaces:**
-- Each stage restores the latest checkpoint telemetry, measures only its own stage, and binds the resulting snapshot in the checkpoint it writes.
+- `RunTelemetryRecorder.restore()` loads the latest verified, content-addressed telemetry snapshot before each subsequent stage; `load_latest_checkpoint_telemetry()` scans checkpoint history backward.
+- Each stage measures only its own active work and binds a content-addressed snapshot in the checkpoint it writes. Preparation creates the initial `CONFIG_FROZEN` telemetry checkpoint.
 - Validation attempts are derived from `VALIDATING` checkpoint history; packet bytes are derived from `_canonical_packet_bytes(packet)`.
+- The filesystem checkpoint transition validator permits one hash-named telemetry artifact while preserving the existing business-artifact transition contract.
 
-- [ ] **Step 1: Write failing recovery tests** showing elapsed stages and request counters survive resume exactly once, packet bytes match the canonical staged artifact, and validation attempts match persisted checkpoints.
-- [ ] **Step 2: Run focused tests and confirm telemetry is absent from stage checkpoints.**
-- [ ] **Step 3: Integrate restore/measure/snapshot/checkpoint binding for run preparation, collection, quality evaluation, packet assembly, and validation.**
-- [ ] **Step 4: Run the focused application suites and their resume, failure, concurrency, and cutoff cases.**
-- [ ] **Step 5: Run Ruff and mypy on changed source files; inspect checkpoint compare-and-swap and artifact hash preservation.**
+- [x] **Step 1: Write failing recovery tests** showing elapsed stages and request counters survive resume exactly once, packet bytes match the canonical staged artifact, and validation attempts match persisted checkpoints.
+- [x] **Step 2: Run focused tests and confirm telemetry is absent from stage checkpoints.**
+- [x] **Step 3: Integrate restore/measure/snapshot/checkpoint binding for run preparation, collection, quality evaluation, packet assembly, and validation.**
+- [x] **Step 4: Run the focused application suites and their resume, failure, concurrency, and cutoff cases.**
+- [x] **Step 5: Run Ruff and mypy on changed source files; inspect checkpoint compare-and-swap and artifact hash preservation.**
 - [ ] **Step 6: Commit** as `feat: checkpoint Product A run telemetry`.
 
 ### Task 4: Freeze telemetry through publication and zero-network replay

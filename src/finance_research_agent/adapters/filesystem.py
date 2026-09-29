@@ -590,6 +590,16 @@ class FileSystemRunRepository:
                     and _sha256(staged.read_bytes()) == digest
                 for name, digest in checkpoint.artifact_hashes.items()
             )
+            telemetry_names = {
+                name
+                for name in checkpoint.artifact_hashes
+                if name.startswith("performance_telemetry_")
+            }
+            telemetry_artifacts_valid = len(telemetry_names) <= 1 and all(
+                name == "performance_telemetry_" + checkpoint.artifact_hashes[name]
+                for name in telemetry_names
+            )
+            business_artifact_names = set(checkpoint.artifact_hashes) - telemetry_names
             collection_checkpoint = next(
                 (
                     item
@@ -609,9 +619,15 @@ class FileSystemRunRepository:
                 and collection_checkpoint is not None
                 and collection_checkpoint.evidence_cutoff_at is None
                 and collection_checkpoint.resumable
-                and set(collection_checkpoint.artifact_hashes) == {"market_data_collection"}
-                and set(checkpoint.artifact_hashes)
-                == {"market_data_collection", "data_quality"}
+                and set(collection_checkpoint.artifact_hashes)
+                - {
+                    name
+                    for name in collection_checkpoint.artifact_hashes
+                    if name.startswith("performance_telemetry_")
+                }
+                == {"market_data_collection"}
+                and business_artifact_names == {"market_data_collection", "data_quality"}
+                and telemetry_artifacts_valid
                 and checkpoint.artifact_hashes.get("market_data_collection")
                 == collection_checkpoint.artifact_hashes.get("market_data_collection")
                 and not self._staged_artifact_path(run_id, "research_packet").is_file()
@@ -623,12 +639,12 @@ class FileSystemRunRepository:
                     name.startswith("validation_report_")
                     for name in checkpoint.artifact_hashes
                 ) == 1
-                and len(checkpoint.artifact_hashes) in {3, 4}
+                and len(business_artifact_names) in {3, 4}
                 and all(
                     name in {"research_packet", "reduced_report"}
                     or name.startswith("brief_draft_")
                     or name.startswith("validation_report_")
-                    for name in checkpoint.artifact_hashes
+                    for name in business_artifact_names
                 )
             )
             reduced_publication = (
@@ -656,14 +672,14 @@ class FileSystemRunRepository:
                 )
                 and (
                     checkpoint.stage == "AWAITING_SYNTHESIS"
-                    and set(checkpoint.artifact_hashes) in (
+                    and business_artifact_names in (
                         {"research_packet"},
                         {"research_packet", "reduced_report"},
                     )
                     or checkpoint.stage in {"VALIDATING", "PUBLISHED"}
                     and (
                         checkpoint.stage == "VALIDATING"
-                        and set(checkpoint.artifact_hashes) in (
+                        and business_artifact_names in (
                             {"research_packet"},
                             {"research_packet", "reduced_report"},
                         )
@@ -672,6 +688,7 @@ class FileSystemRunRepository:
                     )
                 )
                 and staged_hashes_valid
+                and telemetry_artifacts_valid
                 and current_packet_hash is not None
                 and checkpoint.artifact_hashes["research_packet"] == current_packet_hash
                 and (
