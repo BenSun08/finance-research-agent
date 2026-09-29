@@ -70,7 +70,10 @@ class MarketDataProvider(Protocol):
     def readiness(self) -> ProviderReadiness: ...
 
     def fetch_instruments(
-        self, symbols: Sequence[str]
+        self,
+        symbols: Sequence[str],
+        *,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> Mapping[str, InstrumentIdentity | ProviderFailure]: ...
 
     def fetch_daily_bars(
@@ -83,6 +86,7 @@ class MarketDataProvider(Protocol):
         completed_through_session: date | None = None,
         evidence_cutoff_at: datetime | None = None,
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> Mapping[str, tuple[CompletedDailyBar, ...] | ProviderFailure]: ...
 
     def fetch_premarket_observations(
@@ -91,6 +95,7 @@ class MarketDataProvider(Protocol):
         as_of: datetime | None,
         *,
         instrument_identities: Mapping[str, InstrumentIdentity] | None = None,
+        telemetry_observer: ProviderRequestObserver | None = None,
     ) -> Mapping[str, PriceObservation | ProviderFailure]: ...
 
 

@@ -15,6 +15,7 @@ from finance_research_agent.application.market_collection import (
 from finance_research_agent.application.ports import (
     Clock,
     MarketDataProvider,
+    ProviderRequestObserver,
     RunRepository,
     TradingCalendar,
 )
@@ -102,6 +103,8 @@ def collect_market_data_for_run(
     provider: MarketDataProvider,
     clock: Clock,
     calendar: TradingCalendar,
+    *,
+    telemetry: ProviderRequestObserver | None = None,
 ) -> MarketDataCollection:
     """Collect the run's frozen watchlist and radar data within one bounded window."""
     if run.evidence_cutoff_at is not None:
@@ -114,6 +117,7 @@ def collect_market_data_for_run(
         symbols,
         market_date=run.market_date,
         session_count=session_count,
+        telemetry_observer=telemetry,
     )
 
 

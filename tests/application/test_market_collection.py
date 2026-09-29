@@ -184,6 +184,72 @@ def test_collect_market_data_reads_before_binding_collection_completion() -> Non
     assert result.symbols[1].premarket_observation == _price("MSFT")
 
 
+def test_collect_market_data_threads_telemetry_observer_to_provider() -> None:
+    class ObservingMarketData(_MarketData):
+        def __init__(self, calls: list[str]) -> None:
+            super().__init__(calls)
+            self.observers: list[object] = []
+
+        def fetch_instruments(self, symbols, *, telemetry_observer=None):
+            self.observers.append(telemetry_observer)
+            return super().fetch_instruments(symbols)
+
+        def fetch_daily_bars(
+            self,
+            symbols,
+            start,
+            end,
+            *,
+            expected_sessions=None,
+            completed_through_session=None,
+            evidence_cutoff_at=None,
+            instrument_identities=None,
+            telemetry_observer=None,
+        ):
+            self.observers.append(telemetry_observer)
+            return super().fetch_daily_bars(
+                symbols,
+                start,
+                end,
+                expected_sessions=expected_sessions,
+                completed_through_session=completed_through_session,
+                evidence_cutoff_at=evidence_cutoff_at,
+                instrument_identities=instrument_identities,
+            )
+
+        def fetch_premarket_observations(
+            self,
+            symbols,
+            as_of,
+            *,
+            instrument_identities=None,
+            telemetry_observer=None,
+        ):
+            self.observers.append(telemetry_observer)
+            return super().fetch_premarket_observations(
+                symbols, as_of, instrument_identities=instrument_identities
+            )
+
+    from finance_research_agent.application.performance_telemetry import RunTelemetryRecorder
+
+    calls: list[str] = []
+    provider = ObservingMarketData(calls)
+    recorder = RunTelemetryRecorder(monotonic_ns=lambda: 0)
+
+    _collect_market_data(
+        provider,
+        _Clock(calls),
+        ("AAPL", "MSFT"),
+        start=date(2026, 9, 25),
+        end=date(2026, 9, 25),
+        expected_sessions=SESSIONS,
+        completed_through_session=SESSIONS[-1],
+        telemetry_observer=recorder,
+    )
+
+    assert provider.observers == [recorder, recorder, recorder]
+
+
 def test_collect_market_data_rejects_missing_symbol_results() -> None:
     class IncompleteMarketData(_MarketData):
         def fetch_instruments(

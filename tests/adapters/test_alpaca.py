@@ -14,6 +14,7 @@ from finance_research_agent.adapters.http_client import (
     RequestTransportUnavailable,
     SafeHttpClient,
 )
+from finance_research_agent.application.performance_telemetry import RunTelemetryRecorder
 from finance_research_agent.domain.enums import SourceRole
 from finance_research_agent.domain.models import (
     CompletedDailyBar,
@@ -795,6 +796,18 @@ def test_request_rejection_retryability_uses_typed_boundary_signal(
 
     assert result["AAPL"].error_code == "PROVIDER_UNAVAILABLE"
     assert result["AAPL"].retryable is retryable
+
+
+def test_alpaca_instrument_fetch_reports_safe_transport_totals() -> None:
+    recorder = RunTelemetryRecorder(monotonic_ns=lambda: 0)
+    provider = _provider("instruments.json", path="/v2/assets")
+
+    result = provider.fetch_instruments(["AAPL"], telemetry_observer=recorder)
+
+    assert isinstance(result["AAPL"], InstrumentIdentity)
+    telemetry = recorder.snapshot()
+    assert telemetry.provider_request_counts["alpaca"] == 1
+    assert telemetry.response_bytes_by_provider["alpaca"] > 0
 
 
 def test_configured_requests_send_only_market_data_credentials() -> None:

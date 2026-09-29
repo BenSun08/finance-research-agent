@@ -63,7 +63,7 @@
 - Modify: `src/finance_research_agent/application/ports.py`
 - Modify: `src/finance_research_agent/application/market_collection.py`
 - Modify: `src/finance_research_agent/application/collection_service.py`
-- Test: `tests/adapters/test_http_client.py`
+- Test: `tests/security/test_http_boundaries.py`
 - Test: `tests/adapters/test_alpaca.py`
 - Test: `tests/application/test_market_collection.py`
 
@@ -74,13 +74,13 @@
 - `MarketDataProvider.fetch_premarket_observations(..., telemetry_observer: ProviderRequestObserver | None = None)`
 - `collect_market_data_for_run(..., telemetry: RunTelemetryRecorder | None = None) -> MarketDataCollection`
 
-- [ ] **Step 1: Write failing transport tests** asserting retries and redirects count every HTTP send, accepted response bytes equal `len(SafeResponse.content)`, and request/response data never reaches the observer. Existing source request deadlines and retry behavior must remain unchanged.
-- [ ] **Step 2: Run those tests and confirm the observer/deadline behavior is missing.**
-- [ ] **Step 3: Implement optional observer reporting in `SafeHttpClient`; invoke it for success and transport failure using only adapter ID, attempt count, and consumed body bytes.**
-- [ ] **Step 4: Thread the optional observer through the Alpaca adapter and run-scoped collection path. Keep existing callers source-compatible with `None` defaults.**
-- [ ] **Step 5: Run focused adapter and collection tests, including existing retry, redirect, response-size, and no-network tests.**
-- [ ] **Step 6: Run Ruff and mypy on changed source files; review that telemetry covers only the approved adapter.**
-- [ ] **Step 7: Commit** as `feat: measure bounded market-data requests`.
+- [x] **Step 1: Write failing transport tests** asserting retries and redirects count every HTTP send, accepted response bytes equal `len(SafeResponse.content)`, and request/response data never reaches the observer. Existing source request deadlines and retry behavior must remain unchanged.
+- [x] **Step 2: Run those tests and confirm the observer/deadline behavior is missing.**
+- [x] **Step 3: Implement optional observer reporting in `SafeHttpClient`; invoke it for success and transport failure using only adapter ID, attempt count, and consumed body bytes.**
+- [x] **Step 4: Thread the optional observer through the Alpaca adapter and run-scoped collection path. Keep existing callers source-compatible with `None` defaults.**
+- [x] **Step 5: Run focused adapter and collection tests, including existing retry, redirect, response-size, and no-network tests.**
+- [x] **Step 6: Run Ruff and mypy on changed source files; review that telemetry covers only the approved adapter.**
+- [x] **Step 7: Commit** as `feat: measure bounded market-data requests`.
 
 ### Task 3: Record stage, packet, quality, and validation measurements at checkpoints
 

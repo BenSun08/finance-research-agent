@@ -8,7 +8,12 @@ from datetime import date, datetime, timedelta
 
 from pydantic import TypeAdapter, ValidationError
 
-from finance_research_agent.application.ports import Clock, MarketDataProvider, TradingCalendar
+from finance_research_agent.application.ports import (
+    Clock,
+    MarketDataProvider,
+    ProviderRequestObserver,
+    TradingCalendar,
+)
 from finance_research_agent.domain.enums import Session
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
@@ -160,6 +165,7 @@ def collect_market_data(
     end: date,
     expected_sessions: tuple[date, ...],
     completed_through_session: date,
+    telemetry_observer: ProviderRequestObserver | None = None,
 ) -> MarketDataCollection:
     """Read identity, completed bars, and premarket data before sampling completion.
 
@@ -184,7 +190,12 @@ def collect_market_data(
     if completed_through_session != expected_sessions[-1]:
         raise ValueError("completed session must be the final expected session")
 
-    instruments = provider.fetch_instruments(requested)
+    if telemetry_observer is None:
+        instruments = provider.fetch_instruments(requested)
+    else:
+        instruments = provider.fetch_instruments(
+            requested, telemetry_observer=telemetry_observer
+        )
     _validate_instruments(instruments, requested)
     resolved_identities = {
         symbol: item
@@ -192,22 +203,46 @@ def collect_market_data(
         if isinstance(item, InstrumentIdentity)
     }
 
-    daily_bars = provider.fetch_daily_bars(
-        requested,
-        start,
-        end,
-        expected_sessions=expected_sessions,
-        completed_through_session=completed_through_session,
-        evidence_cutoff_at=None,
-        instrument_identities=resolved_identities,
+    daily_bar_options = (
+        expected_sessions,
+        completed_through_session,
+        None,
+        resolved_identities,
     )
+    if telemetry_observer is None:
+        daily_bars = provider.fetch_daily_bars(
+            requested,
+            start,
+            end,
+            expected_sessions=daily_bar_options[0],
+            completed_through_session=daily_bar_options[1],
+            evidence_cutoff_at=daily_bar_options[2],
+            instrument_identities=daily_bar_options[3],
+        )
+    else:
+        daily_bars = provider.fetch_daily_bars(
+            requested,
+            start,
+            end,
+            expected_sessions=daily_bar_options[0],
+            completed_through_session=daily_bar_options[1],
+            evidence_cutoff_at=daily_bar_options[2],
+            instrument_identities=daily_bar_options[3],
+            telemetry_observer=telemetry_observer,
+        )
     _validate_daily_bars(daily_bars, requested, instruments)
 
-    premarket = provider.fetch_premarket_observations(
-        requested,
-        None,
-        instrument_identities=resolved_identities,
-    )
+    if telemetry_observer is None:
+        premarket = provider.fetch_premarket_observations(
+            requested, None, instrument_identities=resolved_identities
+        )
+    else:
+        premarket = provider.fetch_premarket_observations(
+            requested,
+            None,
+            instrument_identities=resolved_identities,
+            telemetry_observer=telemetry_observer,
+        )
     _validate_premarket(premarket, requested, instruments)
 
     completed_at = clock.now_utc()
@@ -246,6 +281,7 @@ def collect_market_data_for_market_date(
     *,
     market_date: date,
     session_count: int,
+    telemetry_observer: ProviderRequestObserver | None = None,
 ) -> MarketDataCollection:
     """Collect market evidence for completed sessions before a run market date."""
     expected_sessions = resolve_completed_session_window(
@@ -259,4 +295,5 @@ def collect_market_data_for_market_date(
         end=expected_sessions[-1],
         expected_sessions=expected_sessions,
         completed_through_session=expected_sessions[-1],
+        telemetry_observer=telemetry_observer,
     )
