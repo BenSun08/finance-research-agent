@@ -262,12 +262,25 @@ def test_publication_requires_valid_recorded_attempt_and_is_replayable(
     assert stored.checkpoints[-1].stage == "PUBLISHED"
     bundle = repo.load_published_bundle(packet.run.run_id)
     assert bundle is not None and bundle.run.execution_status is ExecutionStatus.PUBLISHED
-    assert bundle.model_dump(mode="json")["bundle"]["research_packet"] == packet.model_dump(
-        mode="json"
+    contents = bundle.model_dump(mode="json")["bundle"]
+    assert contents["research_packet"] == packet.model_dump(mode="json")
+    stored_telemetry = repo.load(packet.run.run_id).checkpoints[-1]
+    from finance_research_agent.domain.models import PerformanceTelemetry
+
+    telemetry = PerformanceTelemetry.model_validate(
+        contents["performance_telemetry"], strict=True
     )
+    telemetry_name = next(
+        name for name in stored_telemetry.artifact_hashes
+        if name.startswith("performance_telemetry_")
+    )
+    assert contents["performance_telemetry_sha256"] == stored_telemetry.artifact_hashes[
+        telemetry_name
+    ]
     assert repo.get_report(packet.run.run_id).startswith("# Premarket Research Brief")
     replay = replay_published_artifact(repo, packet.run.run_id, _recorded_versions(bundle))
     assert replay.json_matches and replay.markdown_matches
+    assert replay.telemetry == telemetry
     assert replay.stored_json_sha256 == artifact.bundle_sha256
     assert replay.stored_markdown_sha256 == artifact.markdown_sha256
     assert publish_validated_brief(repo, packet, at + timedelta(seconds=2)) == artifact
@@ -295,8 +308,10 @@ def test_reduced_report_publishes_from_awaiting_and_retries_exact_reason(
     assert artifact.run_id == packet.run.run_id
     bundle = repo.load_published_bundle(packet.run.run_id)
     assert bundle is not None
+    assert "performance_telemetry" in bundle.bundle
     replay = replay_published_artifact(repo, packet.run.run_id, _recorded_versions(bundle))
     assert replay.json_matches and replay.markdown_matches
+    assert replay.telemetry is not None
     report = repo.get_report(packet.run.run_id)
     assert report is not None
     assert "Fallback reason: SYNTHESIS_UNAVAILABLE" in report
@@ -472,10 +487,44 @@ def test_publication_retries_after_atomic_failure(tmp_path, valid_packet, valid_
     repo.inject_failure_before_rename = True
     with pytest.raises(Exception, match="injected failure"):
         publish_validated_brief(repo, packet, at + timedelta(seconds=1))
+    from finance_research_agent.application.performance_telemetry import (
+        load_checkpoint_telemetry,
+    )
+
+    interrupted = repo.load(packet.run.run_id)
+    assert interrupted is not None
+    frozen_telemetry = load_checkpoint_telemetry(repo, interrupted.checkpoints[-1])
+    assert frozen_telemetry is not None
     repo.inject_failure_before_rename = False
 
     artifact = publish_validated_brief(repo, packet, at + timedelta(seconds=2))
 
     assert artifact.run_id == packet.run.run_id
+    bundle = repo.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    assert bundle.bundle["performance_telemetry"]
+    assert bundle.bundle["performance_telemetry_sha256"]
+    replay = replay_published_artifact(repo, packet.run.run_id, _recorded_versions(bundle))
+    assert replay.telemetry == frozen_telemetry
+
+
+def test_published_retry_rejects_telemetry_changed_from_checkpoint(
+    tmp_path, valid_packet, valid_brief_draft
+):
+    repo, packet, at = _prepared(tmp_path, valid_packet)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": ExecutionStatus.AWAITING_SYNTHESIS}
+    )
+    validate_staged_brief(repo, packet, draft, at)
+    publish_validated_brief(repo, packet, at + timedelta(seconds=1))
+    bundle = repo.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    contents = dict(bundle.bundle)
+    contents["performance_telemetry_sha256"] = "0" * 64
+    tampered = bundle.model_copy(update={"bundle": FrozenMap(contents)})
+    repo.load_published_bundle = lambda _: tampered
+
+    with pytest.raises(ValueError, match="checkpoint hash"):
+        publish_validated_brief(repo, packet, at + timedelta(seconds=2))
     stored = repo.load(packet.run.run_id)
     assert stored is not None and [c.stage for c in stored.checkpoints].count("PUBLISHED") == 1

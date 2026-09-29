@@ -118,19 +118,21 @@
 - Modify: `src/finance_research_agent/application/publication_service.py`
 - Modify: `src/finance_research_agent/application/operational_report.py`
 - Modify: `src/finance_research_agent/application/replay_service.py`
+- Modify: `src/finance_research_agent/adapters/filesystem.py`
 - Test: `tests/application/test_publication_service.py`
 - Test: `tests/application/test_operational_report.py`
 - Test: `tests/application/test_replay_service.py`
 
 **Interfaces:**
 - All publication paths load telemetry from the latest verified checkpoint; no public caller may substitute a telemetry value.
-- `replay_published_artifact` returns the stored telemetry and verifies it against the hash-bound staged artifact.
+- New bundles carry the canonical telemetry value and its checkpoint-bound digest. Replay verifies the value against that digest and the indexed bundle hash; legacy bundles without telemetry remain replayable and report `telemetry=None`.
+- `PUBLICATION` measures deterministic report rendering before the immutable telemetry snapshot and atomic filesystem publication are persisted; the resulting snapshot is staged, checkpoint-bound, and included in the bundle.
 
-- [ ] **Step 1: Write failing tests** for normal, reduced, and operational-failure publication; atomic retry with identical telemetry; changed-snapshot rejection; replay parity; malformed telemetry/hash rejection; and zero provider/clock calls during replay.
-- [ ] **Step 2: Run focused tests and confirm telemetry is missing from frozen publication/replay values.**
-- [ ] **Step 3: Persist the checkpointed snapshot in every immutable published bundle and validate it during retries and replay.**
-- [ ] **Step 4: Run publication, operational-report, and replay suites.**
-- [ ] **Step 5: Run Ruff and mypy on changed source files; inspect every serialization boundary for secrets and nondeterministic data.**
+- [x] **Step 1: Write failing tests** for normal, reduced, and operational-failure publication; atomic retry with identical telemetry; changed-snapshot rejection; replay parity; malformed telemetry/hash rejection; and zero provider/clock calls during replay.
+- [x] **Step 2: Run focused tests and confirm telemetry is missing from frozen publication/replay values.**
+- [x] **Step 3: Persist the checkpointed snapshot in every immutable published bundle and validate it during retries and replay.**
+- [x] **Step 4: Run publication, operational-report, and replay suites.**
+- [x] **Step 5: Run Ruff and mypy on changed source files; inspect every serialization boundary for secrets and nondeterministic data.**
 - [ ] **Step 6: Commit** as `feat: persist telemetry in published artifacts`.
 
 ### Task 5: Verify, review, measure coverage, and deliver the R9 telemetry feature

@@ -80,14 +80,16 @@ def test_pre_synthesis_fail_publishes_only_operational_artifact(
     bundle = repository.load_published_bundle(run.run_id)
     assert bundle is not None
     assert bundle.run.execution_status is ExecutionStatus.PUBLISHED
-    assert bundle.model_dump(mode="json")["bundle"] == {
-        "brief_origin": "OPERATIONAL",
-        "failure_code": "MARKET_CALENDAR_UNAVAILABLE",
-    }
+    contents = bundle.model_dump(mode="json")["bundle"]
+    assert contents["brief_origin"] == "OPERATIONAL"
+    assert contents["failure_code"] == "MARKET_CALENDAR_UNAVAILABLE"
+    assert contents["performance_telemetry"]
+    assert contents["performance_telemetry_sha256"]
     report = repository.get_report(run.run_id)
     assert report is not None and "No market conclusion or trade plan" in report
     replay = replay_published_artifact(repository, run.run_id, _recorded_versions(bundle))
     assert replay.json_matches and replay.markdown_matches
+    assert replay.telemetry is not None
     assert publication_service.publish_operational_report(
         repository, run, ErrorCode.MARKET_CALENDAR_UNAVAILABLE, at
     ) == receipt
@@ -126,7 +128,10 @@ def test_frozen_global_fail_publishes_without_research_packet(
     assert [checkpoint.stage for checkpoint in stored.checkpoints][-2:] == [
         "EVIDENCE_FROZEN", "PUBLISHED"
     ]
-    assert stored.checkpoints[-1].artifact_hashes.keys() == {"operational_reason"}
+    assert {
+        name for name in stored.checkpoints[-1].artifact_hashes
+        if not name.startswith("performance_telemetry_")
+    } == {"operational_reason"}
     assert "PROVIDER_UNAVAILABLE" in (repository.get_report(run.run_id) or "")
 
 
