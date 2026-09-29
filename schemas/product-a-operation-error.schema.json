@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "enum": [
+        "SOURCE_NOT_CONFIGURED",
+        "CONFIGURATION_INVALID",
+        "CREDENTIALS_MISSING",
+        "PERMISSION_DENIED",
+        "MARKET_CALENDAR_UNAVAILABLE",
+        "PROVIDER_UNAVAILABLE",
+        "PROVIDER_NO_DATA",
+        "PROVIDER_MISSING_SESSION",
+        "PROVIDER_DUPLICATE_CONFLICT",
+        "PROVIDER_MALFORMED_BAR",
+        "PROVIDER_STALE",
+        "PROVIDER_FUTURE_OR_INCOMPLETE_BAR",
+        "PROVIDER_SCHEMA_DRIFT",
+        "INVALID_RESPONSE",
+        "INVALID_REQUEST",
+        "EVIDENCE_CUTOFF_VIOLATION",
+        "SOURCE_CONFLICT",
+        "STALE_DATA",
+        "UNSUPPORTED_INSTRUMENT",
+        "SIZING_UNAVAILABLE",
+        "PORTFOLIO_HEAT_UNAVAILABLE",
+        "INVALID_RUN_STATE",
+        "INTERNAL_ERROR",
+        "VALIDATION_FAILED",
+        "PUBLICATION_FAILED",
+        "PATH_NOT_ALLOWED",
+        "DEADLINE_EXCEEDED"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Closed public failure code; provider and exception text is never carried.",
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/ErrorCode"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code"
+  ],
+  "title": "OperationError",
+  "type": "object"
+}

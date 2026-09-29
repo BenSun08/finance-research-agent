@@ -1,0 +1,36 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "citation_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Citation Id",
+      "type": "string"
+    },
+    "claim_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "entails_claim": {
+      "title": "Entails Claim",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "citation_id",
+    "claim_id",
+    "entails_claim"
+  ],
+  "title": "CitationEntailmentReview",
+  "type": "object"
+}

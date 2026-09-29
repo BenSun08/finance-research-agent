@@ -24,6 +24,31 @@ SCHEMA_NAMES = {
     "run-context.schema.json",
     "source-observation.schema.json",
     "source-health.schema.json",
+    "product-a-citation-entailment-review.schema.json",
+    "product-a-feedback-receipt.schema.json",
+    "product-a-operation-error.schema.json",
+    "product-a-operation-get-report-request.schema.json",
+    "product-a-operation-get-run-status-request.schema.json",
+    "product-a-operation-get-system-status-request.schema.json",
+    "product-a-operation-get-system-status-result.schema.json",
+    "product-a-operation-list-watchlist-request.schema.json",
+    "product-a-operation-prepare-premarket-run-request.schema.json",
+    "product-a-operation-prepare-premarket-run-result.schema.json",
+    "product-a-operation-publish-reduced-report-request.schema.json",
+    "product-a-operation-publish-reduced-report-result.schema.json",
+    "product-a-operation-record-run-feedback-request.schema.json",
+    "product-a-operation-record-run-feedback-result.schema.json",
+    "product-a-operation-remove-watchlist-item-request.schema.json",
+    "product-a-operation-remove-watchlist-item-result.schema.json",
+    "product-a-operation-upsert-watchlist-item-request.schema.json",
+    "product-a-operation-upsert-watchlist-item-result.schema.json",
+    "product-a-operation-validate-and-publish-brief-request.schema.json",
+    "product-a-operation-validate-and-publish-brief-result.schema.json",
+    "product-a-operation-validate-configuration-request.schema.json",
+    "product-a-operation-validate-configuration-result.schema.json",
+    "product-a-operation-get-run-status-result.schema.json",
+    "product-a-operation-get-report-result.schema.json",
+    "product-a-operation-list-watchlist-result.schema.json",
 }
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -40,17 +65,19 @@ def test_every_schema_export_is_stable_sorted_newline_terminated_json(tmp_path: 
     assert set(first) == SCHEMA_NAMES
     assert tuple(path.name for path in paths) == tuple(sorted(SCHEMA_NAMES))
     assert first == {path.name: path.read_bytes() for path in export_schemas(tmp_path)}
-    for payload in first.values():
+    for filename, payload in first.items():
         parsed = json.loads(payload)
         assert (
             payload
             == (json.dumps(parsed, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode()
         )
-        assert parsed["additionalProperties"] is False
-        assert parsed["properties"]["schema_version"]["const"] == "0.1"
-        for definition in parsed.get("$defs", {}).values():
-            if "properties" in definition:
-                assert definition["additionalProperties"] is False
+        if not filename.endswith("-result.schema.json"):
+            assert parsed["additionalProperties"] is False
+            if "schema_version" in parsed["properties"]:
+                assert parsed["properties"]["schema_version"]["const"] == "0.1"
+            for definition in parsed.get("$defs", {}).values():
+                if "properties" in definition and "additionalProperties" in definition:
+                    assert definition["additionalProperties"] is False
 
 
 def test_generated_schemas_match_the_checked_in_files() -> None:
@@ -124,6 +151,26 @@ def test_schema_preserves_wire_decimal_and_provenance_constraints(tmp_path: Path
     market_schema = json.loads((tmp_path / "market-snapshot.schema.json").read_bytes())
     assert market_schema["properties"]["completed_daily_bars"]["type"] == "array"
     assert market_schema["properties"]["source_observations"]["type"] == "array"
+
+
+def test_operation_schemas_are_strict_bounded_and_exclude_caller_authority() -> None:
+    from pydantic import TypeAdapter
+
+    assert set(SCHEMA_MODELS) == SCHEMA_NAMES
+    for filename, model in SCHEMA_MODELS.items():
+        if not filename.startswith("product-a-"):
+            continue
+        schema = TypeAdapter(model).json_schema()
+        if "-request." in filename or filename.endswith("operation-error.schema.json"):
+            assert schema["additionalProperties"] is False
+            assert schema["properties"]["schema_version"]["const"] == "0.1"
+        assert not {
+            "provider",
+            "url",
+            "path",
+            "deadline_seconds",
+            "risk_policy",
+        } & set(schema.get("properties", {}))
 
 
 def test_schema_command_checks_without_rewriting_and_fails_on_drift(tmp_path: Path) -> None:

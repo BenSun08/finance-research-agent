@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "expected_version": {
+      "maxLength": 16,
+      "minLength": 1,
+      "pattern": "^[1-9]\\d*$",
+      "title": "Expected Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "symbol": {
+      "maxLength": 16,
+      "minLength": 1,
+      "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+      "title": "Symbol",
+      "type": "string"
+    }
+  },
+  "required": [
+    "expected_version",
+    "symbol"
+  ],
+  "title": "RemoveWatchlistItemRequest",
+  "type": "object"
+}

@@ -1,0 +1,159 @@
+{
+  "$defs": {
+    "WatchlistItem": {
+      "additionalProperties": false,
+      "properties": {
+        "benchmark_symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Benchmark Symbol"
+        },
+        "expires_on": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires On"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "official_sources": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Official Sources",
+          "type": "array"
+        },
+        "priority": {
+          "default": 0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "research_horizon": {
+          "default": "MEDIUM_TERM",
+          "enum": [
+            "SHORT_TERM",
+            "MEDIUM_TERM",
+            "LONG_TERM"
+          ],
+          "title": "Research Horizon",
+          "type": "string"
+        },
+        "research_rationale": {
+          "title": "Research Rationale",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "CORE_MONITOR",
+            "SATELLITE_ELIGIBLE",
+            "RESEARCH_ONLY"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "sector_proxy_symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sector Proxy Symbol"
+        },
+        "symbol": {
+          "title": "Symbol",
+          "type": "string"
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "symbol",
+        "role",
+        "research_rationale"
+      ],
+      "title": "WatchlistItem",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "after_version": {
+      "title": "After Version",
+      "type": "string"
+    },
+    "before_version": {
+      "title": "Before Version",
+      "type": "string"
+    },
+    "content_hash_sha256": {
+      "title": "Content Hash Sha256",
+      "type": "string"
+    },
+    "item": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WatchlistItem"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "removed_symbol": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Removed Symbol"
+    }
+  },
+  "required": [
+    "before_version",
+    "after_version",
+    "item",
+    "removed_symbol",
+    "content_hash_sha256"
+  ],
+  "title": "WatchlistChange",
+  "type": "object"
+}

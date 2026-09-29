@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "description": "Hashes and identity returned only after a complete publication.",
+  "properties": {
+    "bundle_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Bundle Sha256",
+      "type": "string"
+    },
+    "markdown_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Markdown Sha256",
+      "type": "string"
+    },
+    "published_at": {
+      "format": "date-time",
+      "pattern": "(?:Z|\\+00:00)$",
+      "title": "Published At",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 128,
+      "pattern": "^premarket-\\d{4}-\\d{2}-\\d{2}-r[1-9]\\d*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "bundle_sha256",
+    "markdown_sha256",
+    "published_at"
+  ],
+  "title": "PublishedArtifact",
+  "type": "object"
+}

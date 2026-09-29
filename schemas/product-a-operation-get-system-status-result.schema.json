@@ -1,0 +1,63 @@
+{
+  "$defs": {
+    "SystemDiagnosticCode": {
+      "enum": [
+        "CONFIGURATION_UNAVAILABLE",
+        "MARKET_DATA_UNAVAILABLE",
+        "MARKET_CALENDAR_UNAVAILABLE"
+      ],
+      "title": "SystemDiagnosticCode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "configuration_ready": {
+      "title": "Configuration Ready",
+      "type": "boolean"
+    },
+    "current_market_date": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Current Market Date"
+    },
+    "diagnostics": {
+      "items": {
+        "$ref": "#/$defs/SystemDiagnosticCode"
+      },
+      "maxItems": 64,
+      "title": "Diagnostics",
+      "type": "array"
+    },
+    "market_calendar_ready": {
+      "title": "Market Calendar Ready",
+      "type": "boolean"
+    },
+    "market_data_ready": {
+      "title": "Market Data Ready",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration_ready",
+    "market_data_ready",
+    "market_calendar_ready",
+    "current_market_date",
+    "diagnostics"
+  ],
+  "title": "SystemStatusResult",
+  "type": "object"
+}

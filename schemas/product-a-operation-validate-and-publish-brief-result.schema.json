@@ -1,0 +1,271 @@
+{
+  "$defs": {
+    "PublishedArtifact": {
+      "additionalProperties": false,
+      "description": "Hashes and identity returned only after a complete publication.",
+      "properties": {
+        "bundle_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Bundle Sha256",
+          "type": "string"
+        },
+        "markdown_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Markdown Sha256",
+          "type": "string"
+        },
+        "published_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Published At",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 128,
+          "pattern": "^premarket-\\d{4}-\\d{2}-\\d{2}-r[1-9]\\d*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "bundle_sha256",
+        "markdown_sha256",
+        "published_at"
+      ],
+      "title": "PublishedArtifact",
+      "type": "object"
+    },
+    "ValidationCode": {
+      "enum": [
+        "SCHEMA_INVALID",
+        "RUN_ID_MISMATCH",
+        "REQUIRED_SECTION_MISSING",
+        "REQUIRED_SECTION_ORDER",
+        "INVALID_PLAN_STATE",
+        "INVALID_CAPABILITY_STATE",
+        "DETERMINISTIC_VALUE_MISMATCH",
+        "IRRELEVANT_CITATION",
+        "COUNTER_EVIDENCE_OMITTED",
+        "STATUS_OVERCLAIM",
+        "IEX_COVERAGE_OVERCLAIM",
+        "DISABLED_CAPABILITY_OMITTED",
+        "IMPERATIVE_TRADING_LANGUAGE",
+        "BLOCKED_PLAN_OVERCLAIM",
+        "UNSUPPORTED_SIZING_VALUE",
+        "UNSUPPORTED_CLAIM",
+        "CLAIM_REACHABILITY",
+        "EXPIRY_INVALIDATION_MISSING",
+        "TEXT_LIMIT_EXCEEDED",
+        "UNKNOWN_EVIDENCE",
+        "UNKNOWN_METRIC",
+        "WATCHLIST_COVERAGE_MISSING",
+        "VALIDATION_ISSUES_TRUNCATED"
+      ],
+      "title": "ValidationCode",
+      "type": "string"
+    },
+    "ValidationIssue": {
+      "additionalProperties": false,
+      "description": "Closed deterministic validator finding with bounded diagnostic content.",
+      "properties": {
+        "actual_value": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actual Value"
+        },
+        "code": {
+          "$ref": "#/$defs/ValidationCode"
+        },
+        "expected_value": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Value"
+        },
+        "issue_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Issue Id",
+          "type": "string"
+        },
+        "json_pointer": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Json Pointer",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "related_evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Related Evidence Ids",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/ValidationSeverity"
+        }
+      },
+      "required": [
+        "issue_id",
+        "code",
+        "severity",
+        "json_pointer",
+        "message",
+        "related_evidence_ids"
+      ],
+      "title": "ValidationIssue",
+      "type": "object"
+    },
+    "ValidationReport": {
+      "additionalProperties": false,
+      "description": "Attempt-specific result bound to the exact frozen packet identity and hash.",
+      "properties": {
+        "is_valid": {
+          "title": "Is Valid",
+          "type": "boolean"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/ValidationIssue"
+          },
+          "maxItems": 2000,
+          "title": "Issues",
+          "type": "array"
+        },
+        "packet_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Packet Id",
+          "type": "string"
+        },
+        "packet_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Packet Sha256",
+          "type": "string"
+        },
+        "repair_attempts_used": {
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Repair Attempts Used",
+          "type": "integer"
+        },
+        "repairable": {
+          "title": "Repairable",
+          "type": "boolean"
+        },
+        "run_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "validation_attempt": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Validation Attempt",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run_id",
+        "packet_id",
+        "packet_sha256",
+        "is_valid",
+        "repairable",
+        "validation_attempt",
+        "repair_attempts_used",
+        "issues"
+      ],
+      "title": "ValidationReport",
+      "type": "object"
+    },
+    "ValidationSeverity": {
+      "enum": [
+        "ERROR",
+        "WARNING"
+      ],
+      "title": "ValidationSeverity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "publication": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublishedArtifact"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "validation_report": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ValidationReport"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "title": "ValidateAndPublishBriefResult",
+  "type": "object"
+}
