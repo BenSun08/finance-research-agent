@@ -140,10 +140,12 @@
 
 **Files:** all files changed by Tasks 1–4.
 
-- [ ] **Step 1: Run the full repository verification:** `pytest -p no:cacheprovider -q`, `ruff check --no-cache .`, and `mypy --cache-dir /tmp/finance-agent-r9-mypy-cache src`.
-- [ ] **Step 2: Run focused line and branch coverage** for all changed application, domain, adapter, and replay modules; record uncovered branches and add justified tests first where safety or persistence behavior is untested.
-- [ ] **Step 3: Perform an independent whole-feature code review** against this design, the approved R9 plan, the source-scope contract, secret-redaction rules, and mutation cases.
-- [ ] **Step 4: Fix only review findings with failing tests first; rerun the focused tests, coverage, and full repository checks. Commit each accepted remediation separately.**
-- [ ] **Step 5: Review the complete diff and ensure the worktree is clean.**
+- [x] **Step 1: Run the full repository verification:** `pytest -p no:cacheprovider -q`, `ruff check --no-cache .`, and `mypy --cache-dir /tmp/finance-agent-r9-mypy-cache src`.
+- [x] **Step 2: Run focused line and branch coverage** for all changed application, domain, adapter, and replay modules; record uncovered branches and add justified tests first where safety or persistence behavior is untested.
+- [x] **Step 3: Perform an independent whole-feature code review** against this design, the approved R9 plan, the source-scope contract, secret-redaction rules, and mutation cases.
+- [x] **Step 4: Fix only review findings with failing tests first; rerun the focused tests, coverage, and full repository checks. Commit each accepted remediation separately.**
+- [x] **Step 5: Review the complete diff and ensure the worktree is clean.**
 - [ ] **Step 6: Push `codex/r9-publication`, open one PR for the R9 telemetry feature, and attach it to this task.**
 - [ ] **Step 7: Check PR CI, formal reviews, and inline threads against the exact pushed head. Merge only when green and review-clean, then fetch and verify the merge commit on `main`.**
+
+**Task 5 verification note:** Full repository tests passed (1,838 passed, 1 deselected); Ruff passed; mypy passed for 80 source files. Python's built-in line tracer reported 100% executable-line coverage for the 12 changed source modules across 226 focused tests. `pytest-cov` and `coverage.py` are unavailable in the environment, so branch outcomes were checked manually against the retry, redirect, error, restore/hash, publication-origin, replay, legacy-bundle, and failed-stage tests; there is no numeric branch percentage.
