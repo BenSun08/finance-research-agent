@@ -54,11 +54,11 @@ engine.
 
 ## Delivery and verification
 
-Deliver the correction in tested commits: version/projection prerequisites;
+Deliver the correction in reviewed features with tested commits: version/projection prerequisites;
 packet/typed-result contract; preparation/resume/failure/deadline composition;
 prior observations; runnable stdio bootstrap. Each commit records focused
-RED/GREEN and checks. Before the feature PR, independently review the whole
-correction, analyze line/branch coverage, run full pytest/Ruff/mypy and schema
+RED/GREEN and checks. Before each feature PR, independently review that whole
+feature, analyze line/branch coverage, run full pytest/Ruff/mypy and schema
 drift checks, then check exact-head CI/reviews before merging.
 
 R10 Task 5/6 packaging sequencing must be reconciled explicitly when reached:

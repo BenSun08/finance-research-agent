@@ -180,6 +180,58 @@ def test_absent_regime_keeps_legacy_packet_bytes_readable(packet_inputs) -> None
     encoded = packet.model_dump_json()
     assert '"regime_result"' not in encoded
     assert ResearchPacket.model_validate_json(encoded).model_dump_json() == encoded
+    # Independently generated with base 0519c81 in an isolated source archive.
+    assert packet.canonical_sha256 == (
+        "0ee01e75360a476966cac1244d281303335e0322bc99caa6408814eb69cb35d8"
+    )
+    assert packet.synthesis_constraints.serialized_bytes == 2150
+
+
+def test_populated_regime_decimal_score_and_metrics_survive_packet_roundtrip(packet_inputs) -> None:
+    from decimal import Decimal
+
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+    from tests.support.synthetic_market import make_regime_case
+
+    regime = calculate_regime(
+        make_regime_case("risk-on").snapshots, RegimePolicy(version="1"), NOW
+    )
+    assert regime.regime.value == "permissive"
+    assert regime.score == Decimal("100")
+    assert len(regime.metrics) == 38
+    packet = build_research_packet(
+        **(packet_inputs["as_kwargs"]() | {"metrics": regime.metrics}),
+        max_serialized_bytes=250_000, regime_result=regime,
+    )
+    restored = ResearchPacket.model_validate_json(packet.model_dump_json())
+    assert restored.regime_result == regime
+    assert restored.metrics == packet.metrics
+
+
+@pytest.mark.parametrize("invalid", ["missing", "replaced"])
+def test_packet_rejects_omitted_or_replaced_regime_metric(packet_inputs, invalid) -> None:
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+    from tests.support.synthetic_market import make_regime_case
+
+    regime = calculate_regime(
+        make_regime_case("risk-on").snapshots, RegimePolicy(version="1"), NOW
+    )
+    metric = next(item for item in regime.metrics if item.value not in (None, Decimal("0")))
+    metrics = {
+        "missing": regime.metrics[1:],
+        "replaced": tuple(
+            replace(item, value=Decimal("0")) if item.metric_id == metric.metric_id else item
+            for item in regime.metrics
+        ),
+    }[invalid]
+    with pytest.raises(ValueError, match="regime metrics must be retained"):
+        build_research_packet(
+            **(packet_inputs["as_kwargs"]() | {"metrics": metrics}),
+            max_serialized_bytes=250_000, regime_result=regime,
+        )
 
 
 def test_packet_rejects_content_replacement_with_stale_hash(packet_inputs) -> None:

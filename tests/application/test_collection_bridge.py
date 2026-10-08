@@ -127,6 +127,58 @@ def test_collected_regime_projection_rejects_invalid_or_post_cutoff_bars(invalid
         )
 
 
+@pytest.mark.parametrize("invalid", ["source", "bar_cutoff", "naive_cutoff", "non_utc_cutoff"])
+def test_collected_regime_projection_enforces_source_and_cutoff_boundaries(invalid) -> None:
+    from datetime import timezone
+
+    from finance_research_agent.application.collection_bridge import (
+        collected_snapshot_to_regime_input,
+        collection_to_packet_inputs,
+    )
+
+    snapshot = collection_to_packet_inputs(
+        MarketDataCollection(
+            (SymbolMarketCollection("AAPL", _instrument(), (_bar(),), _price()),),
+            _RETRIEVED,
+        ), authority_tier=2,
+    ).market["AAPL"]
+    cutoff = _RETRIEVED
+    if invalid == "source":
+        snapshot = snapshot.model_copy(update={"source_observations": (
+            snapshot.source_observations[0].model_copy(
+                update={"retrieved_at": _RETRIEVED + timedelta(seconds=1)}
+            ),
+        )})
+    elif invalid == "bar_cutoff":
+        snapshot = snapshot.model_copy(update={"completed_daily_bars": (
+            _bar().model_copy(update={"evidence_cutoff_at": _RETRIEVED + timedelta(seconds=1)}),
+        )})
+    elif invalid == "naive_cutoff":
+        cutoff = cutoff.replace(tzinfo=None)
+    else:
+        cutoff = cutoff.astimezone(timezone(timedelta(hours=1)))
+    with pytest.raises(ValueError):
+        collected_snapshot_to_regime_input(snapshot, cutoff)
+
+
+def test_regime_projection_identity_includes_frozen_cutoff() -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collected_snapshot_to_regime_input,
+        collection_to_packet_inputs,
+    )
+
+    snapshot = collection_to_packet_inputs(
+        MarketDataCollection(
+            (SymbolMarketCollection("AAPL", _instrument(), (_bar(),), _price()),),
+            _RETRIEVED,
+        ), authority_tier=2,
+    ).market["AAPL"]
+    first = collected_snapshot_to_regime_input(snapshot, _RETRIEVED)
+    later = collected_snapshot_to_regime_input(snapshot, _RETRIEVED + timedelta(seconds=1))
+    assert first.snapshot_id != later.snapshot_id
+    assert first.completed_daily_bars == later.completed_daily_bars
+
+
 def test_collection_bridge_builds_linked_canonical_market_and_evidence() -> None:
     from finance_research_agent.application.collection_bridge import (
         collection_to_packet_inputs,
