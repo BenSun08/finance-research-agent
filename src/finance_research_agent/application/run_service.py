@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import date
 from time import perf_counter_ns
 
-from finance_research_agent import __version__
+from finance_research_agent.application.component_versions import current_component_versions
 from finance_research_agent.application.config_service import ConfigService
 from finance_research_agent.application.performance_telemetry import (
     RunTelemetryRecorder,
@@ -26,7 +26,6 @@ from finance_research_agent.domain.market_calendar import (
     resolve_run_window,
 )
 from finance_research_agent.domain.models import (
-    ComponentVersions,
     RunCheckpoint,
     RunContextSeed,
     StoredRun,
@@ -138,20 +137,7 @@ def prepare_premarket_run(
     configuration_snapshot = ConfigService(
         dependencies.config_repository
     ).validate_and_snapshot()
-    versions = ComponentVersions(
-        core_version=__version__,
-        mcp_contract_version="0.1",
-        plugin_version="0.1",
-        skill_version="0.1",
-        prompt_version="0.1",
-        report_template_version="0.1",
-        schema_versions=FrozenMap({"run-context": "0.1"}),
-        watchlist_version=configuration_snapshot.watchlist_version,
-        regime_policy_version=configuration_snapshot.regime_policy_version,
-        setup_policy_version=configuration_snapshot.setup_policy_version,
-        risk_policy_version=configuration_snapshot.risk_policy_version,
-        source_policy_version=configuration_snapshot.source_policy_version,
-    )
+    versions = current_component_versions(configuration_snapshot)
     seed = RunContextSeed(
         market_date=decision.market_date,
         invoked_at=invoked_at,
