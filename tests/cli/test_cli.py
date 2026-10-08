@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -162,8 +165,8 @@ def test_replay_fails_closed_if_the_default_runtime_has_no_replay_handler(
     services = _Services()
     monkeypatch.setattr(
         cli,
-        "_default_runtime",
-        lambda: (services, cast(cli.Replay, None)),
+        "_default_replay",
+        lambda: cast(cli.Replay, None),
     )
 
     with pytest.raises(SystemExit) as error:
@@ -257,7 +260,7 @@ def test_default_replay_uses_the_stored_bundle_without_loading_configuration(
 
     monkeypatch.setattr(cli, "Settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "YamlConfigurationRepository", _Configuration)
-    monkeypatch.setattr(cli, "FileSystemRunRepository", lambda root: reader)
+    monkeypatch.setattr(cli, "FileSystemRunRepository", lambda root, **kwargs: reader)
     monkeypatch.setattr(cli, "replay_published_artifact", fake_replay)
 
     result = main(["replay", run_id])
@@ -313,3 +316,110 @@ def test_replay_summary_prints_hashes_and_versions_without_bundle_or_markdown() 
     assert output["current_policy_config_compared"] is False
     assert "bundle" not in output
     assert "report_markdown" not in output
+
+
+@pytest.mark.parametrize("command", ["status", "config", "replay"])
+def test_service_failures_return_redacted_json_without_tracebacks(command, capsys) -> None:
+    class Broken:
+        def dispatch(self, *args):
+            raise RuntimeError("ALPACA-secret-canary /private/config.yaml")
+
+    def broken_replay(run_id):
+        raise RuntimeError("ALPACA-secret-canary /private/bundle.json")
+
+    arguments = [command] + (["premarket-2026-09-30-r1"] if command == "replay" else [])
+    assert main(arguments, services=Broken(), replay=broken_replay) == 1
+    output = capsys.readouterr()
+    assert json.loads(output.out)["code"] == "INTERNAL_ERROR"
+    assert output.err == ""
+    assert "canary" not in output.out
+    assert "/private/" not in output.out
+
+
+def test_bootstrap_and_serialization_failures_are_redacted(monkeypatch, capsys) -> None:
+    def broken_bootstrap():
+        raise RuntimeError("secret-canary /private/config")
+
+    monkeypatch.setattr(cli, "_default_runtime", broken_bootstrap)
+    assert main(["config"]) == 1
+    assert json.loads(capsys.readouterr().out)["code"] == "INTERNAL_ERROR"
+
+    class Unserializable:
+        def dispatch(self, *args):
+            return object()
+
+    assert main(["config"], services=Unserializable()) == 1
+    assert json.loads(capsys.readouterr().out)["code"] == "INTERNAL_ERROR"
+
+
+def test_frozen_replay_never_constructs_settings_or_diagnostic_services(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("credentials and current configuration must stay unread")
+
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(cli, "Settings", forbidden)
+    monkeypatch.setattr(cli, "ExchangeCalendarAdapter", forbidden)
+    snapshot = ConfigurationSnapshot(
+        content_hash_sha256="a" * 64,
+        file_hashes=FrozenMap({"watchlist.yaml": "b" * 64}),
+        watchlist_version="1", regime_policy_version="1", setup_policy_version="1",
+        risk_policy_version="1", source_policy_version="1",
+    )
+    class Reader:
+        def load_published_bundle(self, run_id):
+            return SimpleNamespace(run=SimpleNamespace(configuration_snapshot=snapshot))
+
+    def reader(root, **kwargs):
+        assert root == tmp_path
+        return Reader()
+
+    monkeypatch.setattr(cli, "FileSystemRunRepository", reader)
+    monkeypatch.setattr(cli, "replay_published_artifact", lambda *args: {"replayed": True})
+    assert main(["replay", "premarket-2026-09-30-r1"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"replayed": True}
+
+
+def test_injected_replay_does_not_bootstrap_diagnostic_services(monkeypatch, capsys) -> None:
+    def forbidden():
+        raise AssertionError("diagnostic runtime must not be constructed")
+    monkeypatch.setattr(cli, "_default_runtime", forbidden)
+    assert main(["replay", "premarket-2026-09-30-r1"], replay=lambda _: {}) == 0
+    assert json.loads(capsys.readouterr().out) == {}
+
+
+@pytest.mark.parametrize("command", ["status", "config", "replay"])
+def test_read_only_commands_never_create_storage_layout(command, monkeypatch, tmp_path, capsys):
+    root = tmp_path / "missing"
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(root))
+    monkeypatch.setattr(cli, "Settings", lambda: Settings(data_dir=root))
+    arguments = [command] + (["premarket-2026-09-30-r1"] if command == "replay" else [])
+    main(arguments)
+    capsys.readouterr()
+    assert not root.exists()
+
+
+def test_real_console_redacts_invalid_configuration_and_leaves_tree_unchanged(tmp_path):
+    project = Path(__file__).parents[2]
+    copytree(project / "config" / "examples", tmp_path / "config")
+    risk_path = tmp_path / "config" / "risk-policy.yaml"
+    # Locate the canonical risk policy without relying on operator-specific paths.
+    if not risk_path.exists():
+        risk_path = next((tmp_path / "config").glob("*risk*.yaml"))
+    risk_path.write_text(risk_path.read_text() + "\nprivate-canary-field: credential-canary\n")
+    before = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
+    result = subprocess.run(
+        [sys.executable, "-c", "from finance_research_agent.adapters.cli import main; "
+         "raise SystemExit(main())", "config"],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(project / "src"),
+             "AI_MARKET_RESEARCH_DATA_DIR": str(tmp_path),
+             "ALPACA_API_KEY": "offline-canary", "ALPACA_API_SECRET": "offline-canary"},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["code"] == "INTERNAL_ERROR"
+    assert result.stderr == ""
+    assert "canary" not in result.stdout
+    assert sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")) == before

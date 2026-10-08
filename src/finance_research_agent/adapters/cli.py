@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Protocol, cast
 
 from pydantic import BaseModel, ValidationError
@@ -21,6 +23,7 @@ from finance_research_agent.adapters.yaml_config import (
 from finance_research_agent.application.component_versions import current_component_versions
 from finance_research_agent.application.operations import (
     GetRunStatusRequest,
+    OperationError,
     ProductAOperation,
 )
 from finance_research_agent.application.ports import Clock, MarketDataProvider
@@ -70,7 +73,7 @@ def _default_runtime() -> tuple[ApplicationServices, Replay]:
     settings = Settings()
     data_root = settings.data_dir
     configuration = YamlConfigurationRepository(data_root / "config")
-    run_repository = FileSystemRunRepository(data_root)
+    run_repository = FileSystemRunRepository(data_root, create_layout=False)
     market_data = cast(MarketDataProvider, _ConfiguredMarketDataReadiness(settings))
     calendar = ExchangeCalendarAdapter()
     services = ApplicationServices(
@@ -84,6 +87,16 @@ def _default_runtime() -> tuple[ApplicationServices, Replay]:
         feedback_repository=FileSystemFeedbackRepository(data_root / "feedback"),
     )
 
+    return services, _replay_reader(run_repository)
+
+
+def _default_replay() -> Replay:
+    # Only the trusted process locator is needed: no dotenv, secrets, or providers.
+    root = Path(os.environ.get("AI_MARKET_RESEARCH_DATA_DIR") or "data")
+    return _replay_reader(FileSystemRunRepository(root, create_layout=False))
+
+
+def _replay_reader(run_repository: FileSystemRunRepository) -> Replay:
     def replay(run_id: str) -> ArtifactReplayResult:
         bundle = run_repository.load_published_bundle(run_id)
         if bundle is None:
@@ -94,7 +107,7 @@ def _default_runtime() -> tuple[ApplicationServices, Replay]:
             current_component_versions(bundle.run.configuration_snapshot),
         )
 
-    return services, replay
+    return replay
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -173,23 +186,26 @@ def main(
     else:
         run_id = None
 
-    if services is None or (arguments.command == "replay" and replay is None):
-        default_services, default_replay = _default_runtime()
-        services = services or default_services
-        replay = replay or default_replay
-
-    if arguments.command == "status":
-        value = services.dispatch(ProductAOperation.GET_SYSTEM_STATUS.value, "{}")
-    elif arguments.command == "config":
-        value = _configuration_summary(
-            services.dispatch(ProductAOperation.VALIDATE_CONFIGURATION.value, "{}")
-        )
-    else:
-        if replay is None or run_id is None:
-            parser.error("replay runtime is unavailable")
-        value = _replay_summary(replay(run_id))
-
-    print(json.dumps(_json_value(value), sort_keys=True, separators=(",", ":")))
+    try:
+        if arguments.command == "replay":
+            replay = replay or _default_replay()
+            if replay is None or run_id is None:
+                parser.error("replay runtime is unavailable")
+            value = _replay_summary(replay(run_id))
+        else:
+            if services is None:
+                services, _ = _default_runtime()
+            if arguments.command == "status":
+                value = services.dispatch(ProductAOperation.GET_SYSTEM_STATUS.value, "{}")
+            else:
+                value = _configuration_summary(
+                    services.dispatch(ProductAOperation.VALIDATE_CONFIGURATION.value, "{}")
+                )
+        output = json.dumps(_json_value(value), sort_keys=True, separators=(",", ":"))
+    except Exception:
+        print(OperationError(code=ErrorCode.INTERNAL_ERROR).model_dump_json())
+        return 1
+    print(output)
     return 0
 
 

@@ -75,11 +75,12 @@ class FileSystemRunRepository:
     inject_failure_before_rename = False
     inject_failure_during_index_update = False
 
-    def __init__(self, data_root: Path) -> None:
+    def __init__(self, data_root: Path, *, create_layout: bool = True) -> None:
         self.root = Path(data_root).expanduser().resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
-        for name in ("config", "runs", "reports", "cache", "diagnostics", "logs"):
-            self._safe_path(name).mkdir(parents=True, exist_ok=True)
+        if create_layout:
+            self.root.mkdir(parents=True, exist_ok=True)
+            for name in ("config", "runs", "reports", "cache", "diagnostics", "logs"):
+                self._safe_path(name).mkdir(parents=True, exist_ok=True)
 
     def _safe_path(self, *parts: str) -> Path:
         candidate = self.root.joinpath(*parts).resolve()
