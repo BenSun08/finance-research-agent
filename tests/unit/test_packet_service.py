@@ -136,6 +136,52 @@ def test_packet_is_deeply_immutable_and_has_stable_hash(packet_inputs) -> None:
         first.evidence = first.evidence + (packet_inputs["evidence"](0),)
 
 
+def test_packet_retains_regime_result_without_synthesis_recalculation(packet_inputs) -> None:
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+
+    run = packet_inputs["run"]
+    regime = calculate_regime(
+        {}, RegimePolicy(version=run.configuration_snapshot.regime_policy_version),
+        run.evidence_cutoff_at,
+    )
+    packet = build_research_packet(
+        **packet_inputs["as_kwargs"](), max_serialized_bytes=250_000, regime_result=regime
+    )
+    assert packet.regime_result.regime.value == "unknown"
+    assert packet.regime_result.score is None
+    assert packet.regime_result.unavailable_reasons
+    assert ResearchPacket.model_validate_json(packet.model_dump_json()) == packet
+
+
+@pytest.mark.parametrize("invalid", ["policy", "late"])
+def test_packet_rejects_regime_from_a_different_policy_or_cutoff(packet_inputs, invalid) -> None:
+    from dataclasses import replace
+
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+
+    run = packet_inputs["run"]
+    regime = calculate_regime(
+        {}, RegimePolicy(version=run.configuration_snapshot.regime_policy_version),
+        run.evidence_cutoff_at,
+    )
+    changes = {
+        "policy": {"policy_version": "different"},
+        "late": {"calculated_at": run.evidence_cutoff_at + timedelta(seconds=1)},
+    }
+    with pytest.raises(ValueError):
+        build_research_packet(
+            **packet_inputs["as_kwargs"](), max_serialized_bytes=250_000,
+            regime_result=replace(regime, **changes[invalid]),
+        )
+
+
+def test_absent_regime_keeps_legacy_packet_bytes_readable(packet_inputs) -> None:
+    packet = build_research_packet(**packet_inputs["as_kwargs"](), max_serialized_bytes=250_000)
+    encoded = packet.model_dump_json()
+    assert '"regime_result"' not in encoded
+    assert ResearchPacket.model_validate_json(encoded).model_dump_json() == encoded
+
+
 def test_packet_rejects_content_replacement_with_stale_hash(packet_inputs) -> None:
     packet = build_research_packet(
         **packet_inputs["as_kwargs"](), max_serialized_bytes=250_000

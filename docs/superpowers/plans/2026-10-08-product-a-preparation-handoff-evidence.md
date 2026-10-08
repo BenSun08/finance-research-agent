@@ -27,3 +27,14 @@ Design: `../specs/2026-10-08-product-a-preparation-handoff-correction.md`.
 - Full suite: 1,919 passed, one live test deselected, one existing warning.
 - Ruff passed after test wrapping; mypy passed (87 source files). The legacy
   historical bridge remains unchanged.
+
+## Subtask 3: Retain the typed regime result
+
+- RED: three packet tests failed because the builder could not accept a regime
+  result. Test setup was corrected to use the frozen configuration's version
+  before accepting those failures as RED evidence.
+- GREEN: 14 packet tests passed, including complete UNKNOWN/unavailable state,
+  wrong-policy/late-result rejection, and legacy byte round trips.
+- Full suite: 1,923 passed, one live test deselected, one existing warning.
+- Ruff and mypy passed; schema check passed. The absent optional field is excluded
+  from serialization to preserve older packet identity and byte counts.

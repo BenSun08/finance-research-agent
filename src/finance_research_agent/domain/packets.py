@@ -20,6 +20,7 @@ from finance_research_agent.domain.models import (
 )
 from finance_research_agent.domain.observations import PlanObservation
 from finance_research_agent.domain.plans import TradePlanDraft
+from finance_research_agent.domain.regime import RegimeResult
 from finance_research_agent.domain.scoring import SetupCandidate
 from finance_research_agent.domain.setups import CandidateExclusion
 from finance_research_agent.domain.types import FrozenMap
@@ -94,6 +95,9 @@ class ResearchPacket(StrictModel):
     capability_states: tuple[CapabilityState, ...]
     prior_plan_observations: tuple[PlanObservation, ...]
     synthesis_constraints: SynthesisConstraints
+    regime_result: RegimeResult | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def _verify_identity_and_size(self) -> Self:
@@ -103,6 +107,15 @@ class ResearchPacket(StrictModel):
             self.market,
             self.metrics,
         )
+        if self.regime_result is not None:
+            regime = self.regime_result
+            if regime.policy_version != self.run.configuration_snapshot.regime_policy_version:
+                raise ValueError("regime policy differs from frozen configuration")
+            if regime.calculated_at != self.run.require_evidence_cutoff():
+                raise ValueError("regime result must use the frozen evidence cutoff")
+            packet_metrics = {metric.metric_id: metric for metric in self.metrics}
+            if any(packet_metrics.get(metric.metric_id) != metric for metric in regime.metrics):
+                raise ValueError("regime metrics must be retained in the packet")
         payload = self.model_dump(mode="json", exclude={"packet_id", "canonical_sha256"})
         canonical = json.dumps(
             payload,
