@@ -26,6 +26,8 @@ from finance_research_agent.domain.market_calendar import (
     resolve_run_window,
 )
 from finance_research_agent.domain.models import (
+    ComponentVersions,
+    ConfigurationSnapshot,
     RunCheckpoint,
     RunContextSeed,
     StoredRun,
@@ -63,6 +65,9 @@ class RunDependencies:
     market_data: MarketDataProvider
     event_providers: tuple[EventProvider, ...]
     monotonic_ns: Callable[[], int] = perf_counter_ns
+    component_versions: Callable[[ConfigurationSnapshot], ComponentVersions] = (
+        current_component_versions
+    )
 
     def __post_init__(self) -> None:
         if type(self.event_providers) is not tuple:
@@ -137,7 +142,7 @@ def prepare_premarket_run(
     configuration_snapshot = ConfigService(
         dependencies.config_repository
     ).validate_and_snapshot()
-    versions = current_component_versions(configuration_snapshot)
+    versions = dependencies.component_versions(configuration_snapshot)
     seed = RunContextSeed(
         market_date=decision.market_date,
         invoked_at=invoked_at,

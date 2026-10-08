@@ -22,6 +22,7 @@ from finance_research_agent.domain.packets import (
     validate_packet_cutoff,
 )
 from finance_research_agent.domain.plans import TradePlanDraft
+from finance_research_agent.domain.regime import RegimeResult
 from finance_research_agent.domain.scoring import SetupCandidate
 from finance_research_agent.domain.setups import CandidateExclusion
 from finance_research_agent.domain.types import FrozenMap
@@ -58,6 +59,7 @@ def _packet(
     observations: tuple[PlanObservation, ...],
     max_serialized_bytes: int,
     omitted_bytes: Mapping[str, int],
+    regime_result: RegimeResult | None = None,
 ) -> ResearchPacket:
     omitted_sections = tuple(omitted_bytes)
     provisional = ResearchPacket.model_construct(
@@ -74,6 +76,7 @@ def _packet(
         deterministic_plan_inputs=plans,
         capability_states=capabilities,
         prior_plan_observations=observations,
+        regime_result=regime_result,
         synthesis_constraints=SynthesisConstraints(
             max_serialized_bytes=max_serialized_bytes,
             serialized_bytes=1,
@@ -122,6 +125,8 @@ def build_research_packet(
     capabilities: Sequence[CapabilityState],
     observations: Sequence[PlanObservation],
     max_serialized_bytes: int,
+    *,
+    regime_result: RegimeResult | None = None,
 ) -> ResearchPacket:
     """Assemble deterministic content; only discovery prose is eligible for trimming."""
     if type(max_serialized_bytes) is not int or max_serialized_bytes <= 0:
@@ -158,6 +163,7 @@ def build_research_packet(
         observations=observation_values,
         max_serialized_bytes=max_serialized_bytes,
         omitted_bytes=omitted,
+        regime_result=regime_result,
     )
     if packet.synthesis_constraints.serialized_bytes <= max_serialized_bytes:
         return _validated(packet)
@@ -189,6 +195,7 @@ def build_research_packet(
             observations=observation_values,
             max_serialized_bytes=max_serialized_bytes,
             omitted_bytes=omitted,
+            regime_result=regime_result,
         )
         if packet.synthesis_constraints.serialized_bytes <= max_serialized_bytes:
             return _validated(packet)
@@ -217,6 +224,7 @@ def build_research_packet(
         observations=observation_values,
         max_serialized_bytes=max_serialized_bytes,
         omitted_bytes=omitted,
+        regime_result=regime_result,
     )
     if packet.synthesis_constraints.serialized_bytes <= max_serialized_bytes:
         return _validated(packet)
@@ -245,6 +253,7 @@ def build_research_packet(
         observations=observation_values,
         max_serialized_bytes=max_serialized_bytes,
         omitted_bytes=omitted,
+        regime_result=regime_result,
     )
     if packet.synthesis_constraints.serialized_bytes > max_serialized_bytes:
         raise PacketBudgetExceeded("protected packet content exceeds max_serialized_bytes")

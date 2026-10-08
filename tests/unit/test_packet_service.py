@@ -136,6 +136,104 @@ def test_packet_is_deeply_immutable_and_has_stable_hash(packet_inputs) -> None:
         first.evidence = first.evidence + (packet_inputs["evidence"](0),)
 
 
+def test_packet_retains_regime_result_without_synthesis_recalculation(packet_inputs) -> None:
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+
+    run = packet_inputs["run"]
+    regime = calculate_regime(
+        {}, RegimePolicy(version=run.configuration_snapshot.regime_policy_version),
+        run.evidence_cutoff_at,
+    )
+    packet = build_research_packet(
+        **packet_inputs["as_kwargs"](), max_serialized_bytes=250_000, regime_result=regime
+    )
+    assert packet.regime_result.regime.value == "unknown"
+    assert packet.regime_result.score is None
+    assert packet.regime_result.unavailable_reasons
+    assert ResearchPacket.model_validate_json(packet.model_dump_json()) == packet
+
+
+@pytest.mark.parametrize("invalid", ["policy", "late"])
+def test_packet_rejects_regime_from_a_different_policy_or_cutoff(packet_inputs, invalid) -> None:
+    from dataclasses import replace
+
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+
+    run = packet_inputs["run"]
+    regime = calculate_regime(
+        {}, RegimePolicy(version=run.configuration_snapshot.regime_policy_version),
+        run.evidence_cutoff_at,
+    )
+    changes = {
+        "policy": {"policy_version": "different"},
+        "late": {"calculated_at": run.evidence_cutoff_at + timedelta(seconds=1)},
+    }
+    with pytest.raises(ValueError):
+        build_research_packet(
+            **packet_inputs["as_kwargs"](), max_serialized_bytes=250_000,
+            regime_result=replace(regime, **changes[invalid]),
+        )
+
+
+def test_absent_regime_keeps_legacy_packet_bytes_readable(packet_inputs) -> None:
+    packet = build_research_packet(**packet_inputs["as_kwargs"](), max_serialized_bytes=250_000)
+    encoded = packet.model_dump_json()
+    assert '"regime_result"' not in encoded
+    assert ResearchPacket.model_validate_json(encoded).model_dump_json() == encoded
+    # Independently generated with base 0519c81 in an isolated source archive.
+    assert packet.canonical_sha256 == (
+        "0ee01e75360a476966cac1244d281303335e0322bc99caa6408814eb69cb35d8"
+    )
+    assert packet.synthesis_constraints.serialized_bytes == 2150
+
+
+def test_populated_regime_decimal_score_and_metrics_survive_packet_roundtrip(packet_inputs) -> None:
+    from decimal import Decimal
+
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+    from tests.support.synthetic_market import make_regime_case
+
+    regime = calculate_regime(
+        make_regime_case("risk-on").snapshots, RegimePolicy(version="1"), NOW
+    )
+    assert regime.regime.value == "permissive"
+    assert regime.score == Decimal("100")
+    assert len(regime.metrics) == 38
+    packet = build_research_packet(
+        **(packet_inputs["as_kwargs"]() | {"metrics": regime.metrics}),
+        max_serialized_bytes=250_000, regime_result=regime,
+    )
+    restored = ResearchPacket.model_validate_json(packet.model_dump_json())
+    assert restored.regime_result == regime
+    assert restored.metrics == packet.metrics
+
+
+@pytest.mark.parametrize("invalid", ["missing", "replaced"])
+def test_packet_rejects_omitted_or_replaced_regime_metric(packet_inputs, invalid) -> None:
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+    from tests.support.synthetic_market import make_regime_case
+
+    regime = calculate_regime(
+        make_regime_case("risk-on").snapshots, RegimePolicy(version="1"), NOW
+    )
+    metric = next(item for item in regime.metrics if item.value not in (None, Decimal("0")))
+    metrics = {
+        "missing": regime.metrics[1:],
+        "replaced": tuple(
+            replace(item, value=Decimal("0")) if item.metric_id == metric.metric_id else item
+            for item in regime.metrics
+        ),
+    }[invalid]
+    with pytest.raises(ValueError, match="regime metrics must be retained"):
+        build_research_packet(
+            **(packet_inputs["as_kwargs"]() | {"metrics": metrics}),
+            max_serialized_bytes=250_000, regime_result=regime,
+        )
+
+
 def test_packet_rejects_content_replacement_with_stale_hash(packet_inputs) -> None:
     packet = build_research_packet(
         **packet_inputs["as_kwargs"](), max_serialized_bytes=250_000

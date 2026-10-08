@@ -1,6 +1,7 @@
 """Current deterministic component-version metadata for Product A runs."""
 
 from finance_research_agent import __version__
+from finance_research_agent.application.prompt_source import canonical_prompt_sha256
 from finance_research_agent.domain.models import ComponentVersions, ConfigurationSnapshot
 from finance_research_agent.domain.types import FrozenMap
 
@@ -12,7 +13,7 @@ def current_component_versions(snapshot: ConfigurationSnapshot) -> ComponentVers
         mcp_contract_version="0.1",
         plugin_version="0.1",
         skill_version="0.1",
-        prompt_version="0.1",
+        prompt_version=canonical_prompt_sha256(),
         report_template_version="0.1",
         schema_versions=FrozenMap({"run-context": "0.1"}),
         watchlist_version=snapshot.watchlist_version,

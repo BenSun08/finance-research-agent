@@ -12,6 +12,11 @@ from finance_research_agent.application.market_collection import (
     MarketDataCollection,
     SymbolMarketCollection,
 )
+from finance_research_agent.domain.market import (
+    DailyBar,
+    MarketDataSource,
+    RegimeMarketSnapshot,
+)
 from finance_research_agent.domain.models import (
     CompletedDailyBar,
     EvidenceItem,
@@ -30,6 +35,50 @@ class CollectionPacketInputs:
 
     market: FrozenMap[str, MarketSnapshot]
     evidence: tuple[EvidenceItem, ...]
+
+
+def collected_snapshot_to_regime_input(
+    snapshot: MarketSnapshot, cutoff_at: datetime
+) -> RegimeMarketSnapshot:
+    """Project frozen collection bars without requiring a legacy history ID.
+
+    The full canonical snapshot and cutoff bind identity. Numeric values and
+    linked evidence IDs pass to the existing regime calculator unchanged.
+    """
+    snapshot = MarketSnapshot.model_validate(snapshot, strict=True)
+    if cutoff_at.utcoffset() != timedelta(0):
+        raise ValueError("regime cutoff must be timezone-aware UTC")
+    bars = snapshot.completed_daily_bars
+    if not bars:
+        raise ValueError("regime projection requires completed daily bars")
+    if any(
+        bar.source_timestamp > cutoff_at
+        or bar.retrieved_at > cutoff_at
+        or bar.evidence_cutoff_at > cutoff_at
+        for bar in bars
+    ) or any(
+        source.observed_at > cutoff_at or source.retrieved_at > cutoff_at
+        for source in snapshot.source_observations
+    ):
+        raise ValueError("regime input is after evidence cutoff")
+    digest = sha256(_canonical_bytes({
+        "snapshot": snapshot.model_dump(mode="json"),
+        "cutoff_at": cutoff_at.isoformat(),
+    })).hexdigest()
+    return RegimeMarketSnapshot(
+        schema_version="market-snapshot-v1",
+        snapshot_id=f"normalized-{digest}",
+        symbol=snapshot.instrument.symbol,
+        as_of=cutoff_at,
+        currency=snapshot.instrument.currency,
+        source=MarketDataSource.NORMALIZED_PROVIDER,
+        completed_daily_bars=tuple(
+            DailyBar(bar.session_date, bar.open, bar.high, bar.low, bar.close, bar.volume)
+            for bar in bars
+        ),
+        quality_flags=snapshot.quality_flags,
+        input_evidence_ids=tuple(dict.fromkeys(bar.evidence_id for bar in bars)),
+    )
 
 
 def _canonical_bytes(payload: object) -> bytes:

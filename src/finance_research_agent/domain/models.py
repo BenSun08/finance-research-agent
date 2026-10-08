@@ -36,6 +36,7 @@ Version = Annotated[
     str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9.+_-]*$")
 ]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+SkillVersion = Version | Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 Symbol = Annotated[
     str, Field(min_length=1, max_length=16, pattern=r"^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$")
 ]
@@ -180,7 +181,7 @@ class ComponentVersions(StrictModel):
     core_version: Version
     mcp_contract_version: Version
     plugin_version: Version
-    skill_version: Version
+    skill_version: SkillVersion
     prompt_version: Version
     report_template_version: Version
     schema_versions: FrozenMap[Identifier, Version]
@@ -367,7 +368,7 @@ class RunContext(StrictModel):
     core_version: Version
     mcp_contract_version: Version
     plugin_version: Version
-    skill_version: Version
+    skill_version: SkillVersion
     prompt_version: Version
     report_template_version: Version
     schema_versions: FrozenMap[Identifier, Version]
