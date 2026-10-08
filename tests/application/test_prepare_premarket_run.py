@@ -143,11 +143,58 @@ def test_prepare_scheduled_run_starts_without_an_evidence_cutoff(
     assert run.mcp_contract_version == "0.1"
     assert run.plugin_version == "0.1"
     assert run.skill_version == "0.1"
-    assert run.prompt_version == "0.1"
+    prompt = CONFIG_ROOT.parents[1] / "prompts" / "research-brief-draft.md"
+    assert run.prompt_version == hashlib.sha256(prompt.read_bytes()).hexdigest()
     assert run.report_template_version == "0.1"
     assert run.schema_versions["run-context"] == "0.1"
     assert config.calls == 1
     assert clock.calls == 1
+
+
+def test_prepare_freezes_trusted_versions_and_resume_keeps_them(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from finance_research_agent.application.component_versions import current_component_versions
+
+    dependencies, _, _, repository = _dependencies(tmp_path)
+
+    def installed_versions(snapshot):
+        return current_component_versions(snapshot).model_copy(
+            update={"skill_version": "sha256:" + "a" * 64}
+        )
+
+    trusted = replace(dependencies, component_versions=installed_versions)
+    first = prepare_premarket_run(_request(), trusted)
+    assert first.stored_run.run.skill_version == "sha256:" + "a" * 64
+
+    def changed_versions(snapshot):
+        raise AssertionError("resume must not consult currently installed versions")
+
+    resumed = prepare_premarket_run(
+        _request(), replace(trusted, component_versions=changed_versions)
+    )
+    assert resumed.stored_run == repository.load(first.stored_run.run_id)
+    assert resumed.stored_run.run.skill_version == "sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize("version", ["sha256:short", "sha256:" + "A" * 64, "x" * 65])
+def test_trusted_skill_digest_rejects_malformed_or_overlong_labels(tmp_path, version) -> None:
+    from dataclasses import replace
+
+    from pydantic import ValidationError
+
+    from finance_research_agent.application.component_versions import current_component_versions
+
+    dependencies, _, _, repository = _dependencies(tmp_path)
+
+    def malformed_versions(snapshot):
+        return current_component_versions(snapshot).model_copy(update={"skill_version": version})
+
+    with pytest.raises(ValidationError):
+        prepare_premarket_run(
+            _request(), replace(dependencies, component_versions=malformed_versions)
+        )
+    assert repository.load("premarket-2026-09-28-r1") is None
 
 
 def test_prepare_run_binds_its_duration_to_the_first_checkpoint(tmp_path: Path) -> None:

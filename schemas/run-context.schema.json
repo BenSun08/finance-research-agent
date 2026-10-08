@@ -312,11 +312,19 @@
       "type": "object"
     },
     "skill_version": {
-      "maxLength": 64,
-      "minLength": 1,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
-      "title": "Skill Version",
-      "type": "string"
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+          "type": "string"
+        },
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      ],
+      "title": "Skill Version"
     }
   },
   "required": [
