@@ -18,3 +18,12 @@ Design: `../specs/2026-10-08-product-a-preparation-handoff-correction.md`.
   the changed skill version field remain changed.
 - Whole-feature independent review and coverage remain pending. This subtask
   does not claim an operational prepare handoff.
+
+## Subtask 2: Collected snapshot to regime projection
+
+- RED: four tests failed because the collection-compatible projection was absent.
+- GREEN: 24 collection/historical bridge tests passed, including numeric/evidence
+  fidelity, changed-content identity, and empty/late/inconsistent input rejection.
+- Full suite: 1,919 passed, one live test deselected, one existing warning.
+- Ruff passed after test wrapping; mypy passed (87 source files). The legacy
+  historical bridge remains unchanged.

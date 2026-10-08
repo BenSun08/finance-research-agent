@@ -74,6 +74,59 @@ def _price() -> PriceObservation:
     )
 
 
+def test_collected_snapshot_projects_regime_without_historical_id_convention() -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collected_snapshot_to_regime_input,
+        collection_to_packet_inputs,
+    )
+
+    collection = MarketDataCollection(
+        symbols=(SymbolMarketCollection("AAPL", _instrument(), (_bar(),), _price()),),
+        completed_at=_RETRIEVED,
+    )
+    canonical = collection_to_packet_inputs(collection, authority_tier=2)
+    result = collected_snapshot_to_regime_input(canonical.market["AAPL"], _RETRIEVED)
+    assert result.symbol == "AAPL"
+    assert result.as_of == _RETRIEVED
+    assert result.completed_daily_bars[0].close == Decimal("103")
+    assert result.completed_daily_bars[0].volume == 1000
+    assert result.input_evidence_ids == (
+        canonical.market["AAPL"].completed_daily_bars[0].evidence_id,
+    )
+    assert result.snapshot_id.startswith("normalized-")
+    changed = canonical.market["AAPL"].model_copy(
+        update={"completed_daily_bars": (_bar().model_copy(update={"close": Decimal("102")}),)}
+    )
+    assert collected_snapshot_to_regime_input(changed, _RETRIEVED).snapshot_id != result.snapshot_id
+
+
+@pytest.mark.parametrize("invalid", ["empty", "late", "mismatched_identity"])
+def test_collected_regime_projection_rejects_invalid_or_post_cutoff_bars(invalid) -> None:
+    from finance_research_agent.application.collection_bridge import (
+        collected_snapshot_to_regime_input,
+        collection_to_packet_inputs,
+    )
+
+    canonical = collection_to_packet_inputs(
+        MarketDataCollection(
+            (SymbolMarketCollection("AAPL", _instrument(), (_bar(),), _price()),),
+            _RETRIEVED,
+        ),
+        authority_tier=2,
+    ).market["AAPL"]
+    updates = {
+        "empty": {"completed_daily_bars": ()},
+        "late": {"completed_daily_bars": (_bar().model_copy(
+            update={"retrieved_at": _RETRIEVED + timedelta(seconds=1)}
+        ),)},
+        "mismatched_identity": {"instrument": _instrument("MSFT")},
+    }
+    with pytest.raises(ValueError):
+        collected_snapshot_to_regime_input(
+            canonical.model_copy(update=updates[invalid]), _RETRIEVED
+        )
+
+
 def test_collection_bridge_builds_linked_canonical_market_and_evidence() -> None:
     from finance_research_agent.application.collection_bridge import (
         collection_to_packet_inputs,
