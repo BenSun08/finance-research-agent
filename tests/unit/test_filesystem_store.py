@@ -231,6 +231,55 @@ def _bundle(context: RunContext, report: str = "# Synthetic report\n") -> Publis
     )
 
 
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    (
+        ("bundle_hash", "conflicting receipt"),
+        ("published_at", "receipt time is invalid"),
+    ),
+)
+def test_publication_refuses_to_overwrite_conflicting_index_receipt(
+    tmp_path: Path, corruption: str, message: str
+) -> None:
+    from finance_research_agent.domain.types import canonical_bytes
+
+    context = _context()
+    bundle = _bundle(context)
+    bundle_hash = hashlib.sha256(canonical_bytes(bundle)).hexdigest()
+    report_hash = hashlib.sha256(bundle.report_markdown.encode()).hexdigest()
+    entry = {
+        "bundle_sha256": bundle_hash,
+        "markdown_sha256": report_hash,
+        "published_at": NOW.isoformat(),
+    }
+    if corruption == "bundle_hash":
+        entry["bundle_sha256"] = "0" * 64
+    else:
+        entry["published_at"] = "invalid-timestamp"
+    expected_index = {context.run_id: dict(entry)}
+
+    repository = FileSystemRunRepository(tmp_path)
+    repository.create(context)
+    index_path = (
+        tmp_path
+        / "reports"
+        / str(context.market_date.year)
+        / context.market_date.isoformat()
+        / "index.json"
+    )
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(json.dumps(expected_index), encoding="utf-8")
+
+    with pytest.raises(PublicationError, match="publication index update failed") as raised:
+        repository.publish_atomically(bundle)
+    assert raised.value.__cause__ is not None
+    assert message in str(raised.value.__cause__)
+
+    assert json.loads(index_path.read_bytes()) == expected_index
+    assert repository.get_published_artifact(context.run_id) is None
+    assert repository.diagnostic_orphan_exists(context.run_id)
+
+
 def test_lease_uses_expiry_and_heartbeat_not_file_existence(tmp_path: Path) -> None:
     repository = FileSystemRunRepository(tmp_path)
     key = RunKey(run_type=RunType.PREMARKET, market_date=date(2026, 8, 19))

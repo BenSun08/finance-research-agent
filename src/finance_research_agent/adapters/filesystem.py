@@ -82,6 +82,7 @@ class FileSystemRunRepository:
 
     inject_failure_before_rename = False
     inject_failure_during_index_update = False
+    inject_failure_after_index_write = False
 
     def __init__(
         self,
@@ -1150,7 +1151,22 @@ class FileSystemRunRepository:
                 index_bytes = None
             if index_bytes is not None:
                 index_payload = json.loads(index_bytes)
-            published_at = self._require_utc(self._clock())
+            indexed_entry = index_payload.get(bundle.run.run_id)
+            if indexed_entry is None:
+                published_at = self._require_utc(self._clock())
+            elif (
+                not isinstance(indexed_entry, dict)
+                or indexed_entry.get("bundle_sha256") != bundle_sha256
+                or indexed_entry.get("markdown_sha256") != markdown_sha256
+            ):
+                raise PublicationError("publication index contains a conflicting receipt")
+            else:
+                try:
+                    published_at = self._require_utc(
+                        datetime.fromisoformat(indexed_entry["published_at"])
+                    )
+                except (KeyError, TypeError, ValueError) as error:
+                    raise PublicationError("publication index receipt time is invalid") from error
             index_payload[bundle.run.run_id] = {
                 "bundle_sha256": bundle_sha256,
                 "markdown_sha256": markdown_sha256,
@@ -1164,6 +1180,8 @@ class FileSystemRunRepository:
                 index_path,
                 json.dumps(index_payload, sort_keys=True, separators=(",", ":")).encode(),
             )
+            if self.inject_failure_after_index_write:
+                raise OSError("injected failure after publication index write")
             self._atomic_write(
                 latest_path,
                 json.dumps({"run_id": latest_run_id}, separators=(",", ":")).encode(),
@@ -1314,7 +1332,22 @@ class FileSystemRunRepository:
                     if indexed_date != candidate_date:
                         raise PublicationError("publication index date is invalid")
                     revisions[revision] = run_id
-                run_id = revisions[max(revisions)]
+                visible_revisions: dict[int, str] = {}
+                for revision, candidate_run_id in revisions.items():
+                    if self.get_published_artifact(candidate_run_id) is None:
+                        orphan = self._unaliased_publication_path(
+                            "diagnostics",
+                            "orphans",
+                            year_name,
+                            day_name,
+                            candidate_run_id,
+                        )
+                        if orphan.exists():
+                            continue
+                    visible_revisions[revision] = candidate_run_id
+                if not visible_revisions:
+                    continue
+                run_id = visible_revisions[max(visible_revisions)]
                 for filename in ("bundle.json", "report.md"):
                     self._unaliased_publication_path(
                         "runs", year_name, day_name, run_id, filename
