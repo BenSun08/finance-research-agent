@@ -104,3 +104,14 @@ def test_resource_loading_rejects_unsafe_duplicate_and_malformed_declarations(de
     ).encode()
     with pytest.raises(ValueError):
         declared_skill_resources(skill)
+
+
+def test_literal_none_resource_markers_declare_no_resource() -> None:
+    assert declared_skill_resources(
+        b"## Resource Loading\n- Required: None.\n- Conditional: None.\n"
+    ) == ()
+    assert declared_skill_resources(
+        b"## Resource Loading\n"
+        b"- Required: [workflow](references/workflow-contract.yaml)\n"
+        b"- Conditional: None.\n"
+    ) == ("references/workflow-contract.yaml",)
