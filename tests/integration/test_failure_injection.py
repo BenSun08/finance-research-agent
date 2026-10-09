@@ -10,6 +10,7 @@ from finance_research_agent.domain.enums import (
     DataQualityStatus,
     DeliveryStatus,
     ExecutionStatus,
+    GateStatus,
     PlanStatus,
     ReducedReportReason,
 )
@@ -243,3 +244,96 @@ def test_f02_one_symbol_history_failure_is_scoped_and_other_data_survives(
     assert "Brief origin: DETERMINISTIC_REDUCED" in report
     assert "AAPL" in report
     assert missing_evidence[0] in report
+
+
+def test_f03_stale_current_price_preserves_daily_regime_but_blocks_sizing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from finance_research_agent.application import premarket_preparation
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.publication_service import publish_reduced_report
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+
+    class StaleCurrentPrice(MarketData):
+        def fetch_premarket_observations(self, symbols, as_of, **kwargs):
+            outcomes = dict(super().fetch_premarket_observations(symbols, as_of, **kwargs))
+            outcomes["AAPL"] = ProviderFailure(
+                provider="alpaca",
+                symbol="AAPL",
+                error_code=ErrorCode.STALE_DATA,
+                retryable=False,
+            )
+            return outcomes
+
+    provider = StaleCurrentPrice()
+    deps = dependencies(tmp_path, market=provider)
+    captured_quality = []
+    checkpoint_quality = premarket_preparation.checkpoint_collected_market_data_quality
+
+    def capture_quality(*args, **kwargs):
+        value = checkpoint_quality(*args, **kwargs)
+        captured_quality.append(value.quality)
+        return value
+
+    monkeypatch.setattr(
+        premarket_preparation,
+        "checkpoint_collected_market_data_quality",
+        capture_quality,
+    )
+    prepared = prepare_research_packet(request(), deps)
+
+    assert prepared.outcome == "PACKET_READY"
+    packet = prepared.research_packet
+    assert packet is not None and packet.regime_result is not None
+    assert packet.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert packet.regime_result.regime.value != "unknown"
+    assert "AAPL" in packet.market
+    assert packet.market["AAPL"].completed_daily_bars
+    assert packet.market["AAPL"].latest_price is None
+    assert packet.deterministic_plan_inputs == ()
+    assert len(captured_quality) == 1
+    sizing = captured_quality[0].symbol_capability(
+        "AAPL", Capability.POSITION_SIZING_AVAILABLE
+    )
+    assert sizing.available is False
+    assert ErrorCode.STALE_DATA in sizing.reason_codes
+    failure_evidence = tuple(
+        item.evidence_id
+        for item in packet.evidence
+        if item.structured_fields.get("requested_symbol") == "AAPL"
+        and item.structured_fields.get("error_code") == ErrorCode.STALE_DATA.value
+    )
+    assert len(failure_evidence) == 1
+    stale_gates = tuple(
+        gate for gate in packet.gates if gate.reason_code == ErrorCode.STALE_DATA.value
+    )
+    assert len(stale_gates) == 1
+    assert stale_gates[0].status is GateStatus.BLOCK
+    assert stale_gates[0].capability is Capability.POSITION_SIZING_AVAILABLE
+    assert stale_gates[0].evidence_ids == failure_evidence
+    assert "AAPL" in stale_gates[0].message and "stale" in stale_gates[0].message.lower()
+    assert provider.calls == ["instruments", "bars", "prices", "readiness"]
+
+    receipt = publish_reduced_report(
+        deps.run_repository,
+        packet,
+        ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        deps.clock.now_utc(),
+    )
+    report = deps.run_repository.get_report(receipt.run_id)
+    bundle = deps.run_repository.load_published_bundle(receipt.run_id)
+    assert report is not None and bundle is not None
+    assert "Brief origin: DETERMINISTIC_REDUCED" in report
+    assert "AAPL" in report
+    assert ErrorCode.STALE_DATA.value.replace("_", "\\_") in report
+    assert failure_evidence[0] in report
+    assert receipt.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    assert receipt.markdown_sha256 == sha256(report.encode("utf-8")).hexdigest()
+    replay = replay_published_artifact(
+        deps.run_repository, receipt.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
