@@ -532,3 +532,52 @@ def test_f06_synthesis_timeout_publishes_the_same_packet_as_reduced_research(
     )
     assert replay.json_matches is True
     assert replay.markdown_matches is True
+
+
+def test_f07_malformed_draft_json_is_not_recorded_as_a_validated_attempt(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.enums import ReducedReportReason
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.integration.test_premarket_workflow_matrix import _support
+    from tests.support.premarket_workflow import run_workflow
+
+    scenario = load_evaluation_scenarios()[21]
+    assert scenario.id.value == "S22"
+    assert FailureInjectionId.F07 in scenario.injected_failures
+    support = _support()
+    protocol, packet, _ = support.prepared_protocol(
+        tmp_path, valid_packet, valid_brief_draft
+    )
+    before_packet = canonical_bytes(packet)
+    host = support.ScriptedSynthesis(["{malformed json"])
+
+    result = run_workflow(protocol, host)
+
+    assert result.outcome == "deterministic_reduced"
+    assert (result.validations, result.repairs) == (0, 0)
+    assert protocol.requests[-2].reason is ReducedReportReason.SYNTHESIS_UNAVAILABLE
+    assert protocol.names[-2:] == ("publish_reduced_report", "get_report")
+    assert host.packet_objects == [packet]
+    assert host.packet_hashes == [packet.canonical_sha256]
+    assert canonical_bytes(packet) == before_packet
+    assert result.report.bundle["brief_origin"] == BriefOrigin.DETERMINISTIC_REDUCED.value
+    assert result.report.bundle["validation_reports"] == ()
+    assert (
+        result.report.bundle["research_packet"]["canonical_sha256"]
+        == packet.canonical_sha256
+    )
+    artifact = protocol.repository.get_published_artifact(packet.run.run_id)
+    assert artifact is not None
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(result.report),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
