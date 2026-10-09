@@ -184,51 +184,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -305,51 +298,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -430,51 +416,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -735,51 +714,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -857,51 +829,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -981,51 +946,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -1229,51 +1187,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -1350,51 +1301,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -1479,51 +1423,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -1609,51 +1546,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -1732,51 +1662,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -1855,51 +1778,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -1976,51 +1892,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -2100,51 +2009,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -2222,51 +2124,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -2346,51 +2241,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -2468,51 +2356,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []
@@ -2599,51 +2480,44 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
     subcases: []

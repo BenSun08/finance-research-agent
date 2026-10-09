@@ -49,6 +49,26 @@ def test_default_manifest_contains_exact_ordered_scenarios_and_scope() -> None:
     assert breakout.expected_report_banner == "NOT_SPECIFIED_IN_TASK_18"
 
 
+def test_baseline_current_scope_expectations_match_the_recorded_service_projection() -> None:
+    scenarios = load_evaluation_scenarios()
+    baseline = scenarios[0].current_scope_expectation.primary
+    baseline_ids = {
+        *(f"S{index:02d}" for index in range(1, 5)),
+        *(f"S{index:02d}" for index in range(6, 22)),
+    }
+
+    for scenario in scenarios:
+        if scenario.id.value not in baseline_ids:
+            continue
+        current = scenario.current_scope_expectation.primary
+        assert current == baseline.model_copy(update={"case_id": current.case_id})
+
+    # The legacy Task 18 expectation remains the full-source reference.
+    s02 = scenarios[1]
+    assert s02.expected_capabilities != s02.current_scope_expectation.primary.capabilities
+    assert s02.expected_plan_states
+
+
 def test_loader_rejects_duplicate_yaml_keys_before_model_validation(tmp_path: Path) -> None:
     source = DEFAULT_MANIFEST.read_text(encoding="utf-8")
     duplicate = source.replace("- id: S01\n", "- id: S01\n  id: S01\n", 1)
