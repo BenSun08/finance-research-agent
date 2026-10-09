@@ -7,6 +7,7 @@ import yaml
 from pydantic import TypeAdapter, ValidationError
 
 from finance_research_agent.domain.enums import DataQualityStatus, PlanStatus
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.regime import Regime
 from finance_research_agent.evaluation.models import (
     CandidateRankingAssertion,
@@ -107,6 +108,11 @@ def test_manifest_domain_assertions_use_closed_typed_variants() -> None:
     event_risk = scenarios[6].domain_assertions[0].expected_fields
     assert event_risk.plan_status is PlanStatus.BLOCKED
     assert not hasattr(event_risk, "event_verified")
+    source_conflict = scenarios[8].domain_assertions[0].expected_fields
+    assert source_conflict.gate_reason_codes == (
+        ErrorCode.SOURCE_CONFLICT,
+        ErrorCode.UNSUPPORTED_INSTRUMENT,
+    )
     prior_observation = scenarios[20].domain_assertions[0].expected_fields
     assert tuple(outcome.value for outcome in prior_observation.outcomes) == (
         "ENTRY_ZONE_OBSERVED",

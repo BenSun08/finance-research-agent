@@ -38,6 +38,8 @@ from finance_research_agent.evaluation.domain_assertions import (
     execute_domain_assertion,
 )
 from finance_research_agent.evaluation.models import DomainAssertion
+from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+from tests.evaluation.fixture_bank import build_domain_fixture_bank
 from tests.support.synthetic_market import CUTOFF, make_regime_case
 from tests.unit import test_eligibility as eligibility_fixtures
 from tests.unit import test_observations as observation_fixtures
@@ -627,3 +629,66 @@ def test_closed_domain_function_signatures_remain_pinned() -> None:
         function.__name__: tuple(signature(function).parameters)
         for function in expected_parameters
     } == {function.__name__: names for function, names in expected_parameters.items()}
+
+
+def test_every_manifest_domain_assertion_runs_against_its_named_real_fixture() -> None:
+    fixture_bank = build_domain_fixture_bank()
+    scenarios = load_evaluation_scenarios()
+    declared_fixture_ids = {
+        assertion.fixture_id
+        for scenario in scenarios
+        for assertion in scenario.domain_assertions
+    }
+
+    assert set(fixture_bank.records) == declared_fixture_ids
+
+    outcomes = tuple(
+        (scenario.id, assertion, execute_domain_assertion(assertion, fixture_bank))
+        for scenario in scenarios
+        for assertion in scenario.domain_assertions
+    )
+
+    assert len(outcomes) == 22
+    assert all(
+        outcome.status == "PASS"
+        for scenario_id, assertion, outcome in outcomes
+    ), tuple(
+        (scenario_id.value, assertion.kind.value, outcome.mismatched_fields)
+        for scenario_id, assertion, outcome in outcomes
+        if outcome.status != "PASS"
+    )
+
+
+def test_every_domain_operation_rejects_an_untyped_fixture_record() -> None:
+    scenarios = load_evaluation_scenarios()
+    assertions_by_kind = {
+        assertion.kind: assertion
+        for scenario in scenarios
+        for assertion in scenario.domain_assertions
+    }
+
+    assert len(assertions_by_kind) == 11
+    for assertion in assertions_by_kind.values():
+        with pytest.raises(TypeError):
+            execute_domain_assertion(
+                assertion,
+                DomainFixtureBank({assertion.fixture_id: object()}),
+            )
+
+
+def test_domain_assertion_reports_exact_output_mismatch() -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "CANDIDATE_SCORE",
+                "fixture_id": "S01_BREAKOUT",
+                "expected_fields": {"total_score": "70"},
+            }
+        )
+    )
+
+    outcome = execute_domain_assertion(assertion, build_domain_fixture_bank())
+
+    assert outcome.status == "FAIL"
+    assert outcome.matched_fields == ()
+    assert outcome.mismatched_fields == ("total_score",)

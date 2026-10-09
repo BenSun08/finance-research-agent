@@ -1162,6 +1162,7 @@ scenarios:
       plan_status: BLOCKED
       gate_reason_codes:
       - SOURCE_CONFLICT
+      - UNSUPPORTED_INSTRUMENT
       quality_flags:
       - SOURCE_CONFLICT
 - id: S10
