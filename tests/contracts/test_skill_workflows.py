@@ -9,7 +9,9 @@ from scripts.check_docs_examples import (
     REQUIRED_SKILL_SECTIONS,
     declared_resources,
     parse_skill,
+    validate_product_a_contracts,
     validate_skill_contracts,
+    validate_workflow,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -96,3 +98,32 @@ def test_required_sections_are_exact_and_ordered():
         "Output Obligations", "Fail-Closed Behavior", "Resource Loading",
         "Safety and Forbidden Behavior",
     )
+
+
+def test_three_skills_and_single_workflow_are_canonical():
+    assert validate_product_a_contracts(ROOT) == ()
+    assert {p.parent.name for p in (ROOT / "skills").glob("*/SKILL.md")} == {
+        "market-regime", "premarket-research", "watchlist-management",
+    }
+    manifest = ROOT / "skills/premarket-research/references/workflow-contract.yaml"
+    assert validate_workflow(manifest) == ()
+    assert tuple((ROOT / "skills").rglob("*.yaml")) == (manifest,)
+    skill = parse_skill(manifest.parent.parent / "SKILL.md")
+    assert declared_resources(skill) == (PurePosixPath("references/workflow-contract.yaml"),)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda text: text.replace("schema_version: 1", "schema_version: true"),
+    lambda text: text.replace("schema_version: 1", "schema_version: 1\nschema_version: 1"),
+    lambda text: text.replace("max_repairs: 2", "max_repairs: 3"),
+    lambda text: text.replace("get_system_status", "discover_tools"),
+    lambda text: text.replace("consumes: []", "consumes: [research_packet]"),
+    lambda text: text.replace("same_frozen_packet", "new_packet"),
+    lambda text: text + "\nprovider: alpaca\n",
+    lambda text: text.replace("kind: codex_synthesis", "kind: mcp_tool"),
+])
+def test_workflow_drift_is_rejected(tmp_path, mutation):
+    source = ROOT / "skills/premarket-research/references/workflow-contract.yaml"
+    target = tmp_path / "workflow-contract.yaml"
+    target.write_text(mutation(source.read_text()))
+    assert validate_workflow(target)

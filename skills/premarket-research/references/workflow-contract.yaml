@@ -1,0 +1,59 @@
+schema_version: 1
+id: premarket-research
+steps:
+  - id: system_status
+    kind: mcp_tool
+    operation: get_system_status
+    consumes: []
+    produces: [system_status]
+    on_failure: blocked
+  - id: validate_configuration
+    kind: mcp_tool
+    operation: validate_configuration
+    consumes: [system_status]
+    produces: [configuration_validation]
+    on_failure: blocked
+  - id: prepare_run
+    kind: mcp_tool
+    operation: prepare_premarket_run
+    consumes: [configuration_validation]
+    produces: [run_state, research_packet]
+    on_failure: blocked
+  - id: synthesize_draft
+    kind: codex_synthesis
+    operation: research_brief_draft
+    consumes: [research_packet]
+    produces: [research_brief_draft]
+    on_failure: publish_reduced_report
+  - id: validate_and_publish
+    kind: mcp_tool
+    operation: validate_and_publish_brief
+    consumes: [research_packet, research_brief_draft]
+    produces: [validated_publication]
+    on_failure: repair_then_publish_reduced
+  - id: publish_reduced
+    kind: mcp_tool
+    operation: publish_reduced_report
+    consumes: [run_state]
+    produces: [reduced_publication]
+    on_failure: blocked
+  - id: read_report
+    kind: mcp_tool
+    operation: get_report
+    consumes: [run_state]
+    produces: [report]
+    on_failure: blocked
+repair:
+  max_repairs: 2
+  max_validations: 3
+  research_packet: same_frozen_packet
+invariants:
+  - no_new_evidence_after_cutoff
+  - no_numeric_recalculation_in_synthesis
+  - no_policy_mutation
+  - no_tool_discovery
+  - no_brokerage_or_execution
+terminal_outcomes:
+  - published
+  - deterministic_reduced
+  - blocked
