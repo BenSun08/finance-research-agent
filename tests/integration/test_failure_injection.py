@@ -16,7 +16,7 @@ from finance_research_agent.domain.enums import (
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import ProviderFailure
-from finance_research_agent.domain.types import canonical_bytes
+from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 from tests.application.test_premarket_preparation import (
     MarketData,
     dependencies,
@@ -337,3 +337,77 @@ def test_f03_stale_current_price_preserves_daily_regime_but_blocks_sizing(
     )
     assert replay.json_matches is True
     assert replay.markdown_matches is True
+
+
+def test_f04_conflicting_event_fixture_stays_out_of_current_source_publication(
+    tmp_path: Path,
+) -> None:
+    from finance_research_agent.domain.enums import ReducedReportReason
+    from finance_research_agent.evaluation import (
+        EvaluationHarness,
+        execute_evaluation_scenario,
+    )
+    from finance_research_agent.evaluation.models import FixtureSetId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.evaluation.fixture_bank import build_domain_fixture_bank
+
+    scenario = load_evaluation_scenarios()[8]
+    assert scenario.id.value == "S09"
+    created_dependencies = []
+
+    def create_dependencies(current_scenario, expectation):
+        value = dependencies(tmp_path)
+        created_dependencies.append(value)
+        return value
+
+    harness = EvaluationHarness(
+        dependencies_factory=create_dependencies,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        domain_fixtures=build_domain_fixture_bank(),
+    )
+
+    outcome = execute_evaluation_scenario(scenario, harness)
+
+    assert outcome.assertions_failed == ()
+    assert outcome.assertions_pending == ("SOURCE_LIMITATIONS_ADJACENT",)
+    assert len(outcome.domain_assertion_outcomes) == 1
+    domain_result = outcome.domain_assertion_outcomes[0]
+    assert domain_result.fixture_id is FixtureSetId.S09_SOURCE_CONFLICT
+    assert domain_result.status == "PASS"
+    assert "gate_reason_codes" in domain_result.matched_fields
+    assert len(outcome.current_scope_outcomes) == 1
+    current = outcome.current_scope_outcomes[0]
+    assert current.current_scope == scenario.current_scope_expectation.primary
+    assert current.replay_json_matches is True
+    assert current.replay_markdown_matches is True
+    assert len(created_dependencies) == 1
+    deps = created_dependencies[0]
+    run_id = deps.run_repository.get_latest(harness.market_date)
+    assert run_id is not None
+    bundle = deps.run_repository.load_published_bundle(run_id)
+    report = deps.run_repository.get_report(run_id)
+    artifact = deps.run_repository.get_published_artifact(run_id)
+    assert bundle is not None and report is not None and artifact is not None
+    packet = bundle.bundle["research_packet"]
+    assert isinstance(packet, FrozenMap)
+    assert packet["events"] == ()
+    event_capability = next(
+        item
+        for item in packet["capability_states"]
+        if item["capability"] == Capability.EVENT_RISK_CHECK_AVAILABLE.value
+    )
+    assert event_capability["available"] is False
+    assert event_capability["reason_codes"] == (ErrorCode.SOURCE_NOT_CONFIGURED.value,)
+    assert packet["deterministic_plan_inputs"] == ()
+    assert "Brief origin: DETERMINISTIC_REDUCED" in report
+    assert "SOURCE_NOT_CONFIGURED" in report
+    assert "SOURCE_CONFLICT" not in report
+    assert "earnings" not in report.lower()
+    assert deps.market_data.calls == ["instruments", "bars", "prices", "readiness"]
+    assert deps.run_repository.get_latest(harness.market_date) == run_id
+    assert current.artifact_hashes["research_packet"] == packet["canonical_sha256"]
+    assert current.artifact_hashes["published_bundle"] == artifact.bundle_sha256
+    assert current.artifact_hashes["report_markdown"] == artifact.markdown_sha256
+    assert artifact.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    assert artifact.markdown_sha256 == sha256(report.encode("utf-8")).hexdigest()
