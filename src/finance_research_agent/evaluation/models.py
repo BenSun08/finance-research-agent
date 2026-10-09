@@ -400,6 +400,8 @@ class CurrentScopeServiceObservation(StrictModel):
     artifact_hashes: FrozenMap[Identifier, Sha256]
     replay_json_matches: bool
     replay_markdown_matches: bool
+    source_limitations_adjacent: bool
+    watchlist_exclusions_visible: bool
 
 
 class DomainAssertionOutcome(StrictModel):

@@ -85,9 +85,76 @@ def test_evaluation_runner_records_current_scope_and_domain_results(tmp_path: Pa
         scenario.current_scope_expectation.primary
     )
     assert outcome.domain_assertion_outcomes[0].status == "PASS"
+    assert outcome.assertions_passed == (
+        ScenarioAssertionId.CURRENT_SCOPE_MATCHES,
+        ScenarioAssertionId.DOMAIN_ASSERTIONS_PASS,
+        ScenarioAssertionId.SOURCE_LIMITATIONS_ADJACENT,
+    )
     assert outcome.assertions_failed == ()
-    assert outcome.assertions_pending == ("SOURCE_LIMITATIONS_ADJACENT",)
+    assert outcome.assertions_pending == ()
     assert outcome.artifact_hashes["PRIMARY.published_bundle"]
+    assert outcome.current_scope_outcomes[0].source_limitations_adjacent is True
+
+
+def test_current_scope_harness_checks_watchlist_exclusions_in_rendered_report(
+    tmp_path: Path,
+) -> None:
+    scenario = load_evaluation_scenarios()[2]
+    harness = EvaluationHarness(
+        dependencies_factory=lambda current_scenario, expectation: dependencies(tmp_path),
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+    )
+
+    observation = execute_current_scope_scenario(scenario, harness)
+
+    assert observation.watchlist_exclusions_visible is True
+
+
+@pytest.mark.parametrize(
+    ("scenario_index", "assertion", "evidence_field"),
+    [
+        (0, ScenarioAssertionId.SOURCE_LIMITATIONS_ADJACENT, "source_limitations_adjacent"),
+        (2, ScenarioAssertionId.ALL_WATCHLIST_EXCLUSIONS_VISIBLE, "watchlist_exclusions_visible"),
+    ],
+)
+def test_evaluation_runner_fails_report_assertion_without_observed_report_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario_index: int,
+    assertion: ScenarioAssertionId,
+    evidence_field: str,
+) -> None:
+    scenario = load_evaluation_scenarios()[scenario_index].model_copy(
+        update={"assertions": (assertion,), "domain_assertions": ()}
+    )
+    expected = scenario.current_scope_expectation.primary
+    observed = expected.model_copy(update={"case_id": expected.case_id})
+    observation = CurrentScopeServiceObservation(
+        scenario_id=scenario.id,
+        current_scope=observed,
+        artifact_hashes=FrozenMap({}),
+        replay_json_matches=True,
+        replay_markdown_matches=True,
+        source_limitations_adjacent=evidence_field != "source_limitations_adjacent",
+        watchlist_exclusions_visible=evidence_field != "watchlist_exclusions_visible",
+    )
+
+    monkeypatch.setattr(
+        "finance_research_agent.evaluation.harness.execute_current_scope_scenario",
+        lambda current_scenario, harness, expectation: observation,
+    )
+    harness = EvaluationHarness(
+        dependencies_factory=lambda current_scenario, expectation: pytest.fail(
+            "report assertion tests use the recorded observation"
+        ),
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+    )
+
+    outcome = execute_evaluation_scenario(scenario, harness)
+
+    assert outcome.assertions_failed == (assertion,)
+    assert outcome.assertions_pending == ()
 
 
 def test_evaluation_runner_records_mismatched_domain_assertion(tmp_path: Path) -> None:
@@ -154,6 +221,8 @@ def test_evaluation_runner_executes_every_declared_case_independently(
             artifact_hashes=FrozenMap({}),
             replay_json_matches=True,
             replay_markdown_matches=True,
+            source_limitations_adjacent=True,
+            watchlist_exclusions_visible=True,
         )
 
     monkeypatch.setattr(

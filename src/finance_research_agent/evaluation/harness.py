@@ -19,6 +19,7 @@ from finance_research_agent.application.replay_service import (
     _recorded_versions,
     replay_published_artifact,
 )
+from finance_research_agent.application.report_renderer import _inline_text
 from finance_research_agent.application.run_service import (
     PreparePremarketRunRequest,
     RunDependencies,
@@ -146,6 +147,8 @@ def execute_current_scope_scenario(
         artifact_hashes=FrozenMap(artifact_hashes),
         replay_json_matches=replay.json_matches,
         replay_markdown_matches=replay.markdown_matches,
+        source_limitations_adjacent=_source_limitations_adjacent(packet, report),
+        watchlist_exclusions_visible=_watchlist_exclusions_visible(packet, report),
     )
 
 
@@ -193,6 +196,18 @@ def execute_evaluation_scenario(
             passed.append(ScenarioAssertionId.DOMAIN_ASSERTIONS_PASS)
         else:
             failed.append(ScenarioAssertionId.DOMAIN_ASSERTIONS_PASS)
+    if ScenarioAssertionId.SOURCE_LIMITATIONS_ADJACENT in declared:
+        matches = all(
+            outcome.source_limitations_adjacent for outcome in current_scope_outcomes
+        )
+        (passed if matches else failed).append(ScenarioAssertionId.SOURCE_LIMITATIONS_ADJACENT)
+    if ScenarioAssertionId.ALL_WATCHLIST_EXCLUSIONS_VISIBLE in declared:
+        matches = all(
+            outcome.watchlist_exclusions_visible for outcome in current_scope_outcomes
+        )
+        (passed if matches else failed).append(
+            ScenarioAssertionId.ALL_WATCHLIST_EXCLUSIONS_VISIBLE
+        )
     completed = set(passed) | set(failed)
     classified = completed | set(pending)
     pending.extend(assertion for assertion in scenario.assertions if assertion not in classified)
@@ -224,3 +239,58 @@ def _ordered_capabilities(packet: ResearchPacket) -> tuple[CapabilityState, ...]
     if set(states) != set(Capability):
         raise ValueError("prepared packet does not contain the exact capability set")
     return tuple(states[capability] for capability in Capability)
+
+
+def _report_section_bullets(report: str, title: str) -> tuple[str, ...] | None:
+    heading = f"### {title}"
+    lines = report.splitlines()
+    heading_indexes = tuple(index for index, line in enumerate(lines) if line == heading)
+    if len(heading_indexes) != 1:
+        return None
+    start = heading_indexes[0] + 1
+    end = next(
+        (index for index in range(start, len(lines)) if lines[index].startswith("#")),
+        len(lines),
+    )
+    return tuple(line for line in lines[start:end] if line.startswith("- "))
+
+
+def _source_limitations_adjacent(packet: ResearchPacket, report: str) -> bool:
+    warnings = _report_section_bullets(report, "Data Warnings")
+    limitations = _report_section_bullets(report, "Data Quality and Limitations")
+    if warnings is None or limitations is None:
+        return False
+    disabled = tuple(state for state in packet.capability_states if not state.available)
+    if not disabled:
+        return False
+    expected_rows = tuple(
+        f"- Disabled capability: {state.capability.value} "
+        f"({', '.join(reason.value for reason in state.reason_codes)})"
+        for state in disabled
+    )
+    for bullets in (warnings, limitations):
+        actual_rows = tuple(
+            line for line in bullets if line.startswith("- Disabled capability: ")
+        )
+        if actual_rows != expected_rows:
+            return False
+    plan_state = next(
+        state
+        for state in packet.capability_states
+        if state.capability is Capability.PLAN_DRAFT_AVAILABLE
+    )
+    return plan_state.available or not packet.deterministic_plan_inputs
+
+
+def _watchlist_exclusions_visible(packet: ResearchPacket, report: str) -> bool:
+    bullets = _report_section_bullets(report, "Blocked and Excluded Candidates")
+    if bullets is None:
+        return False
+    expected_rows = tuple(
+        f"- {_inline_text(exclusion.symbol)}: "
+        f"{', '.join(_inline_text(reason) for reason in exclusion.reason_codes)}"
+        for exclusion in packet.candidate_exclusions
+    )
+    if not expected_rows:
+        return bullets == ("- No deterministic reduced content.",)
+    return bullets == expected_rows
