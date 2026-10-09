@@ -1,10 +1,26 @@
+import json
 from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
-from finance_research_agent.domain.enums import DataQualityStatus
+from finance_research_agent.domain.enums import DataQualityStatus, PlanStatus
+from finance_research_agent.domain.regime import Regime
+from finance_research_agent.evaluation.models import (
+    CandidateRankingAssertion,
+    CandidateScoreAssertion,
+    DomainAssertion,
+    EventRiskAssertion,
+    InstrumentEligibilityAssertion,
+    PlanBuildAssertion,
+    PlanExpiryAssertion,
+    PositionSizingAssertion,
+    PriorObservationAssertion,
+    RegimeCalculationAssertion,
+    RunWindowAssertion,
+    SetupDetectionAssertion,
+)
 from finance_research_agent.evaluation.scenarios import (
     DEFAULT_MANIFEST,
     load_evaluation_scenarios,
@@ -60,3 +76,77 @@ def test_loader_rejects_unknown_scenario_fields(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="unreviewed_policy"):
         load_evaluation_scenarios(path)
+
+
+def test_manifest_domain_assertions_use_closed_typed_variants() -> None:
+    scenarios = load_evaluation_scenarios()
+    assertions = tuple(
+        assertion for scenario in scenarios for assertion in scenario.domain_assertions
+    )
+
+    assert {type(assertion) for assertion in assertions} == {
+        CandidateRankingAssertion,
+        CandidateScoreAssertion,
+        EventRiskAssertion,
+        InstrumentEligibilityAssertion,
+        PlanBuildAssertion,
+        PlanExpiryAssertion,
+        PositionSizingAssertion,
+        PriorObservationAssertion,
+        RegimeCalculationAssertion,
+        RunWindowAssertion,
+        SetupDetectionAssertion,
+    }
+    breakout_score = scenarios[0].domain_assertions[0].expected_fields.total_score
+    assert breakout_score == 70
+    unknown_regime = scenarios[4].domain_assertions[0].expected_fields.regime
+    assert unknown_regime is Regime.UNKNOWN
+    invalid_instrument = scenarios[13].domain_assertions[0].expected_fields.reason_codes
+    assert invalid_instrument == ("UNSUPPORTED_INSTRUMENT",)
+    event_risk = scenarios[6].domain_assertions[0].expected_fields
+    assert event_risk.plan_status is PlanStatus.BLOCKED
+    assert not hasattr(event_risk, "event_verified")
+
+
+def test_domain_assertion_rejects_fixture_from_another_operation() -> None:
+    adapter = TypeAdapter(DomainAssertion)
+
+    with pytest.raises(ValidationError, match="fixture_id"):
+        adapter.validate_json(
+            json.dumps({
+                "kind": "CANDIDATE_SCORE",
+                "fixture_id": "S02_PULLBACK",
+                "expected_fields": {
+                    "setup_type": "BREAKOUT_CONTINUATION",
+                    "total_score": 70,
+                    "plan_status": "DRAFT",
+                },
+            })
+        )
+
+
+def test_domain_assertion_rejects_unknown_or_wrongly_typed_outputs() -> None:
+    adapter = TypeAdapter(DomainAssertion)
+    base = {
+        "kind": "REGIME_CALCULATION",
+        "fixture_id": "S04_DEFENSIVE_REGIME",
+        "expected_fields": {
+            "regime": "defensive",
+            "score": "42.5",
+            "unavailable_reasons": [],
+        },
+    }
+    assert adapter.validate_json(json.dumps(base)).expected_fields.score == 42.5
+
+    with pytest.raises(ValidationError, match="untrusted_output"):
+        adapter.validate_json(
+            json.dumps(
+                {**base, "expected_fields": {**base["expected_fields"], "untrusted_output": True}}
+            )
+        )
+    with pytest.raises(ValidationError):
+        adapter.validate_json(
+            json.dumps(
+                {**base, "expected_fields": {**base["expected_fields"], "score": "not-a-number"}}
+            )
+        )

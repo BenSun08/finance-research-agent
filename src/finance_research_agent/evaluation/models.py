@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
@@ -13,12 +14,16 @@ from finance_research_agent.domain.enums import (
     DataQualityStatus,
     DeliveryStatus,
     ExecutionStatus,
+    GateStatus,
+    ObservationOutcome,
     PlanStatus,
     ValidationCode,
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import CapabilityState, Identifier, StrictModel
-from finance_research_agent.domain.types import FrozenMap, JsonValue
+from finance_research_agent.domain.regime import Regime
+from finance_research_agent.domain.setups import SetupType
+from finance_research_agent.domain.sizing import SizingStatus
 
 ScenarioErrorCode = ErrorCode | ValidationCode
 
@@ -129,18 +134,182 @@ class ScenarioAssertionId(StrEnum):
     MISSED_RUN_RECORD_DURABLE = "MISSED_RUN_RECORD_DURABLE"
 
 
-class DomainAssertion(StrictModel):
-    """Named, non-executable expected output from one closed domain operation."""
-
-    kind: DomainAssertionKind
-    fixture_id: FixtureSetId
-    expected_fields: FrozenMap[str, JsonValue]
+class _ExpectedProjection(StrictModel):
+    """A closed projection of actual fields returned by one domain operation."""
 
     @model_validator(mode="after")
-    def _expected_fields_not_empty(self) -> DomainAssertion:
-        if not self.expected_fields:
-            raise ValueError("domain assertion requires at least one expected output field")
+    def _at_least_one_expected_field(self) -> _ExpectedProjection:
+        if not self.model_fields_set - {"schema_version"}:
+            raise ValueError("domain assertion requires an expected output field")
         return self
+
+
+class RegimeCalculationExpected(_ExpectedProjection):
+    regime: Regime | None = None
+    score: Annotated[Decimal, Field(allow_inf_nan=False)] | None = None
+    unavailable_reasons: tuple[Identifier, ...] | None = None
+
+
+class InstrumentEligibilityExpected(_ExpectedProjection):
+    gate_statuses: tuple[GateStatus, ...] | None = None
+    reason_codes: tuple[Identifier, ...] | None = None
+
+
+class SetupDetectionExpected(_ExpectedProjection):
+    setup_types: tuple[SetupType, ...] | None = None
+    global_reason_codes: tuple[Identifier, ...] | None = None
+
+
+class CandidateScoreExpected(_ExpectedProjection):
+    setup_type: SetupType | None = None
+    total_score: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)] | None = None
+    plan_status: PlanStatus | None = None
+
+
+class CandidateRankingExpected(_ExpectedProjection):
+    selection_reasons: tuple[Identifier, ...] | None = None
+    selected_for_plan: bool | None = None
+    secondary_alternative: bool | None = None
+
+
+class EventRiskExpected(_ExpectedProjection):
+    plan_status: PlanStatus | None = None
+    gate_reason_codes: tuple[ErrorCode, ...] | None = None
+    quality_flags: tuple[Identifier, ...] | None = None
+
+
+class PlanBuildExpected(_ExpectedProjection):
+    plan_status: PlanStatus | None = None
+    data_quality_flags: tuple[Identifier, ...] | None = None
+
+
+class PlanExpiryExpected(_ExpectedProjection):
+    plan_status: PlanStatus | None = None
+    expiry_reasons: tuple[Identifier, ...] | None = None
+
+
+class PositionSizingExpected(_ExpectedProjection):
+    status: SizingStatus | None = None
+    unavailable_reasons: tuple[Identifier, ...] | None = None
+    suggested_units: Annotated[Decimal, Field(gt=0, allow_inf_nan=False)] | None = None
+
+
+class PriorObservationExpected(_ExpectedProjection):
+    outcomes: tuple[ObservationOutcome, ...] | None = None
+
+
+class RunWindowExpected(_ExpectedProjection):
+    should_run: bool | None = None
+    delivery_status: DeliveryStatus | None = None
+    allow_normal_plan: bool | None = None
+    force_review_required: bool | None = None
+    publish_missed_report: bool | None = None
+    missed_record_only: bool | None = None
+    reason_code: Identifier | None = None
+
+
+class RegimeCalculationAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.REGIME_CALCULATION]
+    fixture_id: Literal[
+        FixtureSetId.S04_DEFENSIVE_REGIME,
+        FixtureSetId.S05_UNKNOWN_REGIME,
+    ]
+    expected_fields: RegimeCalculationExpected
+
+
+class InstrumentEligibilityAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.INSTRUMENT_ELIGIBILITY]
+    fixture_id: Literal[
+        FixtureSetId.S06_NO_ELIGIBLE_NAMES,
+        FixtureSetId.S13_INSUFFICIENT_HISTORY,
+        FixtureSetId.S14_LEVERAGED_ETF,
+        FixtureSetId.S15_HALTED_OR_UNCERTAIN_IDENTITY,
+    ]
+    expected_fields: InstrumentEligibilityExpected
+
+
+class SetupDetectionAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.SETUP_DETECTION]
+    fixture_id: Literal[FixtureSetId.S02_PULLBACK, FixtureSetId.S11_IEX_LIMITATION]
+    expected_fields: SetupDetectionExpected
+
+
+class CandidateScoreAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.CANDIDATE_SCORE]
+    fixture_id: Literal[FixtureSetId.S01_BREAKOUT]
+    expected_fields: CandidateScoreExpected
+
+
+class CandidateRankingAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.CANDIDATE_RANKING]
+    fixture_id: Literal[
+        FixtureSetId.S03_NEUTRAL_THRESHOLD,
+        FixtureSetId.S20_CORRELATED_CANDIDATES,
+    ]
+    expected_fields: CandidateRankingExpected
+
+
+class EventRiskAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.EVENT_RISK]
+    fixture_id: Literal[
+        FixtureSetId.S07_EARNINGS_WINDOW,
+        FixtureSetId.S09_SOURCE_CONFLICT,
+        FixtureSetId.S12_MISSING_MACRO_CALENDAR,
+    ]
+    expected_fields: EventRiskExpected
+
+
+class PlanBuildAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.PLAN_BUILD]
+    fixture_id: Literal[FixtureSetId.S19_MISSING_PORTFOLIO_HEAT]
+    expected_fields: PlanBuildExpected
+
+
+class PlanExpiryAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.PLAN_EXPIRY]
+    fixture_id: Literal[
+        FixtureSetId.S08_MATERIAL_REVISION,
+        FixtureSetId.S16_EXCEEDED_ENTRY_ZONE,
+    ]
+    expected_fields: PlanExpiryExpected
+
+
+class PositionSizingAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.POSITION_SIZING]
+    fixture_id: Literal[
+        FixtureSetId.S10_STALE_PREMARKET_QUOTE,
+        FixtureSetId.S17_INVALID_STOP,
+        FixtureSetId.S18_MISSING_CAPITAL,
+    ]
+    expected_fields: PositionSizingExpected
+
+
+class PriorObservationAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.PRIOR_OBSERVATION]
+    fixture_id: Literal[FixtureSetId.S21_AMBIGUOUS_DAILY_BAR]
+    expected_fields: PriorObservationExpected
+
+
+class RunWindowAssertion(StrictModel):
+    kind: Literal[DomainAssertionKind.RUN_WINDOW]
+    fixture_id: Literal[FixtureSetId.S25_MISSED_WINDOW]
+    expected_fields: RunWindowExpected
+
+
+type DomainAssertion = Annotated[
+    RegimeCalculationAssertion
+    | InstrumentEligibilityAssertion
+    | SetupDetectionAssertion
+    | CandidateScoreAssertion
+    | CandidateRankingAssertion
+    | EventRiskAssertion
+    | PlanBuildAssertion
+    | PlanExpiryAssertion
+    | PositionSizingAssertion
+    | PriorObservationAssertion
+    | RunWindowAssertion,
+    Field(discriminator="kind"),
+]
 
 
 class ScenarioOutcomeExpectation(StrictModel):

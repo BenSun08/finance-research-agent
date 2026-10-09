@@ -120,8 +120,9 @@ scenarios:
   - kind: CANDIDATE_SCORE
     fixture_id: S01_BREAKOUT
     expected_fields:
-      score: 70
-      setup_type: BREAKOUT
+      setup_type: BREAKOUT_CONTINUATION
+      total_score: 70
+      plan_status: DRAFT
 - id: S02
   title: Permissive valid pullback
   fixture_set: S02_PULLBACK
@@ -242,8 +243,8 @@ scenarios:
   - kind: SETUP_DETECTION
     fixture_id: S02_PULLBACK
     expected_fields:
-      setup_type: PULLBACK
-      requires_restrengthening: true
+      setup_types:
+      - TREND_PULLBACK
 - id: S03
   title: Neutral candidate below threshold
   fixture_set: S03_NEUTRAL_THRESHOLD
@@ -363,8 +364,9 @@ scenarios:
   - kind: CANDIDATE_RANKING
     fixture_id: S03_NEUTRAL_THRESHOLD
     expected_fields:
-      visible: true
-      reason_code: SCORE_BELOW_NEUTRAL_THRESHOLD
+      selection_reasons:
+      - SCORE_BELOW_THRESHOLD
+      selected_for_plan: false
 - id: S04
   title: Defensive technically strong candidate
   fixture_set: S04_DEFENSIVE_REGIME
@@ -484,7 +486,7 @@ scenarios:
   - kind: REGIME_CALCULATION
     fixture_id: S04_DEFENSIVE_REGIME
     expected_fields:
-      regime: DEFENSIVE
+      regime: defensive
 - id: S05
   title: Unknown regime from critical missing data
   fixture_set: S05_UNKNOWN_REGIME
@@ -669,7 +671,7 @@ scenarios:
   - kind: REGIME_CALCULATION
     fixture_id: S05_UNKNOWN_REGIME
     expected_fields:
-      regime: UNKNOWN
+      regime: unknown
 - id: S06
   title: No eligible candidates
   fixture_set: S06_NO_ELIGIBLE_NAMES
@@ -789,7 +791,8 @@ scenarios:
   - kind: INSTRUMENT_ELIGIBILITY
     fixture_id: S06_NO_ELIGIBLE_NAMES
     expected_fields:
-      eligible_count: 0
+      gate_statuses:
+      - BLOCK
 - id: S07
   title: Earnings inside plan lifetime
   fixture_set: S07_EARNINGS_WINDOW
@@ -911,7 +914,8 @@ scenarios:
     fixture_id: S07_EARNINGS_WINDOW
     expected_fields:
       plan_status: BLOCKED
-      event_verified: true
+      gate_reason_codes:
+      - UNSUPPORTED_INSTRUMENT
 - id: S08
   title: Material filing after prior report
   fixture_set: S08_MATERIAL_REVISION
@@ -1033,8 +1037,9 @@ scenarios:
   - kind: PLAN_EXPIRY
     fixture_id: S08_MATERIAL_REVISION
     expected_fields:
-      status: EXPIRED
-      reason: MATERIAL_NEW_INFORMATION
+      plan_status: EXPIRED
+      expiry_reasons:
+      - NEW_MATERIAL_INFORMATION
 - id: S09
   title: Conflicting official and media sources
   fixture_set: S09_SOURCE_CONFLICT
@@ -1158,8 +1163,11 @@ scenarios:
   - kind: EVENT_RISK
     fixture_id: S09_SOURCE_CONFLICT
     expected_fields:
-      conflict_retained: true
-      lower_authority_overrides: false
+      plan_status: BLOCKED
+      gate_reason_codes:
+      - SOURCE_CONFLICT
+      quality_flags:
+      - SOURCE_CONFLICT
 - id: S10
   title: Stale premarket quote
   fixture_set: S10_STALE_PREMARKET_QUOTE
@@ -1404,8 +1412,10 @@ scenarios:
   - kind: SETUP_DETECTION
     fixture_id: S11_IEX_LIMITATION
     expected_fields:
-      coverage: SINGLE_EXCHANGE
-      limitation_disclosed: true
+      setup_types:
+      - BREAKOUT_CONTINUATION
+      global_reason_codes:
+      - FEED_IEX_SINGLE_EXCHANGE
 - id: S12
   title: Missing macro event calendar
   fixture_set: S12_MISSING_MACRO_CALENDAR
@@ -1533,8 +1543,9 @@ scenarios:
   - kind: EVENT_RISK
     fixture_id: S12_MISSING_MACRO_CALENDAR
     expected_fields:
-      source_configured: false
       plan_status: BLOCKED
+      gate_reason_codes:
+      - CONFIGURATION_INVALID
 - id: S13
   title: Insufficient history for one symbol
   fixture_set: S13_INSUFFICIENT_HISTORY
@@ -1662,7 +1673,8 @@ scenarios:
   - kind: INSTRUMENT_ELIGIBILITY
     fixture_id: S13_INSUFFICIENT_HISTORY
     expected_fields:
-      symbol_status: BLOCKED
+      gate_statuses:
+      - BLOCK
 - id: S14
   title: Leveraged ETF
   fixture_set: S14_LEVERAGED_ETF
@@ -1784,7 +1796,8 @@ scenarios:
   - kind: INSTRUMENT_ELIGIBILITY
     fixture_id: S14_LEVERAGED_ETF
     expected_fields:
-      reason_code: UNSUPPORTED_INSTRUMENT
+      reason_codes:
+      - UNSUPPORTED_INSTRUMENT
 - id: S15
   title: Halted or identity-uncertain instrument
   fixture_set: S15_HALTED_OR_UNCERTAIN_IDENTITY
@@ -1906,7 +1919,8 @@ scenarios:
   - kind: INSTRUMENT_ELIGIBILITY
     fixture_id: S15_HALTED_OR_UNCERTAIN_IDENTITY
     expected_fields:
-      halted_or_identity_uncertain: true
+      reason_codes:
+      - UNSUPPORTED_INSTRUMENT
 - id: S16
   title: Entry zone already exceeded
   fixture_set: S16_EXCEEDED_ENTRY_ZONE
@@ -2026,7 +2040,9 @@ scenarios:
   - kind: PLAN_EXPIRY
     fixture_id: S16_EXCEEDED_ENTRY_ZONE
     expected_fields:
-      status: EXPIRED
+      plan_status: EXPIRED
+      expiry_reasons:
+      - ENTRY_ZONE_DEPARTED
 - id: S17
   title: Stop not below long entry
   fixture_set: S17_INVALID_STOP
@@ -2149,7 +2165,6 @@ scenarios:
     fixture_id: S17_INVALID_STOP
     expected_fields:
       status: SIZING_UNAVAILABLE
-      units: null
 - id: S18
   title: Planning capital missing
   fixture_set: S18_MISSING_CAPITAL
@@ -2272,7 +2287,8 @@ scenarios:
     fixture_id: S18_MISSING_CAPITAL
     expected_fields:
       status: SIZING_UNAVAILABLE
-      units: null
+      unavailable_reasons:
+      - PLANNING_CAPITAL_MISSING
 - id: S19
   title: Portfolio heat missing
   fixture_set: S19_MISSING_PORTFOLIO_HEAT
@@ -2394,8 +2410,9 @@ scenarios:
   - kind: PLAN_BUILD
     fixture_id: S19_MISSING_PORTFOLIO_HEAT
     expected_fields:
-      status: REVIEW_REQUIRED
-      heat_check: UNAVAILABLE
+      plan_status: REVIEW_REQUIRED
+      data_quality_flags:
+      - PORTFOLIO_HEAT_UNAVAILABLE
 - id: S20
   title: Highly correlated candidates
   fixture_set: S20_CORRELATED_CANDIDATES
@@ -2515,8 +2532,8 @@ scenarios:
   - kind: CANDIDATE_RANKING
     fixture_id: S20_CORRELATED_CANDIDATES
     expected_fields:
-      highest_ranked_remains_primary: true
-      holdings_inferred: false
+      selected_for_plan: true
+      secondary_alternative: false
 - id: S21
   title: One daily bar touches entry and invalidation
   fixture_set: S21_AMBIGUOUS_DAILY_BAR
@@ -2636,7 +2653,8 @@ scenarios:
   - kind: PRIOR_OBSERVATION
     fixture_id: S21_AMBIGUOUS_DAILY_BAR
     expected_fields:
-      outcome: AMBIGUOUS_SEQUENCE
+      outcomes:
+      - AMBIGUOUS_SEQUENCE
 - id: S22
   title: Synthesis inserts unsupported number
   fixture_set: S22_UNSUPPORTED_NUMERIC_CLAIM
@@ -3326,4 +3344,5 @@ scenarios:
   - kind: RUN_WINDOW
     fixture_id: S25_MISSED_WINDOW
     expected_fields:
-      after_close_is_missed_record_only: true
+      missed_record_only: true
+      reason_code: MISSED_WINDOW
