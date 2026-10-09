@@ -33,6 +33,7 @@ from finance_research_agent.domain.models import (
     RunContext,
     RunContextSeed,
 )
+from tests.support.component_versions import SYNTHETIC_SKILL_VERSION, synthetic_component_versions
 
 NOW = datetime(2026, 9, 28, 12, 45, tzinfo=UTC)
 MARKET_DATE = date(2026, 9, 28)
@@ -94,6 +95,7 @@ def _dependencies(
             run_repository=run_repository,
             market_data=cast(MarketDataProvider, object()),
             event_providers=cast(tuple[EventProvider, ...], ()),
+            component_versions=synthetic_component_versions,
         ),
         config,
         fixed_clock,
@@ -141,8 +143,8 @@ def test_prepare_scheduled_run_starts_without_an_evidence_cutoff(
     assert run.configuration_snapshot.source_policy_version == "1"
     assert run.core_version == "0.5.0.dev0"
     assert run.mcp_contract_version == "0.1"
-    assert run.plugin_version == "0.1"
-    assert run.skill_version == "0.1"
+    assert run.plugin_version == "0.1.0"
+    assert run.skill_version == SYNTHETIC_SKILL_VERSION
     prompt = CONFIG_ROOT.parents[1] / "prompts" / "research-brief-draft.md"
     assert run.prompt_version == hashlib.sha256(prompt.read_bytes()).hexdigest()
     assert run.report_template_version == "0.1"
@@ -154,12 +156,10 @@ def test_prepare_scheduled_run_starts_without_an_evidence_cutoff(
 def test_prepare_freezes_trusted_versions_and_resume_keeps_them(tmp_path: Path) -> None:
     from dataclasses import replace
 
-    from finance_research_agent.application.component_versions import current_component_versions
-
     dependencies, _, _, repository = _dependencies(tmp_path)
 
     def installed_versions(snapshot):
-        return current_component_versions(snapshot).model_copy(
+        return synthetic_component_versions(snapshot).model_copy(
             update={"skill_version": "sha256:" + "a" * 64}
         )
 
@@ -183,12 +183,10 @@ def test_trusted_skill_digest_rejects_malformed_or_overlong_labels(tmp_path, ver
 
     from pydantic import ValidationError
 
-    from finance_research_agent.application.component_versions import current_component_versions
-
     dependencies, _, _, repository = _dependencies(tmp_path)
 
     def malformed_versions(snapshot):
-        return current_component_versions(snapshot).model_copy(update={"skill_version": version})
+        return synthetic_component_versions(snapshot).model_copy(update={"skill_version": version})
 
     with pytest.raises(ValidationError):
         prepare_premarket_run(
@@ -217,6 +215,7 @@ def test_prepare_run_binds_its_duration_to_the_first_checkpoint(tmp_path: Path) 
         run_repository=dependencies.run_repository,
         market_data=dependencies.market_data,
         event_providers=dependencies.event_providers,
+        component_versions=dependencies.component_versions,
         monotonic_ns=Monotonic(),
     )
 
@@ -474,6 +473,7 @@ def test_result_reloads_state_if_an_existing_run_advances_during_allocation(
         run_repository=repository,
         market_data=dependencies.market_data,
         event_providers=dependencies.event_providers,
+        component_versions=dependencies.component_versions,
     )
 
     result = prepare_premarket_run(_request(), dependencies)

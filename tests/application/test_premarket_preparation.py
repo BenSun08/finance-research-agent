@@ -21,6 +21,7 @@ from finance_research_agent.domain.models import (
     PriceObservation,
     ProviderReadiness,
 )
+from tests.support.component_versions import synthetic_component_versions
 
 NOW = datetime(2026, 9, 28, 12, 45, tzinfo=UTC)
 CONFIG_ROOT = Path(__file__).resolve().parents[2] / "config" / "examples"
@@ -131,6 +132,7 @@ def dependencies(tmp_path, *, market=None):
         run_repository=FileSystemRunRepository(tmp_path),
         market_data=market or MarketData(),
         event_providers=(),
+        component_versions=synthetic_component_versions,
     )
 
 
@@ -246,6 +248,7 @@ def test_public_prepare_operation_returns_typed_packet_handoff(tmp_path):
         published_artifact_reader=deps.run_repository,
         watchlist_repository=object(),
         feedback_repository=object(),
+        component_versions=deps.component_versions,
     )
     result = services.dispatch("prepare_premarket_run", '{"market_date":"2026-09-28"}')
     assert isinstance(result, PreparedPremarketRunResult)

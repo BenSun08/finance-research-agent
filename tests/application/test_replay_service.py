@@ -407,3 +407,42 @@ def test_replay_rejects_indexed_json_digest_that_disagrees_with_bundle(
         replay_published_artifact(
             _Reader(bundle, report, receipt), bundle.run.run_id, _versions(bundle.run)
         )
+
+
+def test_installed_skill_version_drift_skips_reconstruction_and_preserves_json_integrity(
+    valid_packet, monkeypatch
+) -> None:
+    from finance_research_agent.application import component_versions, replay_service
+
+    run = valid_packet.run.model_copy(update={
+        "skill_version": "sha256:" + "a" * 64, "plugin_version": "0.1.0",
+    })
+    packet = valid_packet.model_copy(update={"run": run})
+    bundle = _frozen_bundle(packet, None, BriefOrigin.OPERATIONAL)
+    monkeypatch.setattr(
+        component_versions, "load_installed_skill_versions",
+        lambda: ("sha256:" + "b" * 64, "0.1.0"),
+    )
+    renderer_calls = []
+
+    def forbidden_render(_bundle):
+        renderer_calls.append("render")
+        raise AssertionError("skill drift must stop before reconstruction")
+
+    monkeypatch.setattr(replay_service, "_reconstructed_report", forbidden_render)
+    reader = _Reader(bundle, bundle.report_markdown)
+    result = replay_published_artifact(
+        reader, bundle.run.run_id,
+        component_versions.current_component_versions(bundle.run.configuration_snapshot),
+    )
+    assert result.component_version_mismatches == ("skill_version",)
+    assert result.json_matches is True
+    assert result.markdown_matches is False
+    assert result.replayed_markdown_sha256 is None
+    assert result.bundle == bundle
+    assert result.report_markdown == bundle.report_markdown
+    assert renderer_calls == []
+    assert reader.calls == [
+        f"bundle:{bundle.run.run_id}", f"report:{bundle.run.run_id}",
+        f"artifact:{bundle.run.run_id}",
+    ]

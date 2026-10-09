@@ -17,12 +17,12 @@ from mcp.client.stdio import StdioServerParameters
 from finance_research_agent.adapters import mcp_bootstrap as bootstrap
 from finance_research_agent.adapters.filesystem import FileSystemRunRepository
 from finance_research_agent.adapters.http_client import SafeHttpClient
-from finance_research_agent.application.component_versions import current_component_versions
 from finance_research_agent.application.operations import OPERATION_NAMES
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.types import canonical_bytes
 from finance_research_agent.settings import Settings
 from tests.application.test_premarket_preparation import NOW, Calendar, Clock
+from tests.support.component_versions import synthetic_component_versions
 
 PROJECT = Path(__file__).resolve().parents[2]
 PREPARE = '{"market_date":"2026-09-28"}'
@@ -130,7 +130,7 @@ class OfflineHttp:
         self.clients.append(client)
         return client
 
-    def services(self, *, settings_factory=None, versions=current_component_versions, clock=None):
+    def services(self, *, settings_factory=None, versions=synthetic_component_versions, clock=None):
         return bootstrap.create_default_services(
             data_root=self.root, clock=clock or Clock(), calendar_factory=Calendar,
             settings_factory=settings_factory or (lambda: Settings(
@@ -188,7 +188,7 @@ def test_real_offline_bootstrap_prepares_packet_with_trusted_versions_and_closes
     offline = OfflineHttp(tmp_path)
 
     def versions(snapshot):
-        return current_component_versions(snapshot).model_copy(
+        return synthetic_component_versions(snapshot).model_copy(
             update={"skill_version": "sha256:" + "a" * 64},
         )
 
