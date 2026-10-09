@@ -142,3 +142,28 @@ def test_broken_documentation_link_is_rejected(tmp_path):
     path = tmp_path / "skills/README.md"
     path.write_text(path.read_text() + "\n- [Missing](missing.md)\n")
     assert validate_documentation(tmp_path)
+
+
+@pytest.mark.parametrize("declaration", [
+    "- Required: None.\n- Required: None.",
+    "- Required: None.\n- Required: [X](references/x.md)",
+])
+def test_resource_none_cannot_conflict_with_another_declaration(tmp_path, declaration):
+    path = _copy(tmp_path)
+    (path.parent / "references").mkdir()
+    (path.parent / "references/x.md").write_text("resource")
+    path.write_text(path.read_text().replace("- Required: None.", declaration))
+    assert validate_skill_contracts(tmp_path)
+
+
+def test_malformed_yaml_mapping_is_a_contract_error(tmp_path):
+    path = tmp_path / "workflow-contract.yaml"
+    path.write_text("? [unhashable, key]\n: value\n")
+    assert validate_workflow(path)
+
+
+def test_skill_local_executable_script_is_rejected(tmp_path):
+    path = _copy(tmp_path)
+    (path.parent / "scripts").mkdir()
+    (path.parent / "scripts/calculate.py").write_text("print('wrong owner')")
+    assert validate_product_a_contracts(tmp_path)

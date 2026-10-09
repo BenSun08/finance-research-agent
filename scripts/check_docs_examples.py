@@ -27,6 +27,8 @@ def _unique_mapping(loader, node):
     result = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node)
+        if not isinstance(key, str):
+            raise ValueError("YAML contract keys must be strings")
         if key in result:
             raise ValueError("duplicate YAML key")
         result[key] = loader.construct_object(value_node)
@@ -66,6 +68,7 @@ def declared_resources(skill: Skill) -> tuple[PurePosixPath, ...]:
     section = skill.body.split("## Resource Loading\n", 1)[1].split("\n## ", 1)[0]
     resources = set()
     categories = set()
+    none_categories = set()
     for line in section.splitlines():
         if not line.strip():
             continue
@@ -73,8 +76,11 @@ def declared_resources(skill: Skill) -> tuple[PurePosixPath, ...]:
         if match is None:
             raise ValueError("invalid resource declaration")
         category, declaration = match.groups()
+        if category in none_categories or (declaration == "None." and category in categories):
+            raise ValueError("None cannot duplicate or conflict with a resource declaration")
         categories.add(category)
         if declaration == "None.":
+            none_categories.add(category)
             continue
         link = re.fullmatch(r"\[[^\]]+\]\(([^)]*)\)(?: — .+)?", declaration)
         if link is None or (category == "Conditional" and " — " not in declaration):
@@ -163,6 +169,8 @@ def validate_product_a_contracts(root: Path) -> tuple[str, ...]:
     if set((root / "skills").rglob("*.yaml")) != {manifest}:
         errors.append("Product A requires exactly one adjacent workflow manifest")
     errors.extend(validate_workflow(manifest))
+    if any((root / "skills").glob("*/scripts/*")):
+        errors.append("skill-local executable scripts are forbidden")
     return tuple(errors)
 
 
