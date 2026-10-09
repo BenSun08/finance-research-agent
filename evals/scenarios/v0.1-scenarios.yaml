@@ -108,6 +108,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: CANDIDATE_SCORE
@@ -224,6 +225,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: SETUP_DETECTION
@@ -338,6 +340,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: CANDIDATE_RANKING
@@ -456,6 +459,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: REGIME_CALCULATION
@@ -579,6 +583,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases:
     - case_id: GLOBAL_REQUIRED_SOURCE_OUTAGE
       execution_status: PUBLISHED
@@ -637,6 +642,7 @@ scenarios:
       error_codes:
       - PROVIDER_UNAVAILABLE
       recoverability: true
+      reduced_report_reason: null
   domain_assertions:
   - kind: REGIME_CALCULATION
     fixture_id: S05_UNKNOWN_REGIME
@@ -749,6 +755,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: INSTRUMENT_ELIGIBILITY
@@ -864,6 +871,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: EVENT_RISK
@@ -981,6 +989,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: PLAN_EXPIRY
@@ -1100,6 +1109,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: EVENT_RISK
@@ -1222,6 +1232,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: POSITION_SIZING
@@ -1336,6 +1347,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: SETUP_DETECTION
@@ -1458,6 +1470,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: EVENT_RISK
@@ -1581,6 +1594,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: INSTRUMENT_ELIGIBILITY
@@ -1697,6 +1711,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: INSTRUMENT_ELIGIBILITY
@@ -1813,6 +1828,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: INSTRUMENT_ELIGIBILITY
@@ -1927,6 +1943,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: PLAN_EXPIRY
@@ -2044,6 +2061,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: POSITION_SIZING
@@ -2159,6 +2177,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: POSITION_SIZING
@@ -2276,6 +2295,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: PLAN_BUILD
@@ -2391,6 +2411,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: CANDIDATE_RANKING
@@ -2515,6 +2536,7 @@ scenarios:
       report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
     subcases: []
   domain_assertions:
   - kind: PRIOR_OBSERVATION
@@ -2596,53 +2618,47 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: VALIDATION_REPAIR_EXHAUSTED
     subcases: []
   domain_assertions: []
 - id: S23
@@ -2714,53 +2730,47 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes: &id001
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes: &id002
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes: &id003
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes: &id004
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes: &id005
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_TIMEOUT
     subcases:
     - case_id: VALID_REPAIR
       execution_status: PUBLISHED
@@ -2770,48 +2780,40 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes: *id001
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes: *id002
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes: *id003
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes: *id004
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes: *id005
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: SYNTHESIZED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: null
     - case_id: DETERMINISTIC_REDUCED_FALLBACK
       execution_status: PUBLISHED
       data_quality_status: DEGRADED
@@ -2820,48 +2822,40 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes: *id001
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes: *id002
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes: *id003
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes: *id004
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes: *id005
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: A deterministic reduced report is published; unavailable source roles remain visible.
-      error_codes:
-      - VALIDATION_FAILED
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
+      error_codes: []
       recoverability: true
+      reduced_report_reason: VALIDATION_REPAIR_EXHAUSTED
   domain_assertions: []
 - id: S24
   title: Prompt injection in untrusted excerpt
@@ -2932,53 +2926,47 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes: &id006
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes: &id007
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes: &id008
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes: &id009
+        - SIZING_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes: &id010
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: SYNTHESIS_TIMEOUT
     subcases:
     - case_id: VALID_REPAIR
       execution_status: PUBLISHED
@@ -2988,48 +2976,40 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes: *id006
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes: *id007
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes: *id008
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes: *id009
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes: *id010
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
-        source roles are disclosed.
+      report_banner: 'Brief origin: SYNTHESIZED'
       error_codes: []
       recoverability: true
+      reduced_report_reason: null
     - case_id: DETERMINISTIC_REDUCED_FALLBACK
       execution_status: PUBLISHED
       data_quality_status: DEGRADED
@@ -3038,48 +3018,40 @@ scenarios:
       - capability: MARKET_SUMMARY_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: true
         reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes: *id006
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes: *id007
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes: *id008
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes: *id009
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes: *id010
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        evidence_ids: []
       plan_states: []
-      report_banner: A deterministic reduced report is published; unavailable source roles remain visible.
-      error_codes:
-      - VALIDATION_FAILED
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
+      error_codes: []
       recoverability: true
+      reduced_report_reason: VALIDATION_REPAIR_EXHAUSTED
   domain_assertions: []
 - id: S25
   title: Run begins at or after 09:30
@@ -3193,6 +3165,7 @@ scenarios:
       error_codes:
       - MISSED_WINDOW
       recoverability: true
+      reduced_report_reason: null
     subcases:
     - case_id: AT_OR_AFTER_CLOSE
       execution_status: SKIPPED
@@ -3203,6 +3176,7 @@ scenarios:
       report_banner: null
       error_codes: []
       recoverability: null
+      reduced_report_reason: null
   domain_assertions:
   - kind: RUN_WINDOW
     fixture_id: S25_MISSED_WINDOW

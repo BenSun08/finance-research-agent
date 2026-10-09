@@ -17,6 +17,7 @@ from finance_research_agent.domain.enums import (
     GateStatus,
     ObservationOutcome,
     PlanStatus,
+    ReducedReportReason,
     ValidationCode,
 )
 from finance_research_agent.domain.errors import ErrorCode
@@ -332,6 +333,15 @@ class ScenarioOutcomeExpectation(StrictModel):
     report_banner: Annotated[str, Field(min_length=1, max_length=500, pattern=r"\S")] | None
     error_codes: tuple[ScenarioErrorCode, ...]
     recoverability: bool | None
+    reduced_report_reason: ReducedReportReason | None
+
+    @model_validator(mode="after")
+    def _reduced_reason_matches_origin(self) -> ScenarioOutcomeExpectation:
+        if self.reduced_report_reason is not None and self.report_banner != (
+            "Brief origin: DETERMINISTIC_REDUCED"
+        ):
+            raise ValueError("a reduced report reason requires the deterministic-reduced banner")
+        return self
 
     @model_validator(mode="after")
     def _exact_capabilities(self) -> ScenarioOutcomeExpectation:
@@ -416,6 +426,24 @@ class CurrentScopeServiceObservation(StrictModel):
     watchlist_exclusions_visible: bool | None
     provider_call_count: Annotated[int, Field(ge=0)]
     missed_run_record_durable: bool
+    synthesis_packet_hashes: tuple[Sha256, ...] = ()
+    validation_codes: tuple[ValidationCode, ...] = ()
+    validation_attempt_count: Annotated[int, Field(ge=0, le=3)] = 0
+    repair_count: Annotated[int, Field(ge=0, le=2)] = 0
+    invalid_draft_never_published: bool | None = None
+    provider_calls_before_synthesis: Annotated[int, Field(ge=0)] | None = None
+
+    @model_validator(mode="after")
+    def _coherent_synthesis_evidence(self) -> CurrentScopeServiceObservation:
+        if self.validation_attempt_count > len(self.synthesis_packet_hashes):
+            raise ValueError("every validation attempt must have a recorded synthesis request")
+        if self.repair_count > max(0, len(self.synthesis_packet_hashes) - 1):
+            raise ValueError("repair_count cannot exceed synthesis requests after the initial one")
+        if self.provider_calls_before_synthesis is not None and (
+            self.provider_calls_before_synthesis > self.provider_call_count
+        ):
+            raise ValueError("provider call count cannot precede its synthesis baseline")
+        return self
 
 
 class DomainAssertionOutcome(StrictModel):
