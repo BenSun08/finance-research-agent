@@ -1,7 +1,7 @@
 """R11 failure injections against real application and repository services."""
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
@@ -958,3 +958,85 @@ def test_f12_recovery_rejects_an_orphan_with_a_changed_staged_artifact(
     assert protocol.repository.get_latest(packet.run.market_date) is None
     assert protocol.repository.load_published_bundle(packet.run.run_id) is None
     assert protocol.repository.get_published_artifact(packet.run.run_id) is None
+
+
+def test_f13_stale_lease_checkpoint_is_rejected_before_same_revision_recovery(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.adapters.filesystem import LeaseHeldError
+    from finance_research_agent.application.operations import ProductAOperation
+    from finance_research_agent.application.publication_service import publish_validated_brief
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.models import RunKey
+    from tests.integration.test_premarket_workflow_matrix import _support
+
+    protocol, packet, _ = _support().prepared_protocol(tmp_path, valid_packet, valid_brief_draft)
+    repository = protocol.repository
+    key = RunKey(run_type=packet.run.run_type, market_date=packet.run.market_date)
+    original_lease = repository.acquire_lease(key, packet.run.invoked_at)
+    original_stored = repository.load(packet.run.run_id)
+    assert original_stored is not None and original_stored.published is False
+    stale_checkpoint_count = len(original_stored.checkpoints)
+    replacement_lease = repository.acquire_lease(
+        key, original_lease.expires_at + timedelta(seconds=1)
+    )
+    assert replacement_lease.token != original_lease.token
+    with pytest.raises(LeaseHeldError, match="no longer owned"):
+        repository.heartbeat(original_lease, original_lease.expires_at + timedelta(seconds=1))
+
+    invalid = valid_brief_draft.model_copy(
+        update={
+            "execution_status": packet.run.execution_status,
+            "data_warnings": ("unverified earnings are confirmed",),
+        }
+    )
+    invalid_result = protocol.dispatch(
+        ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value,
+        json.dumps({"draft": invalid.model_dump(mode="json")}),
+    )
+    assert invalid_result.validation_report is not None
+    assert invalid_result.validation_report.is_valid is False
+    current_stored = repository.load(packet.run.run_id)
+    assert current_stored is not None and not current_stored.published
+    assert len(current_stored.checkpoints) == stale_checkpoint_count + 1
+    with pytest.raises(ValueError, match="checkpoint state changed"):
+        repository.checkpoint_if_current(
+            packet.run.run_id,
+            current_stored.checkpoints[-1],
+            expected_count=stale_checkpoint_count,
+        )
+    with pytest.raises(ValueError, match="valid recorded attempt"):
+        publish_validated_brief(
+            repository, packet, current_stored.checkpoints[-1].written_at + timedelta(seconds=1)
+        )
+    assert repository.get_latest(packet.run.market_date) is None
+    assert repository.get_published_artifact(packet.run.run_id) is None
+
+    repaired = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    recovered = protocol.dispatch(
+        ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value,
+        json.dumps({"draft": repaired.model_dump(mode="json")}),
+    )
+
+    assert recovered.publication is not None
+    assert recovered.publication.run_id == packet.run.run_id
+    recovered_stored = protocol.repository.load(packet.run.run_id)
+    assert recovered_stored is not None and len(recovered_stored.checkpoints) == (
+        stale_checkpoint_count + 3
+    )
+    assert protocol.repository.get_latest(packet.run.market_date) == packet.run.run_id
+    bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    validation = bundle.bundle["validation_report"]
+    assert validation["validation_attempt"] == 2
+    assert validation["is_valid"] is True
+    replay = replay_published_artifact(
+        protocol.repository, packet.run.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
