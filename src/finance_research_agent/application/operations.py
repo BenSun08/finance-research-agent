@@ -10,7 +10,7 @@ from typing import Annotated, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from finance_research_agent.application.run_service import PreparePremarketRunResult
+from finance_research_agent.application.premarket_preparation import PreparedPremarketRunResult
 from finance_research_agent.application.watchlist_service import WatchlistChange
 from finance_research_agent.domain.enums import ReducedReportReason
 from finance_research_agent.domain.errors import ErrorCode
@@ -190,7 +190,7 @@ _CONTRACTS: dict[str, OperationContract] = {
     ProductAOperation.PREPARE_PREMARKET_RUN.value: OperationContract(
         ProductAOperation.PREPARE_PREMARKET_RUN,
         PreparePremarketRunOperationRequest,
-        PreparePremarketRunResult,
+        PreparedPremarketRunResult,
     ),
     ProductAOperation.GET_RUN_STATUS.value: OperationContract(
         ProductAOperation.GET_RUN_STATUS, GetRunStatusRequest, StoredRun
