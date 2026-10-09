@@ -1,6 +1,8 @@
 import ast
 from pathlib import Path
 
+import pytest
+
 PACKAGE_ROOT = (
     Path(__file__).resolve().parents[2] / "src" / "finance_research_agent"
 )
@@ -54,6 +56,30 @@ def _imports(path: Path) -> set[str]:
             imported.add(node.module)
             imported.update(f"{node.module}.{alias.name}" for alias in node.names)
     return imported
+
+
+def _direct_network_escape_hatches(path: Path, relative: Path) -> set[str]:
+    """Permit only fixed metadata reads in the installed provenance loader."""
+    allowed = set()
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    metadata_nodes = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "importlib.metadata"
+    ]
+    if relative == Path("application/skill_bundle.py") and metadata_nodes and all(
+        node.level == 0 and all(
+            alias.name in {"PackagePath", "distribution"} and alias.asname is None
+            for alias in node.names
+        ) for node in metadata_nodes
+    ):
+        allowed = {
+            "importlib.metadata", "importlib.metadata.PackagePath",
+            "importlib.metadata.distribution",
+        }
+    return {
+        module for module in _imports(path)
+        if module.startswith(FORBIDDEN_DIRECT_TRANSPORT_PREFIXES) and module not in allowed
+    }
 
 
 def _string_literals(path: Path) -> tuple[str, ...]:
@@ -160,11 +186,7 @@ def test_first_data_slice_has_no_direct_network_escape_hatch() -> None:
     for path in PACKAGE_ROOT.rglob("*.py"):
         if path.relative_to(PACKAGE_ROOT) in R4_BOUNDARY_FILES:
             continue
-        for module in _imports(path):
-            assert not module.startswith(FORBIDDEN_DIRECT_TRANSPORT_PREFIXES), (
-                path,
-                module,
-            )
+        assert not _direct_network_escape_hatches(path, path.relative_to(PACKAGE_ROOT)), path
 
 
 def test_first_data_slice_has_no_dynamic_import_escape_hatch() -> None:
@@ -194,3 +216,23 @@ def test_production_code_contains_no_brokerage_endpoint_literal() -> None:
             for fragment in FORBIDDEN_ENDPOINT_FRAGMENTS
             for literal in literals
         ), path
+
+
+@pytest.mark.parametrize("source", [
+    "import importlib", "from importlib import import_module",
+    "from importlib.metadata import entry_points", "import socket",
+    "import requests", "from importlib.metadata import distribution as loader",
+])
+def test_installed_metadata_exception_does_not_allow_transport_or_dynamic_loading(
+    tmp_path, source,
+):
+    path = tmp_path / "skill_bundle.py"
+    path.write_text(source)
+    assert _direct_network_escape_hatches(path, Path("application/skill_bundle.py"))
+
+
+def test_fixed_metadata_reads_are_allowed_only_in_installed_bundle_loader(tmp_path):
+    path = tmp_path / "metadata.py"
+    path.write_text("from importlib.metadata import PackagePath, distribution\n")
+    assert not _direct_network_escape_hatches(path, Path("application/skill_bundle.py"))
+    assert _direct_network_escape_hatches(path, Path("application/other.py"))
