@@ -351,7 +351,7 @@ def test_f04_conflicting_event_fixture_stays_out_of_current_source_publication(
         EvaluationHarness,
         execute_evaluation_scenario,
     )
-    from finance_research_agent.evaluation.models import FixtureSetId
+    from finance_research_agent.evaluation.models import FixtureSetId, ScenarioAssertionId
     from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
     from tests.evaluation.fixture_bank import build_domain_fixture_bank
 
@@ -374,7 +374,8 @@ def test_f04_conflicting_event_fixture_stays_out_of_current_source_publication(
     outcome = execute_evaluation_scenario(scenario, harness)
 
     assert outcome.assertions_failed == ()
-    assert outcome.assertions_pending == ("SOURCE_LIMITATIONS_ADJACENT",)
+    assert outcome.assertions_pending == ()
+    assert ScenarioAssertionId.SOURCE_LIMITATIONS_ADJACENT in outcome.assertions_passed
     assert len(outcome.domain_assertion_outcomes) == 1
     domain_result = outcome.domain_assertion_outcomes[0]
     assert domain_result.fixture_id is FixtureSetId.S09_SOURCE_CONFLICT
