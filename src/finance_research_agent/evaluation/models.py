@@ -400,6 +400,30 @@ class CurrentScopeServiceObservation(StrictModel):
     replay_markdown_matches: bool
 
 
+class DomainAssertionOutcome(StrictModel):
+    """Typed result of executing one named assertion against a domain fixture."""
+
+    kind: DomainAssertionKind
+    fixture_id: FixtureSetId
+    status: Literal["PASS", "FAIL"]
+    matched_fields: tuple[Identifier, ...]
+    mismatched_fields: tuple[Identifier, ...]
+
+    @model_validator(mode="after")
+    def _coherent_field_results(self) -> DomainAssertionOutcome:
+        if len(set(self.matched_fields)) != len(self.matched_fields):
+            raise ValueError("matched field names must be unique")
+        if len(set(self.mismatched_fields)) != len(self.mismatched_fields):
+            raise ValueError("mismatched field names must be unique")
+        if set(self.matched_fields) & set(self.mismatched_fields):
+            raise ValueError("a field cannot both match and mismatch")
+        if self.status == "PASS" and (not self.matched_fields or self.mismatched_fields):
+            raise ValueError("PASS requires matching fields and no mismatches")
+        if self.status == "FAIL" and not self.mismatched_fields:
+            raise ValueError("FAIL requires at least one mismatched field")
+        return self
+
+
 def _require_exact_capabilities(capabilities: Sequence[CapabilityState]) -> None:
     actual = tuple(state.capability for state in capabilities)
     expected = tuple(Capability)
