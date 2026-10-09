@@ -35,10 +35,17 @@ def _contents():
                 }
             }
         ).encode(),
-        "skills/market-regime/SKILL.md": b"## Resource Loading\nNo resources.\n",
-        "skills/watchlist-management/SKILL.md": b"## Resource Loading\nNo resources.\n",
+        "skills/market-regime/SKILL.md": (
+            b"## Resource Loading\n- Required: None.\n- Conditional: None.\n"
+            b"## Safety and Forbidden Behavior\n"
+        ),
+        "skills/watchlist-management/SKILL.md": (
+            b"## Resource Loading\n- Required: None.\n- Conditional: None.\n"
+            b"## Safety and Forbidden Behavior\n"
+        ),
         "skills/premarket-research/SKILL.md": (
             b"## Resource Loading\n- Required: [Workflow](references/workflow-contract.yaml)\n"
+            b"- Conditional: None.\n## Safety and Forbidden Behavior\n"
         ),
         "skills/premarket-research/references/workflow-contract.yaml": b"schema_version: 1\n",
     }
@@ -144,7 +151,10 @@ def test_installed_contract_rejects_unhashed_resources_and_manifest_expansion(in
     distribution, contents = installed
     if kind == "resource":
         name = "skills/premarket-research/SKILL.md"
-        content = contents[name] + b"- Conditional: [extra](references/extra.md)\n"
+        content = contents[name].replace(
+            b"- Conditional: None.",
+            b"- Conditional: [extra](references/extra.md) \xe2\x80\x94 Load extra.",
+        )
     elif kind == "manifest":
         name = ".codex-plugin/plugin.json"
         manifest = json.loads(contents[name])
@@ -157,7 +167,9 @@ def test_installed_contract_rejects_unhashed_resources_and_manifest_expansion(in
         content = json.dumps(config).encode()
     else:
         name = "skills/market-regime/SKILL.md"
-        content = contents[name] + b"- Required: [extra](references/extra.md)\n"
+        content = contents[name].replace(
+            b"- Required: None.", b"- Required: [extra](references/extra.md)"
+        )
     (distribution.root / PLUGIN_RESOURCE_ROOT / name).write_bytes(content)
     with pytest.raises(ValueError):
         load_installed_premarket_skill_version()
@@ -177,3 +189,16 @@ def test_distribution_unavailable_or_metadata_absent_fails_closed(monkeypatch):
 
 def test_fixed_resource_allowlist_has_three_skills_and_one_manifest():
     assert PLUGIN_RESOURCE_PATHS == tuple(_contents())
+
+
+@pytest.mark.parametrize("kind", ("base", "ancestor"))
+def test_installed_distribution_base_and_ancestors_cannot_be_symlinks(tmp_path, monkeypatch, kind):
+    root = tmp_path / "installation" / "site"
+    distribution = InstalledDistribution(root, _contents())
+    path = root if kind == "base" else root.parent
+    target = path.with_name(path.name + "-real")
+    path.rename(target)
+    path.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(skill_bundle, "distribution", lambda name: distribution)
+    with pytest.raises(ValueError, match="symlink"):
+        load_installed_premarket_skill_version()

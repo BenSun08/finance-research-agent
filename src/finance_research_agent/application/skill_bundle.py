@@ -11,7 +11,8 @@ from hashlib import sha256
 from importlib.metadata import PackagePath, distribution
 from pathlib import Path, PurePosixPath
 
-_RESOURCE_LINE = re.compile(r"- (?:Required|Conditional): \[[^\]]+\]\(([^)]+)\)(?: — .+)?")
+_RESOURCE_LINE = re.compile(r"- (Required|Conditional): (.+)")
+_RESOURCE_LINK = re.compile(r"\[[^\]]+\]\(([^)]*)\)(?: — .+)?")
 
 
 def validate_logical_path(path: str) -> str:
@@ -66,18 +67,30 @@ def declared_skill_resources(skill_bytes: bytes) -> tuple[str, ...]:
         raise ValueError("skill must have one Resource Loading section")
     section = sections[1].split("\n## ", 1)[0]
     resources: set[str] = set()
+    categories: set[str] = set()
+    none_categories: set[str] = set()
     for line in section.splitlines():
-        if not line.startswith(("- Required:", "- Conditional:")):
-            continue
-        if line in {"- Required: None.", "- Conditional: None."}:
+        if not line.strip():
             continue
         match = _RESOURCE_LINE.fullmatch(line)
         if match is None:
             raise ValueError("malformed resource declaration")
-        path = validate_logical_path(match.group(1))
+        category, declaration = match.groups()
+        if category in none_categories or (declaration == "None." and category in categories):
+            raise ValueError("None cannot duplicate or conflict with a resource declaration")
+        categories.add(category)
+        if declaration == "None.":
+            none_categories.add(category)
+            continue
+        link = _RESOURCE_LINK.fullmatch(declaration)
+        if link is None or (category == "Conditional" and " — " not in declaration):
+            raise ValueError("invalid resource link or missing load condition")
+        path = validate_logical_path(link.group(1))
         if path in resources or path == "SKILL.md":
             raise ValueError("duplicate logical path")
         resources.add(path)
+    if categories != {"Required", "Conditional"}:
+        raise ValueError("both resource categories must be explicit")
     return tuple(sorted(resources, key=lambda value: value.encode("utf-8")))
 
 
@@ -131,6 +144,8 @@ def _installed_resources() -> dict[str, bytes]:
     if set(found) != required:
         raise RuntimeError("installed plugin resources are missing")
     base = Path(str(installed.locate_file("")))
+    if any(parent.is_symlink() for parent in (base, *base.parents)):
+        raise ValueError("installed distribution base contains a symlink")
     contents: dict[str, bytes] = {}
     for relative in PLUGIN_RESOURCE_PATHS:
         full = PLUGIN_RESOURCE_ROOT + "/" + relative

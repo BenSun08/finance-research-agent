@@ -78,7 +78,7 @@ def test_utf8_byte_order_and_framing_are_unambiguous() -> None:
 def test_resource_loading_includes_required_and_conditional_resources() -> None:
     skill = (
         b"## Resource Loading\n"
-        b"- Conditional: [extra](references/extra.md)\n"
+        b"- Conditional: [extra](references/extra.md) \xe2\x80\x94 Load for extra context.\n"
         b"- Required: [workflow](references/workflow-contract.yaml)\n"
         b"## Safety and Forbidden Behavior\n"
         b"- Required: [not a resource](ignored.md)\n"
@@ -107,11 +107,34 @@ def test_resource_loading_rejects_unsafe_duplicate_and_malformed_declarations(de
 
 
 def test_literal_none_resource_markers_declare_no_resource() -> None:
-    assert declared_skill_resources(
-        b"## Resource Loading\n- Required: None.\n- Conditional: None.\n"
-    ) == ()
+    assert (
+        declared_skill_resources(b"## Resource Loading\n- Required: None.\n- Conditional: None.\n")
+        == ()
+    )
     assert declared_skill_resources(
         b"## Resource Loading\n"
         b"- Required: [workflow](references/workflow-contract.yaml)\n"
         b"- Conditional: None.\n"
     ) == ("references/workflow-contract.yaml",)
+
+
+@pytest.mark.parametrize(
+    "declarations",
+    (
+        "- Required: None.\n- Required: None.\n- Conditional: None.",
+        "- Required: None.\n- Required: [link](references/file)\n- Conditional: None.",
+        "- Required: [link](references/file)\n- Required: None.\n- Conditional: None.",
+        "- Required: None.",
+        "- Conditional: None.",
+        "- Required: None.\n- Conditional: [link](references/file)",
+        "- Required: None.\n- Conditional: None.\nUnrecognized resource prose.",
+    ),
+)
+def test_resource_grammar_rejects_none_conflicts_missing_category_and_missing_condition(
+    declarations,
+):
+    skill = (
+        "## Resource Loading\n" + declarations + "\n## Safety and Forbidden Behavior\n"
+    ).encode()
+    with pytest.raises(ValueError):
+        declared_skill_resources(skill)
