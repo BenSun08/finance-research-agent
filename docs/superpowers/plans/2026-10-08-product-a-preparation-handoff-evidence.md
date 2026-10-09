@@ -201,3 +201,20 @@ at publication time; this document does not predeclare those remote results.
   streams and transports retain their existing request-local cleanup ownership.
 - Real stdio subprocess, preparation integration, packaging, whole-feature review,
   full-suite coverage and repository checks remain pending at this subtask.
+
+### Subtask 2: Real-provider symbol-order handoff correction
+
+- Real offline bootstrap preparation exposed an existing adapter mismatch: the
+  watchlist-first collection order was passed to HistoricalDailyBarsRequest,
+  which requires canonical sorted symbols. Healthy daily-bar responses became
+  INVALID_REQUEST and preparation published an operational failure.
+- RED: the focused unsorted `(MSFT, AAPL)` regression returned ProviderFailure
+  for AAPL instead of its normalized bars. The whole real-provider packet and
+  frozen-quality resume cases also failed before this correction.
+- GREEN: sort only the normalizer request's symbol declaration. The provider's
+  HTTP query retains caller order; returned bars/failures remain correctly bound
+  to symbols, identities, session dates, feed, adjustment and evidence cutoff.
+- 197 Alpaca/historical/collection/security tests passed, with one existing
+  websockets deprecation warning. Scoped Ruff/mypy and diff checks passed.
+- This narrow correction was explicitly authorized after the integration probe;
+  it adds no provider or financial capability.

@@ -817,3 +817,44 @@ def test_configured_requests_send_only_market_data_credentials() -> None:
     provider = _provider("premarket-iex.json", require_auth=True)
     result = provider.fetch_premarket_observations(["AAPL"], AS_OF)
     assert result["AAPL"].provider == "alpaca"
+
+
+def test_daily_bars_canonicalize_only_normalizer_symbols_and_preserve_associations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import finance_research_agent.adapters.alpaca as alpaca
+
+    provider = _provider("daily-bars.json", path="/v2/stocks/bars", clock=DAILY_RETRIEVED_AT)
+    queries = []
+    declarations = []
+    get_json = provider._get_json
+    normalize = alpaca.normalize_alpaca_daily_bars
+
+    def capture_query(path, query, **kwargs):
+        queries.append(query)
+        return get_json(path, query, **kwargs)
+
+    def capture_normalization(records, *, request, retrieved_at):
+        declarations.append(request)
+        return normalize(records, request=request, retrieved_at=retrieved_at)
+
+    monkeypatch.setattr(provider, "_get_json", capture_query)
+    monkeypatch.setattr(alpaca, "normalize_alpaca_daily_bars", capture_normalization)
+    result = provider.fetch_daily_bars(
+        ("MSFT", "AAPL"), EXPECTED_SESSIONS[0], EXPECTED_SESSIONS[-1],
+        expected_sessions=EXPECTED_SESSIONS,
+        completed_through_session=EXPECTED_SESSIONS[-1],
+        evidence_cutoff_at=DAILY_EVIDENCE_CUTOFF,
+        feed=MarketDataFeed.IEX, adjustment=BarAdjustment.SPLIT,
+    )
+    assert isinstance(result["AAPL"], tuple)
+    assert result["AAPL"][0].instrument_id == "fixture-aapl"
+    assert result["AAPL"][0].close == Decimal("192.0")
+    assert result["MSFT"].symbol == "MSFT"
+    assert result["MSFT"].error_code == "PROVIDER_NO_DATA"
+    assert queries[0]["symbols"] == "MSFT,AAPL"
+    assert declarations[0].symbols == ("AAPL", "MSFT")
+    assert declarations[0].expected_sessions is EXPECTED_SESSIONS
+    assert declarations[0].evidence_cutoff_at is DAILY_EVIDENCE_CUTOFF
+    assert declarations[0].feed is MarketDataFeed.IEX
+    assert declarations[0].adjustment is BarAdjustment.SPLIT
