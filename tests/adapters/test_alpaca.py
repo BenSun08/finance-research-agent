@@ -794,7 +794,10 @@ def test_request_rejection_retryability_uses_typed_boundary_signal(
 
     result = provider.fetch_premarket_observations(["AAPL"], AS_OF)
 
-    assert result["AAPL"].error_code == "PROVIDER_UNAVAILABLE"
+    assert result["AAPL"].error_code == (
+        "DEADLINE_EXCEEDED" if isinstance(exception, RequestDeadlineExceeded)
+        else "PROVIDER_UNAVAILABLE"
+    )
     assert result["AAPL"].retryable is retryable
 
 

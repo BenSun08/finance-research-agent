@@ -479,7 +479,7 @@ def publish_reduced_report(
     bundle_contents.update(_telemetry_bundle_fields(telemetry, telemetry_digest))
     bundle = PublishedRunBundle(
         run=compose_publication_context(stored.run, latest),
-        bundle=FrozenMap[str, JsonValue](bundle_contents),
+        bundle=FrozenMap(bundle_contents),
         report_markdown=markdown,
         markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),
     )
@@ -572,7 +572,7 @@ def publish_operational_report(
             "CREATED", "CONFIG_FROZEN", "PRIOR_PLANS_OBSERVED",
             "EVIDENCE_COLLECTED", "EVIDENCE_FROZEN", "NORMALIZED",
             "QUALITY_EVALUATED", "ANALYZED", "PACKET_FROZEN",
-            "COLLECTING", "NORMALIZING", "ANALYZING",
+            "COLLECTING", "NORMALIZING", "ANALYZING", "PREPARATION_FAILED",
         } or latest.execution_status is not run.execution_status:
             raise ValueError("operational publication requires pre-synthesis state")
         reason_hash = repository.stage_artifact(run_id, "operational_reason", reason_bytes)
@@ -605,7 +605,7 @@ def publish_operational_report(
     operational_contents.update(_telemetry_bundle_fields(telemetry, telemetry_digest))
     bundle = PublishedRunBundle(
         run=compose_publication_context(stored.run, latest),
-        bundle=FrozenMap[str, JsonValue](operational_contents),
+        bundle=FrozenMap(operational_contents),
         report_markdown=markdown,
         markdown_sha256=sha256(markdown.encode("utf-8")).hexdigest(),
     )

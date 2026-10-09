@@ -27,7 +27,13 @@ from finance_research_agent.domain.enums import (
     Session,
 )
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.types import FrozenMap, JsonValue, PositiveDecimal, UtcDatetime
+from finance_research_agent.domain.types import (
+    ArtifactJsonValue,
+    FrozenMap,
+    JsonValue,
+    PositiveDecimal,
+    UtcDatetime,
+)
 
 Identifier = Annotated[
     str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
@@ -334,7 +340,7 @@ class PublishedRunBundle(StrictModel):
     """Small storage-facing bundle envelope; later tasks own its contents."""
 
     run: "RunContext"
-    bundle: FrozenMap[str, JsonValue] = Field(default_factory=lambda: FrozenMap({}))
+    bundle: FrozenMap[str, ArtifactJsonValue] = Field(default_factory=lambda: FrozenMap({}))
     report_markdown: str = ""
     markdown_sha256: Sha256 | None = None
 

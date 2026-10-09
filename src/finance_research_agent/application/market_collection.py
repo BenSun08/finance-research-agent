@@ -27,6 +27,10 @@ from finance_research_agent.domain.models import (
 _SYMBOL_ADAPTER = TypeAdapter(Symbol)
 
 
+class MarketCalendarUnavailable(RuntimeError):
+    """A historical calendar lookup cannot supply the bounded session window."""
+
+
 def resolve_completed_session_window(
     calendar: TradingCalendar,
     *,
@@ -52,11 +56,11 @@ def resolve_completed_session_window(
         try:
             is_trading_day = calendar.is_trading_day(candidate)
         except Exception as error:
-            raise RuntimeError(
+            raise MarketCalendarUnavailable(
                 f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}: market calendar unavailable"
             ) from error
         if type(is_trading_day) is not bool:
-            raise RuntimeError(
+            raise MarketCalendarUnavailable(
                 f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}: invalid trading-day result"
             )
         if is_trading_day:
@@ -65,7 +69,7 @@ def resolve_completed_session_window(
                 return tuple(reversed(sessions))
         candidate -= timedelta(days=1)
 
-    raise RuntimeError(
+    raise MarketCalendarUnavailable(
         "trading calendar did not return enough sessions within bounded search"
     )
 

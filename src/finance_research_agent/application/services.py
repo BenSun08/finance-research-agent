@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from time import perf_counter_ns
 from typing import cast
 from zoneinfo import ZoneInfo
 
 from pydantic import TypeAdapter
 
+from finance_research_agent.application.component_versions import current_component_versions
 from finance_research_agent.application.config_service import ConfigService
 from finance_research_agent.application.feedback_service import RunFeedbackService
 from finance_research_agent.application.operations import (
@@ -43,6 +45,7 @@ from finance_research_agent.application.ports import (
     RunRepository,
     WatchlistRepository,
 )
+from finance_research_agent.application.premarket_preparation import prepare_research_packet
 from finance_research_agent.application.publication_service import (
     PublicationRepository,
     publish_reduced_report,
@@ -52,14 +55,15 @@ from finance_research_agent.application.publication_service import (
 from finance_research_agent.application.run_service import (
     PreparePremarketRunRequest,
     RunDependencies,
-    prepare_premarket_run,
 )
 from finance_research_agent.application.watchlist_service import WatchlistService
 from finance_research_agent.domain.enums import InvocationType
 from finance_research_agent.domain.models import (
+    ComponentVersions,
     ConfigurationSnapshot,
     PublishedArtifact,
     PublishedRunBundle,
+    RunContext,
     StoredRun,
 )
 from finance_research_agent.domain.packets import ResearchPacket
@@ -81,6 +85,10 @@ class ApplicationServices:
         feedback_repository: FeedbackRepository,
         event_providers: tuple[EventProvider, ...] = (),
         monotonic_ns: Callable[[], int] = perf_counter_ns,
+        component_versions: Callable[[ConfigurationSnapshot], ComponentVersions] = (
+            current_component_versions
+        ),
+        market_data_for_run: Callable[[RunContext, datetime], MarketDataProvider] | None = None,
     ) -> None:
         self._clock = clock
         self._calendar = calendar
@@ -89,11 +97,11 @@ class ApplicationServices:
         self._run_repository = run_repository
         self._published_artifact_reader = published_artifact_reader
         self._watchlist = WatchlistService(watchlist_repository)
-        self._feedback = RunFeedbackService(
-            published_artifact_reader, feedback_repository, clock
-        )
+        self._feedback = RunFeedbackService(published_artifact_reader, feedback_repository, clock)
         self._event_providers = event_providers
         self._monotonic_ns = monotonic_ns
+        self._component_versions = component_versions
+        self._market_data_for_run = market_data_for_run
         self._handlers: dict[str, Callable[[OperationRequest], object]] = {
             ProductAOperation.GET_SYSTEM_STATUS.value: self._get_system_status,
             ProductAOperation.VALIDATE_CONFIGURATION.value: self._validate_configuration,
@@ -142,9 +150,9 @@ class ApplicationServices:
         except Exception:
             diagnostics.append(SystemDiagnosticCode.MARKET_CALENDAR_UNAVAILABLE)
         try:
-            current_market_date = self._clock.now_utc().astimezone(
-                ZoneInfo("America/New_York")
-            ).date()
+            current_market_date = (
+                self._clock.now_utc().astimezone(ZoneInfo("America/New_York")).date()
+            )
         except Exception:
             current_market_date = None
         return SystemStatusResult(
@@ -159,11 +167,9 @@ class ApplicationServices:
         cast(ValidateConfigurationRequest, request)
         return ConfigService(self._configuration_repository).validate_and_snapshot()
 
-    def _prepare_premarket_run(
-        self, request: OperationRequest
-    ) -> object:
+    def _prepare_premarket_run(self, request: OperationRequest) -> object:
         typed = cast(PreparePremarketRunOperationRequest, request)
-        return prepare_premarket_run(
+        return prepare_research_packet(
             PreparePremarketRunRequest(
                 market_date=typed.market_date,
                 requested_revision=typed.requested_revision,
@@ -177,7 +183,9 @@ class ApplicationServices:
                 market_data=self._market_data,
                 event_providers=self._event_providers,
                 monotonic_ns=self._monotonic_ns,
+                component_versions=self._component_versions,
             ),
+            market_data_for_run=self._market_data_for_run,
         )
 
     def _get_run_status(self, request: OperationRequest) -> StoredRun:

@@ -24,6 +24,7 @@ from finance_research_agent.domain.enums import (
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.market_calendar import format_run_id
 from finance_research_agent.domain.models import (
+    PerformanceTelemetry,
     PublishedArtifact,
     PublishedRunBundle,
     RunCheckpoint,
@@ -505,7 +506,7 @@ class FileSystemRunRepository:
                 "CREATED", "CONFIG_FROZEN", "PRIOR_PLANS_OBSERVED",
                 "EVIDENCE_COLLECTED", "EVIDENCE_FROZEN", "NORMALIZED",
                 "QUALITY_EVALUATED", "ANALYZED", "PACKET_FROZEN",
-                "COLLECTING", "NORMALIZING", "ANALYZING",
+                "COLLECTING", "NORMALIZING", "ANALYZING", "PREPARATION_FAILED",
             }
             or any("research_packet" in item.artifact_hashes for item in stored.checkpoints)
             or self._staged_artifact_path(run_id, "research_packet").is_file()
@@ -690,6 +691,28 @@ class FileSystemRunRepository:
             operational_publication = self._operational_publication_valid(
                 run_id, stored, checkpoint
             )
+            previous = stored.checkpoints[-1] if stored.checkpoints else None
+            failure_reason = self._staged_artifact_path(run_id, "operational_reason")
+            valid_preparation_failure = (
+                checkpoint.stage == "PREPARATION_FAILED"
+                and previous is not None
+                and previous.stage in {"EVIDENCE_FROZEN", "QUALITY_EVALUATED"}
+                and checkpoint.execution_status is previous.execution_status
+                and checkpoint.data_quality_status is DataQualityStatus.FAIL
+                and checkpoint.delivery_status is previous.delivery_status
+                and not checkpoint.resumable
+                and self._stored_packet_hash(stored) is None
+                and not self._staged_artifact_path(run_id, "research_packet").exists()
+                and set(checkpoint.artifact_hashes)
+                == set(previous.artifact_hashes) | {"operational_reason"}
+                and all(checkpoint.artifact_hashes[name] == digest
+                        for name, digest in previous.artifact_hashes.items())
+                and staged_hashes_valid
+                and failure_reason.is_file()
+                and failure_reason.read_bytes() in {
+                    code.value.encode("ascii") for code in ErrorCode
+                }
+            )
             valid_retry = (
                 checkpoint.stage in {"AWAITING_SYNTHESIS", "VALIDATING", "PUBLISHED"}
                 and checkpoint.execution_status.value == checkpoint.stage
@@ -767,6 +790,7 @@ class FileSystemRunRepository:
                 or valid_quality_evaluation
                 or valid_retry
                 or operational_publication
+                or valid_preparation_failure
             ):
                 raise ValueError(
                     f"{ErrorCode.EVIDENCE_CUTOFF_VIOLATION}: new revision required"
@@ -1091,6 +1115,171 @@ class FileSystemRunRepository:
             return report_bytes.decode("utf-8")
         except UnicodeDecodeError:
             return None
+
+    def _unaliased_publication_path(self, *parts: str) -> Path:
+        candidate = self.root
+        for part in parts:
+            candidate = candidate / part
+            if candidate.is_symlink():
+                raise _path_error()
+        return self._safe_path(*parts)
+
+    def get_previous_research_run(self, market_date: date) -> str | None:
+        """Read the latest prior research without falling back across revisions.
+
+        Only indexed publications participate. A valid operational publication
+        skips its whole date; corrupt indexed bytes stop the query. Reduced
+        publications retain their frozen packet for downstream status checks.
+        This method never creates directories, locks, or other storage files.
+        """
+        if type(market_date) is not date:
+            raise ValueError("market_date must be a date")
+        reports = self._unaliased_publication_path("reports")
+        if not reports.exists():
+            return None
+        if not reports.is_dir():
+            raise PublicationError("publication reports directory is invalid")
+        dates: list[date] = []
+        for year in reports.iterdir():
+            if not re.fullmatch(r"[0-9]{4}", year.name):
+                continue
+            year = self._unaliased_publication_path("reports", year.name)
+            if not year.is_dir():
+                raise PublicationError("publication year directory is invalid")
+            for day in year.iterdir():
+                try:
+                    candidate_date = date.fromisoformat(day.name)
+                except ValueError:
+                    continue
+                if (
+                    day.name != candidate_date.isoformat()
+                    or year.name != f"{candidate_date.year:04d}"
+                    or candidate_date >= market_date
+                ):
+                    continue
+                day = self._unaliased_publication_path("reports", year.name, day.name)
+                if not day.is_dir():
+                    raise PublicationError("publication date directory is invalid")
+                dates.append(candidate_date)
+        for candidate_date in sorted(dates, reverse=True):
+            year_name = f"{candidate_date.year:04d}"
+            day_name = candidate_date.isoformat()
+            index_path = self._unaliased_publication_path(
+                "reports", year_name, day_name, "index.json"
+            )
+            if not index_path.exists():
+                continue
+            try:
+                index = json.loads(index_path.read_bytes())
+                if not isinstance(index, dict) or not index:
+                    raise PublicationError("publication index is invalid")
+                revisions: dict[int, str] = {}
+                for run_id in index:
+                    indexed_date, revision = self._validated_run_id(run_id)
+                    if indexed_date != candidate_date:
+                        raise PublicationError("publication index date is invalid")
+                    revisions[revision] = run_id
+                run_id = revisions[max(revisions)]
+                for filename in ("bundle.json", "report.md"):
+                    self._unaliased_publication_path(
+                        "runs", year_name, day_name, run_id, filename
+                    )
+                bundle = self.load_published_bundle(run_id)
+                receipt = self.get_published_artifact(run_id)
+                if bundle is None or receipt is None:
+                    raise PublicationError("indexed publication is missing or corrupt")
+                self._ensure_run_identity(bundle.run, run_id)
+                if (
+                    bundle.run.execution_status is not ExecutionStatus.PUBLISHED
+                    or bundle.report_markdown != self.get_report(run_id)
+                    or bundle.markdown_sha256 != receipt.markdown_sha256
+                ):
+                    raise PublicationError("indexed publication state is inconsistent")
+                if "research_packet" in bundle.bundle:
+                    return run_id
+                if (
+                    bundle.bundle.get("brief_origin") != "OPERATIONAL"
+                    or bundle.bundle.get("failure_code") not in {
+                        code.value for code in ErrorCode
+                    }
+                    or bundle.run.data_quality_status is not DataQualityStatus.FAIL
+                    or set(bundle.bundle) - {
+                        "brief_origin", "failure_code", "performance_telemetry",
+                        "performance_telemetry_sha256",
+                    }
+                ):
+                    raise PublicationError("packetless publication is not operational")
+                telemetry_fields = {
+                    "performance_telemetry", "performance_telemetry_sha256",
+                }
+                parts = ("runs", year_name, day_name, run_id)
+                for filename in ("run.json", "frozen-evidence.json", "checkpoints"):
+                    self._unaliased_publication_path(*parts, filename)
+                final = self._unaliased_publication_path(*parts)
+                for path in (final / "checkpoints").glob("*.json"):
+                    self._unaliased_publication_path(*parts, "checkpoints", path.name)
+                stored = self._load_from_path(run_id, final, True)
+                if stored is None:
+                    raise PublicationError("operational stored run is missing")
+                self._ensure_run_identity(stored.run, run_id)
+                checkpoint = stored.checkpoints[-1] if stored.checkpoints else None
+                if checkpoint is None:
+                    if stored.run != bundle.run:
+                        raise PublicationError("legacy operational stored identity is invalid")
+                elif (
+                    checkpoint.run_id != run_id
+                    or checkpoint.stage != "PUBLISHED"
+                    or checkpoint.execution_status is not ExecutionStatus.PUBLISHED
+                    or checkpoint.data_quality_status is not DataQualityStatus.FAIL
+                    or checkpoint.delivery_status is not bundle.run.delivery_status
+                    or checkpoint.resumable
+                    or checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at
+                    or bundle.run != stored.run.model_copy(update={
+                        "execution_status": checkpoint.execution_status,
+                        "data_quality_status": checkpoint.data_quality_status,
+                        "delivery_status": checkpoint.delivery_status,
+                    })
+                ):
+                    raise PublicationError("operational checkpoint identity is invalid")
+                names = [
+                    name for name in checkpoint.artifact_hashes
+                    if name.startswith("performance_telemetry_")
+                ] if checkpoint is not None else []
+                if telemetry_fields & set(bundle.bundle) or names:
+                    if not telemetry_fields.issubset(bundle.bundle):
+                        raise PublicationError("operational telemetry requires value and hash")
+                    contents = bundle.model_dump(mode="json")["bundle"]
+                    telemetry = PerformanceTelemetry.model_validate(
+                        contents["performance_telemetry"], strict=True
+                    )
+                    digest = contents["performance_telemetry_sha256"]
+                    canonical = canonical_bytes(telemetry)
+                    serialized = json.dumps(
+                        contents["performance_telemetry"], sort_keys=True,
+                        separators=(",", ":"), ensure_ascii=True, allow_nan=False,
+                    ).encode("utf-8")
+                    if not isinstance(digest, str) or _sha256(canonical) != digest:
+                        raise PublicationError("operational telemetry hash is invalid")
+                    if serialized != canonical:
+                        raise PublicationError("operational telemetry is not canonical")
+                    if checkpoint is None:
+                        raise PublicationError("operational telemetry has no final checkpoint")
+                    if (
+                        names != ["performance_telemetry_" + digest]
+                        or checkpoint.artifact_hashes[names[0]] != digest
+                    ):
+                        raise PublicationError("operational telemetry checkpoint hash is invalid")
+                    artifact = self._unaliased_publication_path(
+                        *parts, "artifacts", names[0] + ".bin"
+                    )
+                    artifact_bytes = self._read_confined(artifact.parent, artifact.name)
+                    if artifact_bytes != canonical or _sha256(artifact_bytes) != digest:
+                        raise PublicationError("operational telemetry artifact bytes are invalid")
+            except PathNotAllowedError:
+                raise
+            except (OSError, TypeError, ValueError) as error:
+                raise PublicationError("indexed publication is invalid") from error
+        return None
 
     def load_published_bundle(self, run_id: str) -> PublishedRunBundle | None:
         _, final, _ = self._paths(run_id)

@@ -1,5 +1,396 @@
 {
   "$defs": {
+    "CalculatedPrice": {
+      "additionalProperties": false,
+      "description": "A derived scenario value, with the observation anchor and every input reference.",
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "evidence_cutoff_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Evidence Cutoff At",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "feed": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Feed",
+          "type": "string"
+        },
+        "formula_version": {
+          "default": "r6-setups-1",
+          "title": "Formula Version",
+          "type": "string"
+        },
+        "input_evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Input Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "instrument_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Instrument Id",
+          "type": "string"
+        },
+        "metric_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Metric Ids",
+          "type": "array"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "policy_version": {
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "value": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "value",
+        "currency",
+        "session",
+        "provider",
+        "feed",
+        "coverage",
+        "observed_at",
+        "retrieved_at",
+        "evidence_id",
+        "quality_flags",
+        "input_evidence_ids",
+        "metric_ids",
+        "policy_version",
+        "evidence_cutoff_at"
+      ],
+      "title": "CalculatedPrice",
+      "type": "object"
+    },
+    "CandidateExclusion": {
+      "additionalProperties": false,
+      "properties": {
+        "gates": {
+          "items": {
+            "$ref": "#/$defs/GateResult"
+          },
+          "minItems": 1,
+          "title": "Gates",
+          "type": "array"
+        },
+        "reason_codes": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "setup_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SetupType"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "symbol": {
+          "maxLength": 16,
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "reason_codes",
+        "gates"
+      ],
+      "title": "CandidateExclusion",
+      "type": "object"
+    },
+    "Capability": {
+      "enum": [
+        "MARKET_SUMMARY_AVAILABLE",
+        "REGIME_CLASSIFICATION_AVAILABLE",
+        "WATCHLIST_METRICS_AVAILABLE",
+        "EVENT_RISK_CHECK_AVAILABLE",
+        "SETUP_DETECTION_AVAILABLE",
+        "PLAN_DRAFT_AVAILABLE",
+        "POSITION_SIZING_AVAILABLE",
+        "PORTFOLIO_HEAT_CHECK_AVAILABLE"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
+    "CapabilityState": {
+      "additionalProperties": false,
+      "description": "Explicit availability with mandatory reasons for disabled capabilities.",
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "capability": {
+          "$ref": "#/$defs/Capability"
+        },
+        "evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "reason_codes": {
+          "items": {
+            "$ref": "#/$defs/ErrorCode"
+          },
+          "maxItems": 64,
+          "title": "Reason Codes",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability",
+        "available",
+        "reason_codes",
+        "evidence_ids"
+      ],
+      "title": "CapabilityState",
+      "type": "object"
+    },
+    "CompletedDailyBar": {
+      "additionalProperties": false,
+      "description": "One completed daily bar with its evidence and provider provenance.",
+      "properties": {
+        "adjustment": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Adjustment",
+          "type": "string"
+        },
+        "close": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Close",
+          "type": "string"
+        },
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "evidence_cutoff_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Evidence Cutoff At",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "feed": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Feed",
+          "type": "string"
+        },
+        "high": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "High",
+          "type": "string"
+        },
+        "instrument_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Instrument Id",
+          "type": "string"
+        },
+        "low": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Low",
+          "type": "string"
+        },
+        "open": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Open",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "session_date": {
+          "format": "date",
+          "title": "Session Date",
+          "type": "string"
+        },
+        "source_timestamp": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Source Timestamp",
+          "type": "string"
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Volume"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "session_date",
+        "source_timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "session",
+        "provider",
+        "feed",
+        "coverage",
+        "adjustment",
+        "retrieved_at",
+        "evidence_cutoff_at",
+        "evidence_id",
+        "quality_flags"
+      ],
+      "title": "CompletedDailyBar",
+      "type": "object"
+    },
     "ConfigurationSnapshot": {
       "additionalProperties": false,
       "description": "Immutable configuration identity and optional frozen policy copies.",
@@ -123,6 +514,203 @@
       "title": "ConfigurationSnapshot",
       "type": "object"
     },
+    "Coverage": {
+      "enum": [
+        "single_exchange",
+        "consolidated",
+        "unknown"
+      ],
+      "title": "Coverage",
+      "type": "string"
+    },
+    "CurrentSessionBar": {
+      "additionalProperties": false,
+      "description": "Typed current-session bar contract; R2 does not collect these values.",
+      "properties": {
+        "close": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Close",
+          "type": "string"
+        },
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "end_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "End At",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "feed": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Feed",
+          "type": "string"
+        },
+        "high": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "High",
+          "type": "string"
+        },
+        "instrument_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Instrument Id",
+          "type": "string"
+        },
+        "low": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Low",
+          "type": "string"
+        },
+        "open": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Open",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "start_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Start At",
+          "type": "string"
+        },
+        "volume": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Volume"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "session",
+        "start_at",
+        "end_at",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "provider",
+        "feed",
+        "coverage",
+        "retrieved_at",
+        "evidence_id",
+        "quality_flags"
+      ],
+      "title": "CurrentSessionBar",
+      "type": "object"
+    },
+    "DataQualityResult": {
+      "additionalProperties": false,
+      "description": "Global availability, diagnostics, and explicitly scoped symbol outcomes.",
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/$defs/CapabilityState"
+          },
+          "maxItems": 8,
+          "minItems": 8,
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "global_reason_codes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ErrorCode"
+          },
+          "maxItems": 64,
+          "title": "Global Reason Codes",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/DataQualityStatus"
+        },
+        "symbol_capabilities": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/CapabilityState"
+            },
+            "type": "array"
+          },
+          "default": {},
+          "maxProperties": 128,
+          "title": "Symbol Capabilities",
+          "type": "object"
+        },
+        "symbol_plan_statuses": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PlanStatus"
+          },
+          "default": {},
+          "maxProperties": 128,
+          "title": "Symbol Plan Statuses",
+          "type": "object"
+        }
+      },
+      "required": [
+        "status",
+        "capabilities"
+      ],
+      "title": "DataQualityResult",
+      "type": "object"
+    },
     "DataQualityStatus": {
       "enum": [
         "PASS",
@@ -142,6 +730,312 @@
       "title": "DeliveryStatus",
       "type": "string"
     },
+    "EntryZone": {
+      "additionalProperties": false,
+      "properties": {
+        "lower": {
+          "$ref": "#/$defs/CalculatedPrice"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "upper": {
+          "$ref": "#/$defs/CalculatedPrice"
+        }
+      },
+      "required": [
+        "lower",
+        "upper"
+      ],
+      "title": "EntryZone",
+      "type": "object"
+    },
+    "ErrorCode": {
+      "enum": [
+        "SOURCE_NOT_CONFIGURED",
+        "CONFIGURATION_INVALID",
+        "CREDENTIALS_MISSING",
+        "PERMISSION_DENIED",
+        "MARKET_CALENDAR_UNAVAILABLE",
+        "PROVIDER_UNAVAILABLE",
+        "PROVIDER_NO_DATA",
+        "PROVIDER_MISSING_SESSION",
+        "PROVIDER_DUPLICATE_CONFLICT",
+        "PROVIDER_MALFORMED_BAR",
+        "PROVIDER_STALE",
+        "PROVIDER_FUTURE_OR_INCOMPLETE_BAR",
+        "PROVIDER_SCHEMA_DRIFT",
+        "INVALID_RESPONSE",
+        "INVALID_REQUEST",
+        "EVIDENCE_CUTOFF_VIOLATION",
+        "SOURCE_CONFLICT",
+        "STALE_DATA",
+        "UNSUPPORTED_INSTRUMENT",
+        "SIZING_UNAVAILABLE",
+        "PORTFOLIO_HEAT_UNAVAILABLE",
+        "INVALID_RUN_STATE",
+        "INTERNAL_ERROR",
+        "VALIDATION_FAILED",
+        "PUBLICATION_FAILED",
+        "PATH_NOT_ALLOWED",
+        "DEADLINE_EXCEEDED"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "EventAssessment": {
+      "additionalProperties": false,
+      "description": "Event overlay outcome that a later score cannot weaken or override.",
+      "properties": {
+        "event_risks": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Event Risks",
+          "type": "array"
+        },
+        "gates": {
+          "items": {
+            "$ref": "#/$defs/GateResult"
+          },
+          "title": "Gates",
+          "type": "array"
+        },
+        "no_trade_conditions": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "No Trade Conditions",
+          "type": "array"
+        },
+        "plan_status": {
+          "$ref": "#/$defs/PlanStatus"
+        },
+        "quality_flags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Quality Flags",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_status",
+        "gates"
+      ],
+      "title": "EventAssessment",
+      "type": "object"
+    },
+    "EventRecord": {
+      "additionalProperties": false,
+      "description": "Known or scheduled event with ordered supporting and conflicting evidence.",
+      "properties": {
+        "conflict_evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Conflict Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "event_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_time": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Event Time",
+          "type": "string"
+        },
+        "event_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Event Type",
+          "type": "string"
+        },
+        "materiality": {
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH",
+            "UNKNOWN"
+          ],
+          "title": "Materiality",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "subject_symbol": {
+          "anyOf": [
+            {
+              "maxLength": 16,
+              "minLength": 1,
+              "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Subject Symbol"
+        },
+        "supporting_evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Supporting Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "verified": {
+          "title": "Verified",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "event_id",
+        "event_type",
+        "subject_symbol",
+        "event_time",
+        "verified",
+        "materiality",
+        "supporting_evidence_ids",
+        "conflict_evidence_ids"
+      ],
+      "title": "EventRecord",
+      "type": "object"
+    },
+    "EvidenceItem": {
+      "additionalProperties": false,
+      "description": "Citable bounded evidence; no source-authority or freshness decisions.",
+      "properties": {
+        "authority_tier": {
+          "maximum": 255,
+          "minimum": 1,
+          "title": "Authority Tier",
+          "type": "integer"
+        },
+        "citation_label": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Citation Label",
+          "type": "string"
+        },
+        "event_time": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Event Time"
+        },
+        "evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "instrument_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Instrument Id"
+        },
+        "published_time": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Published Time"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceObservation"
+        },
+        "structured_fields": {
+          "additionalProperties": false,
+          "maxProperties": 128,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.:-]*$": {
+              "$ref": "#/$defs/JsonValue"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "title": "Structured Fields",
+          "type": "object"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "source",
+        "authority_tier",
+        "instrument_id",
+        "event_time",
+        "published_time",
+        "structured_fields",
+        "citation_label"
+      ],
+      "title": "EvidenceItem",
+      "type": "object"
+    },
     "ExecutionStatus": {
       "enum": [
         "CREATED",
@@ -156,6 +1050,217 @@
       ],
       "title": "ExecutionStatus",
       "type": "string"
+    },
+    "GateResult": {
+      "additionalProperties": false,
+      "description": "A recorded gate decision; constructing it performs no policy evaluation.",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/Capability"
+        },
+        "evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "gate_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Gate Id",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Message",
+          "type": "string"
+        },
+        "reason_code": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "rule_version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]*$",
+          "title": "Rule Version",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/GateStatus"
+        }
+      },
+      "required": [
+        "gate_id",
+        "status",
+        "reason_code",
+        "message",
+        "evidence_ids",
+        "capability",
+        "rule_version"
+      ],
+      "title": "GateResult",
+      "type": "object"
+    },
+    "GateStatus": {
+      "enum": [
+        "PASS",
+        "WARNING",
+        "BLOCK"
+      ],
+      "title": "GateStatus",
+      "type": "string"
+    },
+    "InstrumentIdentity": {
+      "additionalProperties": false,
+      "description": "Normalized research metadata; unknown classification stays explicit.",
+      "properties": {
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "instrument_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Instrument Id",
+          "type": "string"
+        },
+        "instrument_type": {
+          "enum": [
+            "COMMON_STOCK",
+            "ETF",
+            "OTHER",
+            "UNKNOWN"
+          ],
+          "title": "Instrument Type",
+          "type": "string"
+        },
+        "is_active": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Active"
+        },
+        "is_inverse": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Inverse"
+        },
+        "is_leveraged": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Leveraged"
+        },
+        "is_otc": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Otc"
+        },
+        "listing_country": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z]{2}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Listing Country"
+        },
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "primary_exchange": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Primary Exchange"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "symbol": {
+          "maxLength": 16,
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "symbol",
+        "name",
+        "instrument_type",
+        "primary_exchange",
+        "listing_country",
+        "currency",
+        "is_active",
+        "is_leveraged",
+        "is_inverse",
+        "is_otc"
+      ],
+      "title": "InstrumentIdentity",
+      "type": "object"
     },
     "JsonValue": {
       "anyOf": [
@@ -190,6 +1295,1287 @@
           "type": "null"
         }
       ]
+    },
+    "MarketSnapshot": {
+      "additionalProperties": false,
+      "description": "Canonical Product A market facts for one normalized instrument.",
+      "properties": {
+        "completed_daily_bars": {
+          "items": {
+            "$ref": "#/$defs/CompletedDailyBar"
+          },
+          "title": "Completed Daily Bars",
+          "type": "array"
+        },
+        "current_session_bars": {
+          "items": {
+            "$ref": "#/$defs/CurrentSessionBar"
+          },
+          "title": "Current Session Bars",
+          "type": "array"
+        },
+        "instrument": {
+          "$ref": "#/$defs/InstrumentIdentity"
+        },
+        "latest_price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PriceObservation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_observations": {
+          "items": {
+            "$ref": "#/$defs/SourceObservation"
+          },
+          "title": "Source Observations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "instrument",
+        "latest_price",
+        "completed_daily_bars",
+        "current_session_bars",
+        "source_observations",
+        "quality_flags"
+      ],
+      "title": "MarketSnapshot",
+      "type": "object"
+    },
+    "MetricDirection": {
+      "description": "Direction implied by a metric value when applicable.",
+      "enum": [
+        "up",
+        "flat",
+        "down",
+        "not_applicable"
+      ],
+      "title": "MetricDirection",
+      "type": "string"
+    },
+    "MetricName": {
+      "description": "Indicator names produced by the bounded deterministic core.",
+      "enum": [
+        "sma",
+        "sma_slope",
+        "relative_return",
+        "atr_percent",
+        "atr_percentile",
+        "realized_volatility",
+        "realized_volatility_percentile",
+        "percentile_rank",
+        "equal_weight_relative_return"
+      ],
+      "title": "MetricName",
+      "type": "string"
+    },
+    "MetricResult": {
+      "additionalProperties": false,
+      "description": "One versioned deterministic calculation or structured unavailability.",
+      "properties": {
+        "calculated_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Calculated At",
+          "type": "string"
+        },
+        "direction": {
+          "$ref": "#/$defs/MetricDirection"
+        },
+        "formula_version": {
+          "title": "Formula Version",
+          "type": "string"
+        },
+        "input_evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "maxLength": 256,
+          "title": "Input Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "input_snapshot_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "maxLength": 256,
+          "title": "Input Snapshot Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "metric_id": {
+          "title": "Metric Id",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/MetricName"
+        },
+        "parameters": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+                "type": "string"
+              },
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "maxItems": 64,
+          "maxLength": 64,
+          "title": "Parameters",
+          "type": "array"
+        },
+        "period_end": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Period End"
+        },
+        "period_start": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Period Start"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "maxLength": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/MetricStatus"
+        },
+        "unavailable_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MetricUnavailableReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "$ref": "#/$defs/MetricUnit"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "metric_id",
+        "name",
+        "status",
+        "value",
+        "unit",
+        "direction",
+        "parameters",
+        "period_start",
+        "period_end",
+        "formula_version",
+        "input_snapshot_ids",
+        "calculated_at",
+        "unavailable_reason",
+        "quality_flags",
+        "input_evidence_ids"
+      ],
+      "title": "MetricResult",
+      "type": "object"
+    },
+    "MetricStatus": {
+      "description": "Availability of a deterministic metric.",
+      "enum": [
+        "available",
+        "unavailable"
+      ],
+      "title": "MetricStatus",
+      "type": "string"
+    },
+    "MetricUnavailableReason": {
+      "description": "Typed reasons why an indicator could not be calculated.",
+      "enum": [
+        "insufficient_history",
+        "missing_input",
+        "misaligned_dates"
+      ],
+      "title": "MetricUnavailableReason",
+      "type": "string"
+    },
+    "MetricUnit": {
+      "description": "Units used by deterministic metrics.",
+      "enum": [
+        "price",
+        "decimal",
+        "percentile_0_to_100"
+      ],
+      "title": "MetricUnit",
+      "type": "string"
+    },
+    "ObservationOutcome": {
+      "enum": [
+        "ENTRY_ZONE_NOT_OBSERVED",
+        "ENTRY_ZONE_OBSERVED",
+        "INVALIDATION_OBSERVED",
+        "TARGET_OBSERVED",
+        "AMBIGUOUS_SEQUENCE",
+        "OBSERVATION_WINDOW_ENDED"
+      ],
+      "title": "ObservationOutcome",
+      "type": "string"
+    },
+    "PenaltyName": {
+      "enum": [
+        "EXTENSION_PENALTY",
+        "EVENT_UNCERTAINTY_PENALTY",
+        "CORRELATION_CONCENTRATION_PENALTY",
+        "DATA_QUALITY_PENALTY"
+      ],
+      "title": "PenaltyName",
+      "type": "string"
+    },
+    "PlanLevels": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_stop": {
+          "$ref": "#/$defs/CalculatedPrice"
+        },
+        "entry_zone": {
+          "$ref": "#/$defs/EntryZone"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "support_reference": {
+          "$ref": "#/$defs/CalculatedPrice"
+        },
+        "target_scenarios": {
+          "items": {
+            "$ref": "#/$defs/TargetScenario"
+          },
+          "minItems": 1,
+          "title": "Target Scenarios",
+          "type": "array"
+        }
+      },
+      "required": [
+        "entry_zone",
+        "candidate_stop",
+        "support_reference",
+        "target_scenarios"
+      ],
+      "title": "PlanLevels",
+      "type": "object"
+    },
+    "PlanObservation": {
+      "additionalProperties": false,
+      "description": "Market path evidence only; no fill, position, or realized return fields.",
+      "properties": {
+        "entry_zone_observed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Entry Zone Observed At"
+        },
+        "evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "invalidation_observed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Invalidation Observed At"
+        },
+        "mae": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mae"
+        },
+        "mfe": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mfe"
+        },
+        "observation_reference_evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Observation Reference Evidence Id",
+          "type": "string"
+        },
+        "observation_reference_price": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Observation Reference Price",
+          "type": "string"
+        },
+        "observed_through": {
+          "format": "date",
+          "title": "Observed Through",
+          "type": "string"
+        },
+        "outcomes": {
+          "items": {
+            "$ref": "#/$defs/ObservationOutcome"
+          },
+          "minItems": 1,
+          "title": "Outcomes",
+          "type": "array"
+        },
+        "plan_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "target_observed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Observed At"
+        }
+      },
+      "required": [
+        "plan_id",
+        "observed_through",
+        "outcomes",
+        "observation_reference_price",
+        "observation_reference_evidence_id",
+        "entry_zone_observed_at",
+        "invalidation_observed_at",
+        "target_observed_at",
+        "mfe",
+        "mae",
+        "evidence_ids"
+      ],
+      "title": "PlanObservation",
+      "type": "object"
+    },
+    "PlanScoreBreakdown": {
+      "additionalProperties": false,
+      "properties": {
+        "components": {
+          "items": {
+            "$ref": "#/$defs/ScoreComponent"
+          },
+          "title": "Components",
+          "type": "array"
+        },
+        "penalties": {
+          "items": {
+            "$ref": "#/$defs/ScorePenalty"
+          },
+          "title": "Penalties",
+          "type": "array"
+        },
+        "positive_score": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Positive Score",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "total_score": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Total Score",
+          "type": "string"
+        }
+      },
+      "required": [
+        "components",
+        "penalties",
+        "positive_score",
+        "total_score"
+      ],
+      "title": "PlanScoreBreakdown",
+      "type": "object"
+    },
+    "PlanStatus": {
+      "enum": [
+        "DRAFT",
+        "REVIEW_REQUIRED",
+        "BLOCKED",
+        "EXPIRED"
+      ],
+      "title": "PlanStatus",
+      "type": "string"
+    },
+    "PlanTargetScenario": {
+      "additionalProperties": false,
+      "properties": {
+        "distance": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Distance",
+          "type": "string"
+        },
+        "potential_reward": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Potential Reward",
+          "type": "string"
+        },
+        "price": {
+          "$ref": "#/$defs/CalculatedPrice"
+        },
+        "r_multiple": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "R Multiple",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price",
+        "distance",
+        "potential_reward",
+        "r_multiple"
+      ],
+      "title": "PlanTargetScenario",
+      "type": "object"
+    },
+    "PositionSizing": {
+      "additionalProperties": false,
+      "description": "Auditable per-plan calculation, never a position or execution record.",
+      "properties": {
+        "adjusted_risk_budget": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Adjusted Risk Budget"
+        },
+        "base_risk_budget": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Risk Budget"
+        },
+        "calculated_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Calculated At",
+          "type": "string"
+        },
+        "candidate_stop_price": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Stop Price"
+        },
+        "entry_reference_price": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entry Reference Price"
+        },
+        "estimated_plan_risk_pct": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimated Plan Risk Pct"
+        },
+        "estimated_post_plan_heat_pct": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Estimated Post Plan Heat Pct"
+        },
+        "max_position_pct": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Position Pct"
+        },
+        "max_risk_per_trade_pct": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Risk Per Trade Pct"
+        },
+        "planning_capital_usd": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Planning Capital Usd"
+        },
+        "quantity_increment": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantity Increment"
+        },
+        "regime_risk_multiplier": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Regime Risk Multiplier"
+        },
+        "risk_per_unit": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Per Unit"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SizingStatus"
+        },
+        "suggested_units": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Suggested Units"
+        },
+        "unavailable_reasons": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Unavailable Reasons",
+          "type": "array"
+        },
+        "units_by_position_cap": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Units By Position Cap"
+        },
+        "units_by_risk": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Units By Risk"
+        }
+      },
+      "required": [
+        "status",
+        "calculated_at"
+      ],
+      "title": "PositionSizing",
+      "type": "object"
+    },
+    "PriceObservation": {
+      "additionalProperties": false,
+      "description": "Positive Decimal price paired with its original market-data provenance.",
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "feed": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Feed",
+          "type": "string"
+        },
+        "instrument_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Instrument Id",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "value": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "instrument_id",
+        "value",
+        "currency",
+        "session",
+        "provider",
+        "feed",
+        "coverage",
+        "observed_at",
+        "retrieved_at",
+        "evidence_id",
+        "quality_flags"
+      ],
+      "title": "PriceObservation",
+      "type": "object"
+    },
+    "PublishedArtifact": {
+      "additionalProperties": false,
+      "description": "Hashes and identity returned only after a complete publication.",
+      "properties": {
+        "bundle_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Bundle Sha256",
+          "type": "string"
+        },
+        "markdown_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Markdown Sha256",
+          "type": "string"
+        },
+        "published_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Published At",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 128,
+          "pattern": "^premarket-\\d{4}-\\d{2}-\\d{2}-r[1-9]\\d*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "bundle_sha256",
+        "markdown_sha256",
+        "published_at"
+      ],
+      "title": "PublishedArtifact",
+      "type": "object"
+    },
+    "Regime": {
+      "description": "Risk-environment taxonomy for the bounded release.",
+      "enum": [
+        "permissive",
+        "neutral",
+        "defensive",
+        "unknown"
+      ],
+      "title": "Regime",
+      "type": "string"
+    },
+    "RegimeComponent": {
+      "description": "Components of the initial deterministic regime model.",
+      "enum": [
+        "broad_trend",
+        "participation",
+        "leadership",
+        "volatility_stress",
+        "credit_cross_asset"
+      ],
+      "title": "RegimeComponent",
+      "type": "string"
+    },
+    "RegimeComponentReason": {
+      "description": "Reason code explaining a component state.",
+      "enum": [
+        "positive_rule_matched",
+        "negative_rule_matched",
+        "mixed_signals",
+        "missing_required_snapshot",
+        "insufficient_history",
+        "insufficient_valid_series"
+      ],
+      "title": "RegimeComponentReason",
+      "type": "string"
+    },
+    "RegimeComponentResult": {
+      "description": "One explainable deterministic component result.",
+      "properties": {
+        "component": {
+          "$ref": "#/$defs/RegimeComponent"
+        },
+        "metric_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Metric Ids",
+          "type": "array"
+        },
+        "quality_flags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Quality Flags",
+          "type": "array"
+        },
+        "reason_code": {
+          "$ref": "#/$defs/RegimeComponentReason"
+        },
+        "state": {
+          "$ref": "#/$defs/RegimeComponentState"
+        },
+        "weight": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Weight",
+          "type": "string"
+        },
+        "weighted_score": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Weighted Score"
+        }
+      },
+      "required": [
+        "component",
+        "state",
+        "weight",
+        "weighted_score",
+        "metric_ids",
+        "reason_code",
+        "quality_flags"
+      ],
+      "title": "RegimeComponentResult",
+      "type": "object"
+    },
+    "RegimeComponentState": {
+      "description": "Deterministic sign or availability of a regime component.",
+      "enum": [
+        "positive",
+        "mixed",
+        "negative",
+        "unavailable"
+      ],
+      "title": "RegimeComponentState",
+      "type": "string"
+    },
+    "RegimeResult": {
+      "description": "Structured output of the deterministic regime calculation.",
+      "properties": {
+        "calculated_at": {
+          "format": "date-time",
+          "title": "Calculated At",
+          "type": "string"
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/RegimeComponentResult"
+          },
+          "title": "Components",
+          "type": "array"
+        },
+        "critical_stress": {
+          "title": "Critical Stress",
+          "type": "boolean"
+        },
+        "critical_stress_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Critical Stress Reasons",
+          "type": "array"
+        },
+        "formula_version": {
+          "title": "Formula Version",
+          "type": "string"
+        },
+        "input_snapshot_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Input Snapshot Ids",
+          "type": "array"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/MetricResult"
+          },
+          "title": "Metrics",
+          "type": "array"
+        },
+        "policy_version": {
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Quality Flags",
+          "type": "array"
+        },
+        "regime": {
+          "$ref": "#/$defs/Regime"
+        },
+        "result_id": {
+          "title": "Result Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Score"
+        },
+        "unavailable_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unavailable Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "result_id",
+        "regime",
+        "score",
+        "components",
+        "metrics",
+        "critical_stress",
+        "critical_stress_reasons",
+        "policy_version",
+        "formula_version",
+        "calculated_at",
+        "input_snapshot_ids",
+        "quality_flags",
+        "unavailable_reasons"
+      ],
+      "title": "RegimeResult",
+      "type": "object"
+    },
+    "ResearchPacket": {
+      "additionalProperties": false,
+      "description": "Deeply immutable, bounded synthesis input derived from frozen Product A values.",
+      "properties": {
+        "candidate_exclusions": {
+          "items": {
+            "$ref": "#/$defs/CandidateExclusion"
+          },
+          "title": "Candidate Exclusions",
+          "type": "array"
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/SetupCandidate"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "canonical_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Canonical Sha256",
+          "type": "string"
+        },
+        "capability_states": {
+          "items": {
+            "$ref": "#/$defs/CapabilityState"
+          },
+          "title": "Capability States",
+          "type": "array"
+        },
+        "deterministic_plan_inputs": {
+          "items": {
+            "$ref": "#/$defs/TradePlanDraft"
+          },
+          "title": "Deterministic Plan Inputs",
+          "type": "array"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/EventRecord"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceItem"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "gates": {
+          "items": {
+            "$ref": "#/$defs/GateResult"
+          },
+          "title": "Gates",
+          "type": "array"
+        },
+        "market": {
+          "additionalProperties": false,
+          "maxProperties": 128,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.:-]*$": {
+              "$ref": "#/$defs/MarketSnapshot"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "title": "Market",
+          "type": "object"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/MetricResult"
+          },
+          "title": "Metrics",
+          "type": "array"
+        },
+        "packet_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Packet Id",
+          "type": "string"
+        },
+        "prior_plan_observations": {
+          "items": {
+            "$ref": "#/$defs/PlanObservation"
+          },
+          "title": "Prior Plan Observations",
+          "type": "array"
+        },
+        "regime_result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RegimeResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run": {
+          "$ref": "#/$defs/RunContext"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "synthesis_constraints": {
+          "$ref": "#/$defs/SynthesisConstraints"
+        }
+      },
+      "required": [
+        "packet_id",
+        "canonical_sha256",
+        "run",
+        "evidence",
+        "market",
+        "events",
+        "metrics",
+        "gates",
+        "candidates",
+        "candidate_exclusions",
+        "deterministic_plan_inputs",
+        "capability_states",
+        "prior_plan_observations",
+        "synthesis_constraints"
+      ],
+      "title": "ResearchPacket",
+      "type": "object"
     },
     "RunCheckpoint": {
       "additionalProperties": false,
@@ -490,6 +2876,452 @@
       "title": "RunWindowDecision",
       "type": "object"
     },
+    "ScoreComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "calculation": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Calculation",
+          "type": "string"
+        },
+        "evidence_cutoff_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Evidence Cutoff At",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "formula_version": {
+          "default": "r6-scoring-1",
+          "title": "Formula Version",
+          "type": "string"
+        },
+        "metric_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Metric Ids",
+          "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/ScoreComponentName"
+        },
+        "points": {
+          "default": "0",
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Points",
+          "type": "string"
+        },
+        "quality": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Quality",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "weight": {
+          "default": "0",
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Weight",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "quality",
+        "calculation",
+        "metric_ids",
+        "evidence_ids",
+        "evidence_cutoff_at"
+      ],
+      "title": "ScoreComponent",
+      "type": "object"
+    },
+    "ScoreComponentName": {
+      "enum": [
+        "SETUP_QUALITY",
+        "TREND_QUALITY",
+        "RELATIVE_STRENGTH",
+        "REWARD_RISK_QUALITY",
+        "LIQUIDITY_QUALITY",
+        "CATALYST_EVIDENCE_QUALITY"
+      ],
+      "title": "ScoreComponentName",
+      "type": "string"
+    },
+    "ScorePenalty": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_cutoff_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Evidence Cutoff At",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 256,
+          "title": "Evidence Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "formula_version": {
+          "default": "r6-scoring-1",
+          "title": "Formula Version",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/PenaltyName"
+        },
+        "points": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Points",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "points",
+        "reason",
+        "evidence_ids",
+        "evidence_cutoff_at"
+      ],
+      "title": "ScorePenalty",
+      "type": "object"
+    },
+    "Session": {
+      "enum": [
+        "PRE_MARKET",
+        "REGULAR",
+        "POST_MARKET",
+        "COMPLETED_SESSION"
+      ],
+      "title": "Session",
+      "type": "string"
+    },
+    "SetupCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/ScoreComponent"
+          },
+          "maxItems": 6,
+          "minItems": 6,
+          "title": "Components",
+          "type": "array"
+        },
+        "data_quality": {
+          "$ref": "#/$defs/DataQualityResult"
+        },
+        "data_quality_rank": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Data Quality Rank",
+          "type": "string"
+        },
+        "entry_condition": {
+          "title": "Entry Condition",
+          "type": "string"
+        },
+        "event_assessment": {
+          "$ref": "#/$defs/EventAssessment"
+        },
+        "evidence_cutoff_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Evidence Cutoff At",
+          "type": "string"
+        },
+        "executive_highlight": {
+          "default": false,
+          "title": "Executive Highlight",
+          "type": "boolean"
+        },
+        "formula_version": {
+          "default": "r6-scoring-1",
+          "title": "Formula Version",
+          "type": "string"
+        },
+        "invalidation_condition": {
+          "title": "Invalidation Condition",
+          "type": "string"
+        },
+        "levels": {
+          "$ref": "#/$defs/PlanLevels"
+        },
+        "liquidity_rank": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Liquidity Rank",
+          "type": "string"
+        },
+        "penalties": {
+          "items": {
+            "$ref": "#/$defs/ScorePenalty"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "title": "Penalties",
+          "type": "array"
+        },
+        "plan_status": {
+          "$ref": "#/$defs/PlanStatus"
+        },
+        "policy_hash": {
+          "title": "Policy Hash",
+          "type": "string"
+        },
+        "policy_version": {
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "positive_score": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Positive Score",
+          "type": "string"
+        },
+        "primary_symbol": {
+          "anyOf": [
+            {
+              "maxLength": 16,
+              "minLength": 1,
+              "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primary Symbol"
+        },
+        "regime_policy_version": {
+          "title": "Regime Policy Version",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "secondary_alternative": {
+          "default": false,
+          "title": "Secondary Alternative",
+          "type": "boolean"
+        },
+        "selected_for_plan": {
+          "default": false,
+          "title": "Selected For Plan",
+          "type": "boolean"
+        },
+        "selection_reasons": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Selection Reasons",
+          "type": "array"
+        },
+        "setup_type": {
+          "$ref": "#/$defs/SetupType"
+        },
+        "symbol": {
+          "maxLength": 16,
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+          "title": "Symbol",
+          "type": "string"
+        },
+        "total_score": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Total Score",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "symbol",
+        "setup_type",
+        "policy_version",
+        "policy_hash",
+        "regime_policy_version",
+        "evidence_cutoff_at",
+        "levels",
+        "entry_condition",
+        "invalidation_condition",
+        "event_assessment",
+        "data_quality",
+        "components",
+        "penalties",
+        "positive_score",
+        "total_score",
+        "plan_status",
+        "data_quality_rank",
+        "liquidity_rank"
+      ],
+      "title": "SetupCandidate",
+      "type": "object"
+    },
+    "SetupType": {
+      "enum": [
+        "BREAKOUT_CONTINUATION",
+        "TREND_PULLBACK"
+      ],
+      "title": "SetupType",
+      "type": "string"
+    },
+    "SizingStatus": {
+      "enum": [
+        "AVAILABLE",
+        "SIZING_UNAVAILABLE"
+      ],
+      "title": "SizingStatus",
+      "type": "string"
+    },
+    "SourceObservation": {
+      "additionalProperties": false,
+      "description": "Source provenance with separately retained observation and retrieval times.",
+      "properties": {
+        "content_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Content Type",
+          "type": "string"
+        },
+        "excerpt": {
+          "maxLength": 8192,
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "observation_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "persistence_allowed": {
+          "title": "Persistence Allowed",
+          "type": "boolean"
+        },
+        "provider": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Quality Flags",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "retrieved_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Retrieved At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_hash_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Hash Sha256",
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "pattern": "^https://",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Url"
+        }
+      },
+      "required": [
+        "observation_id",
+        "provider",
+        "source_url",
+        "source_hash_sha256",
+        "observed_at",
+        "retrieved_at",
+        "content_type",
+        "excerpt",
+        "persistence_allowed",
+        "quality_flags"
+      ],
+      "title": "SourceObservation",
+      "type": "object"
+    },
     "StoredRun": {
       "additionalProperties": false,
       "description": "Persisted run context and ordered checkpoint history.",
@@ -536,10 +3368,485 @@
       ],
       "title": "StoredRun",
       "type": "object"
+    },
+    "SynthesisConstraints": {
+      "additionalProperties": false,
+      "description": "Deterministic limits and disclosure for content removed from a packet.",
+      "properties": {
+        "max_serialized_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Serialized Bytes",
+          "type": "integer"
+        },
+        "omitted_bytes": {
+          "additionalProperties": false,
+          "maxProperties": 128,
+          "patternProperties": {
+            "^[A-Za-z0-9][A-Za-z0-9_.:-]*$": {
+              "type": "integer"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 128,
+            "minLength": 1
+          },
+          "title": "Omitted Bytes",
+          "type": "object"
+        },
+        "omitted_sections": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Omitted Sections",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "serialized_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Serialized Bytes",
+          "type": "integer"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "max_serialized_bytes",
+        "serialized_bytes"
+      ],
+      "title": "SynthesisConstraints",
+      "type": "object"
+    },
+    "TargetScenario": {
+      "additionalProperties": false,
+      "properties": {
+        "price": {
+          "$ref": "#/$defs/CalculatedPrice"
+        },
+        "reward_to_risk": {
+          "pattern": "^(?:0*[1-9][0-9]*(?:\\.[0-9]+)?|0+\\.[0-9]*[1-9][0-9]*)$",
+          "title": "Reward To Risk",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price",
+        "reward_to_risk"
+      ],
+      "title": "TargetScenario",
+      "type": "object"
+    },
+    "TradePlanDraft": {
+      "additionalProperties": false,
+      "description": "A complete long research hypothesis; no approval or execution state.",
+      "properties": {
+        "candidate_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "candidate_score": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Candidate Score",
+          "type": "string"
+        },
+        "candidate_stop": {
+          "$ref": "#/$defs/CalculatedPrice"
+        },
+        "candidate_stop_role": {
+          "const": "ANALYTICAL_INVALIDATION",
+          "default": "ANALYTICAL_INVALIDATION",
+          "title": "Candidate Stop Role",
+          "type": "string"
+        },
+        "capability_states": {
+          "items": {
+            "$ref": "#/$defs/CapabilityState"
+          },
+          "title": "Capability States",
+          "type": "array"
+        },
+        "catalysts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Catalysts",
+          "type": "array"
+        },
+        "counter_evidence": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Counter Evidence",
+          "type": "array"
+        },
+        "counter_thesis": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Counter Thesis",
+          "type": "string"
+        },
+        "current_price_freshness_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Price Freshness Seconds"
+        },
+        "data_quality_flags": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Data Quality Flags",
+          "type": "array"
+        },
+        "direction": {
+          "const": "LONG",
+          "title": "Direction",
+          "type": "string"
+        },
+        "effective_expiry_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effective Expiry At"
+        },
+        "entry_condition": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Entry Condition",
+          "type": "string"
+        },
+        "entry_zone": {
+          "$ref": "#/$defs/EntryZone"
+        },
+        "event_risks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Event Risks",
+          "type": "array"
+        },
+        "evidence_cutoff_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Evidence Cutoff At",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "expiry_reasons": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "title": "Expiry Reasons",
+          "type": "array"
+        },
+        "gate_results": {
+          "items": {
+            "$ref": "#/$defs/GateResult"
+          },
+          "title": "Gate Results",
+          "type": "array"
+        },
+        "generated_at": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Generated At",
+          "type": "string"
+        },
+        "instrument_name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Instrument Name",
+          "type": "string"
+        },
+        "invalidation_condition": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Invalidation Condition",
+          "type": "string"
+        },
+        "market_regime": {
+          "$ref": "#/$defs/Regime"
+        },
+        "no_trade_conditions": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "No Trade Conditions",
+          "type": "array"
+        },
+        "plan_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "plan_status": {
+          "$ref": "#/$defs/PlanStatus"
+        },
+        "position_sizing": {
+          "$ref": "#/$defs/PositionSizing"
+        },
+        "regime_policy_version": {
+          "title": "Regime Policy Version",
+          "type": "string"
+        },
+        "review_checklist": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Review Checklist",
+          "type": "array"
+        },
+        "reward_risk_by_target": {
+          "items": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Reward Risk By Target",
+          "type": "array"
+        },
+        "risk_per_unit": {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "title": "Risk Per Unit",
+          "type": "string"
+        },
+        "risk_policy_version": {
+          "title": "Risk Policy Version",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "score_breakdown": {
+          "$ref": "#/$defs/PlanScoreBreakdown"
+        },
+        "setup_policy_version": {
+          "title": "Setup Policy Version",
+          "type": "string"
+        },
+        "setup_type": {
+          "$ref": "#/$defs/SetupType"
+        },
+        "stop_freshness_seconds": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop Freshness Seconds"
+        },
+        "supporting_evidence": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Supporting Evidence",
+          "type": "array"
+        },
+        "symbol": {
+          "maxLength": 16,
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+          "title": "Symbol",
+          "type": "string"
+        },
+        "target_scenarios": {
+          "items": {
+            "$ref": "#/$defs/PlanTargetScenario"
+          },
+          "minItems": 1,
+          "title": "Target Scenarios",
+          "type": "array"
+        },
+        "thesis": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Thesis",
+          "type": "string"
+        },
+        "valid_from": {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "watchlist_role": {
+          "enum": [
+            "CORE_MONITOR",
+            "SATELLITE_ELIGIBLE",
+            "RESEARCH_ONLY"
+          ],
+          "title": "Watchlist Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "run_id",
+        "candidate_id",
+        "symbol",
+        "instrument_name",
+        "watchlist_role",
+        "direction",
+        "setup_type",
+        "plan_status",
+        "generated_at",
+        "evidence_cutoff_at",
+        "valid_from",
+        "expires_at",
+        "market_regime",
+        "candidate_score",
+        "score_breakdown",
+        "thesis",
+        "counter_thesis",
+        "catalysts",
+        "event_risks",
+        "entry_condition",
+        "entry_zone",
+        "invalidation_condition",
+        "candidate_stop",
+        "target_scenarios",
+        "risk_per_unit",
+        "reward_risk_by_target",
+        "position_sizing",
+        "no_trade_conditions",
+        "supporting_evidence",
+        "counter_evidence",
+        "data_quality_flags",
+        "review_checklist",
+        "gate_results",
+        "capability_states",
+        "setup_policy_version",
+        "risk_policy_version",
+        "regime_policy_version"
+      ],
+      "title": "TradePlanDraft",
+      "type": "object"
     }
   },
-  "description": "Window decision and frozen run state produced by preparation.",
+  "additionalProperties": false,
+  "description": "Explicit immutable handoff; transport success alone never authorizes synthesis.",
   "properties": {
+    "failure_code": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "outcome": {
+      "enum": [
+        "PACKET_READY",
+        "PUBLISHED",
+        "SKIPPED"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "publication": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublishedArtifact"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "research_packet": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResearchPacket"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "schema_version": {
+      "const": "0.1",
+      "default": "0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
     "stored_run": {
       "anyOf": [
         {
@@ -548,16 +3855,17 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "default": null
     },
     "window_decision": {
       "$ref": "#/$defs/RunWindowDecision"
     }
   },
   "required": [
-    "window_decision",
-    "stored_run"
+    "outcome",
+    "window_decision"
   ],
-  "title": "PreparePremarketRunResult",
+  "title": "PreparedPremarketRunResult",
   "type": "object"
 }

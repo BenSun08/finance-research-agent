@@ -1,5 +1,39 @@
 {
   "$defs": {
+    "ArtifactJsonValue": {
+      "anyOf": [
+        {
+          "maxLength": 8192,
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/ArtifactJsonValue"
+          },
+          "maxItems": 8192,
+          "type": "array"
+        },
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/ArtifactJsonValue"
+          },
+          "maxProperties": 128,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "ConfigurationSnapshot": {
       "additionalProperties": false,
       "description": "Immutable configuration identity and optional frozen policy copies.",
@@ -355,7 +389,7 @@
   "properties": {
     "bundle": {
       "additionalProperties": {
-        "$ref": "#/$defs/JsonValue"
+        "$ref": "#/$defs/ArtifactJsonValue"
       },
       "maxProperties": 128,
       "title": "Bundle",

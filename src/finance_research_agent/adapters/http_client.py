@@ -7,14 +7,16 @@ import ipaddress
 import random
 import re
 import socket
+import ssl
 import unicodedata
 import urllib.parse
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
+from threading import Event, Lock, Thread
 from typing import Literal, cast
 
 import httpcore
@@ -133,6 +135,65 @@ class SafeResponse:
     attempts: int
 
 
+@dataclass(slots=True)
+class _PendingResolution:
+    host: str
+    port: int
+    completed: Event = field(default_factory=Event)
+    addresses: tuple[str, ...] = ()
+    error: BaseException | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _DeadlineBudget:
+    deadline: datetime
+    clock: Clock
+
+    def run[T](self, operation: Callable[[float], T], timeout: float | None) -> T:
+        remaining = (self.deadline - self.clock()).total_seconds()
+        if remaining <= 0:
+            raise RequestDeadlineExceeded("request deadline exceeded")
+        limit = remaining if timeout is None else min(timeout, remaining)
+        try:
+            result = operation(limit)
+        except httpcore.TimeoutException:
+            if self.clock() >= self.deadline:
+                raise RequestDeadlineExceeded("request deadline exceeded") from None
+            raise
+        if self.clock() >= self.deadline:
+            raise RequestDeadlineExceeded("request deadline exceeded")
+        return result
+
+
+class _DeadlineNetworkStream(httpcore.NetworkStream):
+    """Recalculate the remaining budget before each underlying blocking operation."""
+
+    def __init__(self, stream: httpcore.NetworkStream, budget: _DeadlineBudget) -> None:
+        self._stream = stream
+        self._budget = budget
+
+    def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return self._budget.run(lambda limit: self._stream.read(max_bytes, limit), timeout)
+
+    def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        self._budget.run(lambda limit: self._stream.write(buffer, limit), timeout)
+
+    def start_tls(
+        self, ssl_context: ssl.SSLContext, server_hostname: str | None = None,
+        timeout: float | None = None,
+    ) -> httpcore.NetworkStream:
+        stream = self._budget.run(
+            lambda limit: self._stream.start_tls(ssl_context, server_hostname, limit), timeout
+        )
+        return _DeadlineNetworkStream(stream, self._budget)
+
+    def get_extra_info(self, info: str) -> object:
+        return self._stream.get_extra_info(info)
+
+    def close(self) -> None:
+        self._stream.close()
+
+
 class _PinnedNetworkBackend(httpcore.NetworkBackend):
     """Connect to validated addresses while retaining the request hostname."""
 
@@ -141,11 +202,13 @@ class _PinnedNetworkBackend(httpcore.NetworkBackend):
         addresses: tuple[str, ...],
         *,
         delegate: httpcore.NetworkBackend | None = None,
+        deadline_budget: _DeadlineBudget | None = None,
     ) -> None:
         if not addresses:
             raise ValueError("at least one validated address is required")
         self._addresses = addresses
         self._delegate = delegate or httpcore.SyncBackend()
+        self._deadline_budget = deadline_budget
 
     def connect_tcp(
         self,
@@ -155,6 +218,13 @@ class _PinnedNetworkBackend(httpcore.NetworkBackend):
         local_address: str | None = None,
         socket_options: Iterable[SocketOption] | None = None,
     ) -> httpcore.NetworkStream:
+        if self._deadline_budget is not None:
+            stream = self._deadline_budget.run(
+                lambda limit: self._delegate.connect_tcp(
+                    self._addresses[0], port, limit, local_address, socket_options
+                ), timeout,
+            )
+            return _DeadlineNetworkStream(stream, self._deadline_budget)
         return self._delegate.connect_tcp(
             self._addresses[0], port, timeout, local_address, socket_options
         )
@@ -165,6 +235,12 @@ class _PinnedNetworkBackend(httpcore.NetworkBackend):
         timeout: float | None = None,
         socket_options: Iterable[SocketOption] | None = None,
     ) -> httpcore.NetworkStream:
+        if self._deadline_budget is not None:
+            stream = self._deadline_budget.run(
+                lambda limit: self._delegate.connect_unix_socket(path, limit, socket_options),
+                timeout,
+            )
+            return _DeadlineNetworkStream(stream, self._deadline_budget)
         return self._delegate.connect_unix_socket(path, timeout, socket_options)
 
     def sleep(self, seconds: float) -> None:
@@ -185,9 +261,11 @@ class _PinnedResponseStream(httpx.SyncByteStream):
 
 
 class _PinnedHTTPTransport(httpx.BaseTransport):
-    def __init__(self, addresses: tuple[str, ...]) -> None:
+    def __init__(
+        self, addresses: tuple[str, ...], *, deadline_budget: _DeadlineBudget | None = None,
+    ) -> None:
         self._pool = httpcore.ConnectionPool(
-            network_backend=_PinnedNetworkBackend(addresses),
+            network_backend=_PinnedNetworkBackend(addresses, deadline_budget=deadline_budget),
         )
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
@@ -351,7 +429,13 @@ class SafeHttpClient:
         sleeper: Callable[[Decimal], None] | None = None,
         jitter: Callable[[int], Decimal] | None = None,
         clock: Clock = _utc_now,
+        run_deadline: datetime | None = None,
     ) -> None:
+        if run_deadline is not None:
+            if not isinstance(run_deadline, datetime) or run_deadline.utcoffset() != timedelta(0):
+                raise RequestRejected("run deadline must be timezone-aware UTC")
+            if run_deadline <= clock():
+                raise RequestDeadlineExceeded("run deadline exceeded")
         self._policy = source_policy
         self._transport = transport
         self._resolver = resolver
@@ -365,6 +449,47 @@ class SafeHttpClient:
         else:
             self._jitter = jitter
         self._clock = clock
+        self._run_deadline = run_deadline
+        self._resolution_lock = Lock()
+        self._pending_resolution: _PendingResolution | None = None
+
+    def _resolve_addresses(
+        self, host: str, port: int, deadline: datetime | None,
+    ) -> tuple[str, ...]:
+        if self._run_deadline is None:
+            return self._resolver(host, port)
+        effective = self._run_deadline if deadline is None else min(deadline, self._run_deadline)
+        if self._clock() >= effective:
+            raise RequestDeadlineExceeded("request deadline exceeded")
+        with self._resolution_lock:
+            if self._clock() >= effective:
+                raise RequestDeadlineExceeded("request deadline exceeded")
+            pending = self._pending_resolution
+            if pending is None or pending.completed.is_set():
+                new_pending = _PendingResolution(host, port)
+                pending = new_pending
+
+                def resolve(attempt: _PendingResolution = new_pending) -> None:
+                    try:
+                        attempt.addresses = self._resolver(attempt.host, attempt.port)
+                    except BaseException as error:
+                        # Preserve resolver failures on the caller's existing
+                        # boundary without emitting an uncaught worker traceback.
+                        attempt.error = error
+                    finally:
+                        attempt.completed.set()
+
+                worker = Thread(target=resolve, name="finance-dns-resolution", daemon=True)
+                worker.start()
+                self._pending_resolution = pending
+            elif (pending.host, pending.port) != (host, port):
+                raise RequestDeadlineExceeded("host resolution is already in progress")
+        remaining = (effective - self._clock()).total_seconds()
+        if remaining <= 0 or not pending.completed.wait(remaining) or self._clock() >= effective:
+            raise RequestDeadlineExceeded("request deadline exceeded")
+        if pending.error is not None:
+            raise pending.error
+        return pending.addresses
 
     def validate(self, request: AllowedRequest) -> str:
         """Validate a request and return its safe absolute URL."""
@@ -372,7 +497,9 @@ class SafeHttpClient:
         url, _addresses = self._validate_request(request)
         return url
 
-    def _validate_request(self, request: AllowedRequest) -> tuple[str, tuple[str, ...]]:
+    def _validate_request(
+        self, request: AllowedRequest, deadline: datetime | None = None,
+    ) -> tuple[str, tuple[str, ...]]:
         """Validate a request and retain the addresses for the actual connection."""
 
         if not isinstance(request, AllowedRequest):
@@ -414,7 +541,7 @@ class SafeHttpClient:
             addresses = (host,)
         else:
             try:
-                addresses = self._resolver(host, request.port)
+                addresses = self._resolve_addresses(host, request.port, deadline)
             except OSError as error:
                 raise RequestRejected("host could not be resolved") from error
             if not addresses or any(_unsafe_address(address) for address in addresses):
@@ -440,6 +567,12 @@ class SafeHttpClient:
         user_agent: str | None = None,
         telemetry_observer: ProviderRequestObserver | None = None,
     ) -> SafeResponse:
+        if self._run_deadline is not None:
+            if not isinstance(deadline, datetime) or deadline.utcoffset() is None:
+                raise RequestRejected("deadline must be timezone-aware")
+            deadline = min(deadline, self._run_deadline)
+            if deadline <= self._clock():
+                raise RequestDeadlineExceeded("request deadline exceeded")
         request_attempts = 0
         response_bytes = 0
 
@@ -480,7 +613,7 @@ class SafeHttpClient:
             type(value) is not str or not value for value in provider_credentials
         ):
             raise RequestRejected("provider credentials must be non-empty strings")
-        url, addresses = self._validate_request(request)
+        url, addresses = self._validate_request(request, deadline)
         if deadline.tzinfo is None or deadline.utcoffset() is None:
             raise RequestRejected("deadline must be timezone-aware")
         if deadline <= self._clock():
@@ -495,7 +628,8 @@ class SafeHttpClient:
         max_attempts = max(1, self._policy.retry_attempts + 1)
         attempt = 1
         redirects = 0
-        transport = self._transport or _PinnedHTTPTransport(addresses)
+        budget = _DeadlineBudget(deadline, self._clock) if self._run_deadline is not None else None
+        transport = self._transport or _PinnedHTTPTransport(addresses, deadline_budget=budget)
         headers: dict[str, str] = {}
         if provider_credentials is not None:
             headers.update(
@@ -536,7 +670,12 @@ class SafeHttpClient:
                             item.casefold() for item in request.accepted_content_types
                         }:
                             raise RequestRejected("response content type is not accepted")
-                        content = _read_bounded(response.iter_bytes(), request.response_byte_limit)
+                        chunks = response.iter_bytes()
+                        if self._run_deadline is not None:
+                            chunks = self._read_before_deadline(chunks, deadline)
+                        content = _read_bounded(chunks, request.response_byte_limit)
+                        if self._run_deadline is not None and self._clock() >= deadline:
+                            raise RequestDeadlineExceeded("request deadline exceeded")
                         return SafeResponse(
                             status_code=response.status_code,
                             content=content,
@@ -544,9 +683,14 @@ class SafeHttpClient:
                             url=str(response.url),
                             attempts=attempt,
                         )
-                except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as error:
+                except (
+                    httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError,
+                    httpcore.TimeoutException, httpcore.NetworkError, httpcore.ProtocolError,
+                ):
+                    if self._run_deadline is not None and self._clock() >= deadline:
+                        raise RequestDeadlineExceeded("request deadline exceeded") from None
                     if attempt >= max_attempts:
-                        raise RequestTransportUnavailable("request transport failed") from error
+                        raise RequestTransportUnavailable("request transport failed") from None
                     self._sleep_before_retry(
                         retry_delay(
                             attempt,
@@ -558,6 +702,18 @@ class SafeHttpClient:
                     )
                     attempt += 1
         raise RequestRejected("request retries exhausted")
+
+    def _read_before_deadline(self, chunks: Iterator[bytes], deadline: datetime) -> Iterator[bytes]:
+        while True:
+            if self._clock() >= deadline:
+                raise RequestDeadlineExceeded("request deadline exceeded")
+            try:
+                chunk = next(chunks)
+            except StopIteration:
+                return
+            if self._clock() >= deadline:
+                raise RequestDeadlineExceeded("request deadline exceeded")
+            yield chunk
 
     def _retryable_status(self, status_code: int) -> bool:
         return status_code == 429 or 500 <= status_code <= 599

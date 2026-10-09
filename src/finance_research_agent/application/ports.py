@@ -185,6 +185,14 @@ class RunRepository(Protocol):
 
     def get_latest(self, market_date: date) -> str | None: ...
 
+    def get_previous_research_run(self, market_date: date) -> str | None:
+        """Find the latest prior date's latest indexed research publication.
+
+        Operational publications without a packet are skipped by date. Corrupt
+        indexed publications fail closed rather than selecting older research.
+        """
+        ...
+
 
 class PublishedArtifactReader(Protocol):
     """Read-only boundary for replaying an indexed immutable publication."""
