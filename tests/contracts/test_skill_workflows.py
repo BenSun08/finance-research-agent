@@ -217,9 +217,9 @@ def test_missing_inventory_and_documentation_fail_closed(tmp_path):
 
 
 def test_unavailable_operation_allowlist_fails_closed(monkeypatch):
-    from scripts import check_docs_examples
+    from finance_research_agent.application import skill_contracts
 
-    monkeypatch.setattr(check_docs_examples, "OPERATION_NAMES", ())
+    monkeypatch.setattr(skill_contracts, "OPERATION_NAMES", ())
     manifest = ROOT / "skills/premarket-research/references/workflow-contract.yaml"
     assert validate_workflow(manifest)
 

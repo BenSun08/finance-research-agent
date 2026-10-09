@@ -190,13 +190,23 @@ def _validated_plugin_version(contents: Mapping[str, bytes]) -> str:
 
 def load_installed_skill_versions() -> tuple[str, str]:
     """Read one fixed installed bundle and return its skill and plugin versions."""
+    from finance_research_agent.application.skill_contracts import (
+        parse_skill_bytes,
+        validate_workflow_bytes,
+    )
+
     contents = _installed_resources()
+    parsed = {
+        name: parse_skill_bytes(contents[f"skills/{name}/SKILL.md"], name)
+        for name in ("market-regime", "watchlist-management", "premarket-research")
+    }
+    validate_workflow_bytes(contents["skills/premarket-research/references/workflow-contract.yaml"])
     plugin_version = _validated_plugin_version(contents)
     for name in ("market-regime", "watchlist-management"):
-        if declared_skill_resources(contents[f"skills/{name}/SKILL.md"]):
+        if parsed[name].resources:
             raise ValueError("simple Product A skills must not declare resources")
     skill = contents["skills/premarket-research/SKILL.md"]
-    resources = declared_skill_resources(skill)
+    resources = parsed["premarket-research"].resources
     if resources != ("references/workflow-contract.yaml",):
         raise ValueError("premarket skill has an unexpected declared resource")
     return compute_skill_version(

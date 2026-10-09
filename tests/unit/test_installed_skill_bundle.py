@@ -15,6 +15,8 @@ from finance_research_agent.application.skill_bundle import (
     load_installed_premarket_skill_version,
 )
 
+ROOT = Path(__file__).resolve().parents[2]
+
 
 def _contents():
     return {
@@ -35,19 +37,11 @@ def _contents():
                 }
             }
         ).encode(),
-        "skills/market-regime/SKILL.md": (
-            b"## Resource Loading\n- Required: None.\n- Conditional: None.\n"
-            b"## Safety and Forbidden Behavior\n"
-        ),
-        "skills/watchlist-management/SKILL.md": (
-            b"## Resource Loading\n- Required: None.\n- Conditional: None.\n"
-            b"## Safety and Forbidden Behavior\n"
-        ),
-        "skills/premarket-research/SKILL.md": (
-            b"## Resource Loading\n- Required: [Workflow](references/workflow-contract.yaml)\n"
-            b"- Conditional: None.\n## Safety and Forbidden Behavior\n"
-        ),
-        "skills/premarket-research/references/workflow-contract.yaml": b"schema_version: 1\n",
+        **{
+            name: (ROOT / name).read_bytes()
+            for name in PLUGIN_RESOURCE_PATHS
+            if name.startswith("skills/")
+        },
     }
 
 
@@ -201,4 +195,68 @@ def test_installed_distribution_base_and_ancestors_cannot_be_symlinks(tmp_path, 
     path.symlink_to(target, target_is_directory=True)
     monkeypatch.setattr(skill_bundle, "distribution", lambda name: distribution)
     with pytest.raises(ValueError, match="symlink"):
+        load_installed_premarket_skill_version()
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "missing_frontmatter",
+        "wrong_name",
+        "missing_section",
+        "duplicate_section",
+        "empty_skill",
+        "malformed_yaml",
+        "invalid_workflow_utf8",
+        "extra_workflow_field",
+        "duplicate_workflow_key",
+        "nonstring_workflow_key",
+        "boolean_schema",
+        "float_repair_limit",
+        "unknown_operation",
+        "watchlist_alias",
+    ),
+)
+def test_installed_bytes_must_validate_skill_and_workflow_contracts_before_hashing(
+    installed, tamper
+):
+    distribution, contents = installed
+    name = "skills/premarket-research/SKILL.md"
+    content = contents[name]
+    if tamper == "missing_frontmatter":
+        content = content.split(b"\n---\n", 1)[-1]
+    elif tamper == "wrong_name":
+        content = content.replace(b"name: premarket-research", b"name: wrong-skill")
+    elif tamper == "missing_section":
+        content = content.replace(b"## Fail-Closed Behavior", b"Failure behavior")
+    elif tamper == "duplicate_section":
+        content += b"\n## Allowed Operations\n"
+    elif tamper == "empty_skill":
+        content = b""
+    elif tamper == "watchlist_alias":
+        name = "skills/watchlist-management/SKILL.md"
+        content = contents[name].replace(b"upsert_watchlist_item", b"upsert_watchlist")
+    else:
+        name = "skills/premarket-research/references/workflow-contract.yaml"
+        content = contents[name]
+        if tamper == "malformed_yaml":
+            content = b"schema_version: [unfinished\n"
+        elif tamper == "invalid_workflow_utf8":
+            content = b"\xff"
+        elif tamper == "extra_workflow_field":
+            content += b"\nprovider: alpaca\n"
+        elif tamper == "duplicate_workflow_key":
+            content += b"\nschema_version: 1\n"
+        elif tamper == "nonstring_workflow_key":
+            content += b"\n[]: bad\n"
+        elif tamper == "boolean_schema":
+            content = content.replace(b"schema_version: 1", b"schema_version: true")
+        elif tamper == "float_repair_limit":
+            content = content.replace(b"max_repairs: 2", b"max_repairs: 2.0")
+        elif tamper == "unknown_operation":
+            content = content.replace(
+                b"operation: prepare_premarket_run", b"operation: get_positions"
+            )
+    (distribution.root / PLUGIN_RESOURCE_ROOT / name).write_bytes(content)
+    with pytest.raises(ValueError):
         load_installed_premarket_skill_version()
