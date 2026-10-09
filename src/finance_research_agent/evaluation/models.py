@@ -20,10 +20,16 @@ from finance_research_agent.domain.enums import (
     ValidationCode,
 )
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.models import CapabilityState, Identifier, StrictModel
+from finance_research_agent.domain.models import (
+    CapabilityState,
+    Identifier,
+    Sha256,
+    StrictModel,
+)
 from finance_research_agent.domain.regime import Regime
 from finance_research_agent.domain.setups import SetupType
 from finance_research_agent.domain.sizing import SizingStatus
+from finance_research_agent.domain.types import FrozenMap
 
 ScenarioErrorCode = ErrorCode | ValidationCode
 
@@ -382,6 +388,16 @@ class EvaluationScenario(StrictModel):
         if len(set(self.assertions)) != len(self.assertions):
             raise ValueError("scenario assertion ids must be unique")
         return self
+
+
+class CurrentScopeServiceObservation(StrictModel):
+    """Actual current-scope service output and immutable publication evidence."""
+
+    scenario_id: ScenarioId
+    current_scope: ScenarioOutcomeExpectation
+    artifact_hashes: FrozenMap[Identifier, Sha256]
+    replay_json_matches: bool
+    replay_markdown_matches: bool
 
 
 def _require_exact_capabilities(capabilities: Sequence[CapabilityState]) -> None:
