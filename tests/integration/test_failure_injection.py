@@ -715,3 +715,79 @@ def test_f09_numeric_mismatch_is_rejected_without_changing_packet_values(
     )
     assert replay.json_matches is True
     assert replay.markdown_matches is True
+
+
+def test_f10_repair_exhaustion_records_three_validations_and_never_requests_a_fourth(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.enums import ValidationCode
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.integration.test_premarket_workflow_matrix import _support
+    from tests.support.premarket_workflow import run_workflow
+
+    scenario = load_evaluation_scenarios()[21]
+    assert scenario.id.value == "S22"
+    assert FailureInjectionId.F10 in scenario.injected_failures
+    support = _support()
+    protocol, packet, _ = support.prepared_protocol(
+        tmp_path, valid_packet, valid_brief_draft
+    )
+    invalid_drafts = tuple(
+        valid_brief_draft.model_copy(
+            update={
+                "execution_status": packet.run.execution_status,
+                "data_warnings": (f"unverified earnings are confirmed attempt-{index}",),
+            }
+        )
+        for index in range(3)
+    )
+    repaired = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    host = support.ScriptedSynthesis([*invalid_drafts, repaired])
+    before_packet = canonical_bytes(packet)
+
+    result = run_workflow(protocol, host)
+
+    assert result.outcome == "deterministic_reduced"
+    assert (result.validations, result.repairs) == (3, 2)
+    assert protocol.names.count("validate_and_publish_brief") == 3
+    assert protocol.names[-2:] == ("publish_reduced_report", "get_report")
+    assert len(host.packet_objects) == 3
+    assert host.packet_objects == [packet, packet, packet]
+    assert host.packet_hashes == [packet.canonical_sha256] * 3
+    assert canonical_bytes(packet) == before_packet
+    assert len(host.issues) == 3
+    assert host.issues[1] is not None and host.issues[2] is not None
+    assert all(
+        any(issue.code is ValidationCode.UNSUPPORTED_CLAIM for issue in report.issues)
+        for report in host.issues[1:]
+        if report is not None
+    )
+
+    bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    artifact = protocol.repository.get_published_artifact(packet.run.run_id)
+    assert bundle is not None and artifact is not None
+    assert bundle.bundle["brief_origin"] == BriefOrigin.DETERMINISTIC_REDUCED.value
+    assert bundle.bundle["reduced_report_reason"] == (
+        ReducedReportReason.VALIDATION_REPAIR_EXHAUSTED.value
+    )
+    reports = bundle.bundle["validation_reports"]
+    assert len(reports) == 3
+    assert [item["validation_attempt"] for item in reports] == [1, 2, 3]
+    assert all(item["is_valid"] is False for item in reports)
+    assert artifact.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    report_markdown = protocol.repository.get_report(packet.run.run_id)
+    assert report_markdown == result.report.report_markdown
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(bundle),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
