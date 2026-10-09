@@ -4255,7 +4255,7 @@ Expected: the local plugin loads from its repo marketplace, invokes only the con
 
 The focused R11 evaluation/release-readiness delta (`docs/superpowers/specs/2026-10-10-product-a-r11-evaluation-release-readiness-design.md`) scopes the original scenario expectations to the approved current sources, keeps separate domain assertions, adds the optional keyword-only verified evidence input, and defines three-state gate output. Original full-source operational behavior remains deferred.
 
-EvaluationScenario requires id, title, fixture_set, injected_failures, expected_execution_status, expected_data_quality_status, expected_delivery_status, expected_capabilities, expected_plan_states, expected_report_banner, expected_error_codes, expected_recoverability, and assertions. ShadowScorecard contains period_start/end, valid_trading_days, eligible_online_days, published_in_target_window, duration observations, review-time observations, usefulness observations, plan-observation counts, block-reason counts, setup/regime distributions, and ordered PASS/FAIL/PENDING graduation-gate results with separate failed and pending gate ids. It has no realized P&L, return, win-rate, fill, fee, slippage, or execution field.
+EvaluationScenario retains Task 18's expected_* fields as full-source reference values and adds `original_scope_reference`, `current_scope_expectation`, and typed `domain_assertions`. Compare current service output only with `current_scope_expectation`; if Task 18 did not specify exact legacy banner text, set `expected_report_banner` to `NOT_SPECIFIED_IN_TASK_18` and do not compare it with current output. ShadowScorecard contains period_start/end, valid_trading_days, eligible_online_days, published_in_target_window, duration observations, review-time observations, usefulness observations, plan-observation counts, block-reason counts, setup/regime distributions, and ordered PASS/FAIL/PENDING graduation-gate results with separate failed and pending gate ids. It has no realized P&L, return, win-rate, fill, fee, slippage, or execution field.
 
 - [ ] **Step 1: Write failing scenario-manifest completeness and outcome tests**
 
@@ -4281,14 +4281,15 @@ Create tests/evaluation/test_scenarios.py:
     @pytest.mark.parametrize("scenario", load_evaluation_scenarios())
     def test_scenario_matches_all_declared_outcomes(scenario, evaluation_harness) -> None:
         outcome = execute_evaluation_scenario(scenario, evaluation_harness)
-        assert outcome.execution_status == scenario.expected_execution_status
-        assert outcome.data_quality_status == scenario.expected_data_quality_status
-        assert outcome.delivery_status == scenario.expected_delivery_status
-        assert outcome.capabilities == scenario.expected_capabilities
-        assert outcome.plan_states == scenario.expected_plan_states
-        assert outcome.report_banner == scenario.expected_report_banner
-        assert outcome.error_codes == scenario.expected_error_codes
-        assert outcome.recoverability == scenario.expected_recoverability
+        expected = scenario.current_scope_expectation.primary
+        assert outcome.execution_status == expected.execution_status
+        assert outcome.data_quality_status == expected.data_quality_status
+        assert outcome.delivery_status == expected.delivery_status
+        assert outcome.capabilities == expected.capabilities
+        assert outcome.plan_states == expected.plan_states
+        assert outcome.report_banner == expected.report_banner
+        assert outcome.error_codes == expected.error_codes
+        assert outcome.recoverability == expected.recoverability
         assert outcome.assertions_failed == ()
 
 Run:

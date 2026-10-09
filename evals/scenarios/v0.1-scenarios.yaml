@@ -1,0 +1,3329 @@
+schema_version: '0.1'
+scenarios:
+- id: S01
+  title: Permissive valid breakout
+  fixture_set: S01_BREAKOUT
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S01:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S01:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S01:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S01:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S01:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S01:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S01:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S01:portfolio_heat_check_available
+  expected_plan_states:
+  - DRAFT
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - SOURCE_LIMITATIONS_ADJACENT
+  original_scope_reference: 'Task 18 S01: Permissive valid breakout'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: CANDIDATE_SCORE
+    fixture_id: S01_BREAKOUT
+    expected_fields:
+      score: 70
+      setup_type: BREAKOUT
+- id: S02
+  title: Permissive valid pullback
+  fixture_set: S02_PULLBACK
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S02:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S02:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S02:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S02:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S02:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S02:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S02:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S02:portfolio_heat_check_available
+  expected_plan_states:
+  - DRAFT
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - SOURCE_LIMITATIONS_ADJACENT
+  original_scope_reference: 'Task 18 S02: Permissive valid pullback'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: SETUP_DETECTION
+    fixture_id: S02_PULLBACK
+    expected_fields:
+      setup_type: PULLBACK
+      requires_restrengthening: true
+- id: S03
+  title: Neutral candidate below threshold
+  fixture_set: S03_NEUTRAL_THRESHOLD
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S03:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S03:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S03:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S03:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S03:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S03:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S03:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S03:portfolio_heat_check_available
+  expected_plan_states: []
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - ALL_WATCHLIST_EXCLUSIONS_VISIBLE
+  original_scope_reference: 'Task 18 S03: Neutral candidate below threshold'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: CANDIDATE_RANKING
+    fixture_id: S03_NEUTRAL_THRESHOLD
+    expected_fields:
+      visible: true
+      reason_code: SCORE_BELOW_NEUTRAL_THRESHOLD
+- id: S04
+  title: Defensive technically strong candidate
+  fixture_set: S04_DEFENSIVE_REGIME
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S04:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S04:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S04:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S04:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S04:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S04:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S04:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S04:portfolio_heat_check_available
+  expected_plan_states:
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S04: Defensive technically strong candidate'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: REGIME_CALCULATION
+    fixture_id: S04_DEFENSIVE_REGIME
+    expected_fields:
+      regime: DEFENSIVE
+- id: S05
+  title: Unknown regime from critical missing data
+  fixture_set: S05_UNKNOWN_REGIME
+  injected_failures:
+  - F01
+  - F05
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S05:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: false
+    reason_codes:
+    - PROVIDER_NO_DATA
+    evidence_ids:
+    - S05:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S05:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S05:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S05:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: false
+    reason_codes:
+    - PROVIDER_NO_DATA
+    evidence_ids:
+    - S05:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S05:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S05:portfolio_heat_check_available
+  expected_plan_states:
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - PROVIDER_NO_DATA
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - ALL_WATCHLIST_EXCLUSIONS_VISIBLE
+  original_scope_reference: 'Task 18 S05: Unknown regime from critical missing data'
+  current_scope_expectation:
+    primary:
+      case_id: REDUCED_RESEARCH
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - S05:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: false
+        reason_codes:
+        - PROVIDER_NO_DATA
+        evidence_ids:
+        - S05:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - S05:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - S05:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - S05:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - S05:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - S05:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - S05:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases:
+    - case_id: GLOBAL_REQUIRED_SOURCE_OUTAGE
+      execution_status: PUBLISHED
+      data_quality_status: FAIL
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: false
+        reason_codes:
+        - PROVIDER_UNAVAILABLE
+        evidence_ids:
+        - S05:PROVIDER_OUTAGE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: false
+        reason_codes:
+        - PROVIDER_UNAVAILABLE
+        evidence_ids:
+        - S05:PROVIDER_OUTAGE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: false
+        reason_codes:
+        - PROVIDER_UNAVAILABLE
+        evidence_ids:
+        - S05:PROVIDER_OUTAGE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - PROVIDER_UNAVAILABLE
+        evidence_ids:
+        - S05:PROVIDER_OUTAGE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - PROVIDER_UNAVAILABLE
+        evidence_ids:
+        - S05:PROVIDER_OUTAGE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - PROVIDER_UNAVAILABLE
+        evidence_ids:
+        - S05:PROVIDER_OUTAGE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - PROVIDER_UNAVAILABLE
+        evidence_ids:
+        - S05:PROVIDER_OUTAGE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - PROVIDER_UNAVAILABLE
+        evidence_ids:
+        - S05:PROVIDER_OUTAGE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Required Alpaca market data failed; no market claims or plans are emitted.
+      error_codes:
+      - PROVIDER_UNAVAILABLE
+      recoverability: true
+  domain_assertions:
+  - kind: REGIME_CALCULATION
+    fixture_id: S05_UNKNOWN_REGIME
+    expected_fields:
+      regime: UNKNOWN
+- id: S06
+  title: No eligible candidates
+  fixture_set: S06_NO_ELIGIBLE_NAMES
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S06:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S06:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S06:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S06:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S06:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S06:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S06:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S06:portfolio_heat_check_available
+  expected_plan_states: []
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - ALL_WATCHLIST_EXCLUSIONS_VISIBLE
+  original_scope_reference: 'Task 18 S06: No eligible candidates'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: INSTRUMENT_ELIGIBILITY
+    fixture_id: S06_NO_ELIGIBLE_NAMES
+    expected_fields:
+      eligible_count: 0
+- id: S07
+  title: Earnings inside plan lifetime
+  fixture_set: S07_EARNINGS_WINDOW
+  injected_failures:
+  - F05
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S07:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S07:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S07:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S07:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S07:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S07:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S07:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S07:portfolio_heat_check_available
+  expected_plan_states:
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S07: Earnings inside plan lifetime'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: EVENT_RISK
+    fixture_id: S07_EARNINGS_WINDOW
+    expected_fields:
+      plan_status: BLOCKED
+      event_verified: true
+- id: S08
+  title: Material filing after prior report
+  fixture_set: S08_MATERIAL_REVISION
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S08:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S08:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S08:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S08:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S08:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S08:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S08:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S08:portfolio_heat_check_available
+  expected_plan_states:
+  - EXPIRED
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - REVISION_BYTES_IMMUTABLE
+  original_scope_reference: 'Task 18 S08: Material filing after prior report'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: PLAN_EXPIRY
+    fixture_id: S08_MATERIAL_REVISION
+    expected_fields:
+      status: EXPIRED
+      reason: MATERIAL_NEW_INFORMATION
+- id: S09
+  title: Conflicting official and media sources
+  fixture_set: S09_SOURCE_CONFLICT
+  injected_failures:
+  - F04
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S09:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S09:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S09:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S09:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S09:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: false
+    reason_codes:
+    - SOURCE_CONFLICT
+    evidence_ids:
+    - S09:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S09:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S09:portfolio_heat_check_available
+  expected_plan_states:
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - SOURCE_CONFLICT
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - SOURCE_LIMITATIONS_ADJACENT
+  original_scope_reference: 'Task 18 S09: Conflicting official and media sources'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: EVENT_RISK
+    fixture_id: S09_SOURCE_CONFLICT
+    expected_fields:
+      conflict_retained: true
+      lower_authority_overrides: false
+- id: S10
+  title: Stale premarket quote
+  fixture_set: S10_STALE_PREMARKET_QUOTE
+  injected_failures:
+  - F03
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S10:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S10:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S10:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S10:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S10:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S10:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: false
+    reason_codes:
+    - PROVIDER_STALE
+    evidence_ids:
+    - S10:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S10:portfolio_heat_check_available
+  expected_plan_states:
+  - REVIEW_REQUIRED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - PROVIDER_STALE
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - SOURCE_LIMITATIONS_ADJACENT
+  original_scope_reference: 'Task 18 S10: Stale premarket quote'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: POSITION_SIZING
+    fixture_id: S10_STALE_PREMARKET_QUOTE
+    expected_fields:
+      status: SIZING_UNAVAILABLE
+- id: S11
+  title: IEX-only premarket data
+  fixture_set: S11_IEX_LIMITATION
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S11:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S11:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S11:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S11:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S11:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S11:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S11:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S11:portfolio_heat_check_available
+  expected_plan_states:
+  - DRAFT
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - SOURCE_LIMITATIONS_ADJACENT
+  original_scope_reference: 'Task 18 S11: IEX-only premarket data'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: SETUP_DETECTION
+    fixture_id: S11_IEX_LIMITATION
+    expected_fields:
+      coverage: SINGLE_EXCHANGE
+      limitation_disclosed: true
+- id: S12
+  title: Missing macro event calendar
+  fixture_set: S12_MISSING_MACRO_CALENDAR
+  injected_failures:
+  - F05
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S12:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S12:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S12:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: false
+    reason_codes:
+    - SOURCE_NOT_CONFIGURED
+    evidence_ids:
+    - S12:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: false
+    reason_codes:
+    - SOURCE_NOT_CONFIGURED
+    evidence_ids:
+    - S12:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: false
+    reason_codes:
+    - SOURCE_NOT_CONFIGURED
+    evidence_ids:
+    - S12:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: false
+    reason_codes:
+    - SOURCE_NOT_CONFIGURED
+    evidence_ids:
+    - S12:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: false
+    reason_codes:
+    - SOURCE_NOT_CONFIGURED
+    evidence_ids:
+    - S12:portfolio_heat_check_available
+  expected_plan_states:
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - SOURCE_NOT_CONFIGURED
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - SOURCE_LIMITATIONS_ADJACENT
+  original_scope_reference: 'Task 18 S12: Missing macro event calendar'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: EVENT_RISK
+    fixture_id: S12_MISSING_MACRO_CALENDAR
+    expected_fields:
+      source_configured: false
+      plan_status: BLOCKED
+- id: S13
+  title: Insufficient history for one symbol
+  fixture_set: S13_INSUFFICIENT_HISTORY
+  injected_failures:
+  - F02
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S13:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S13:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: false
+    reason_codes:
+    - PROVIDER_MISSING_SESSION
+    evidence_ids:
+    - S13:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: false
+    reason_codes:
+    - PROVIDER_MISSING_SESSION
+    evidence_ids:
+    - S13:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: false
+    reason_codes:
+    - PROVIDER_MISSING_SESSION
+    evidence_ids:
+    - S13:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: false
+    reason_codes:
+    - PROVIDER_MISSING_SESSION
+    evidence_ids:
+    - S13:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: false
+    reason_codes:
+    - PROVIDER_MISSING_SESSION
+    evidence_ids:
+    - S13:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S13:portfolio_heat_check_available
+  expected_plan_states:
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - PROVIDER_MISSING_SESSION
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  - ALL_WATCHLIST_EXCLUSIONS_VISIBLE
+  original_scope_reference: 'Task 18 S13: Insufficient history for one symbol'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: INSTRUMENT_ELIGIBILITY
+    fixture_id: S13_INSUFFICIENT_HISTORY
+    expected_fields:
+      symbol_status: BLOCKED
+- id: S14
+  title: Leveraged ETF
+  fixture_set: S14_LEVERAGED_ETF
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S14:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S14:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S14:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S14:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S14:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: false
+    reason_codes:
+    - UNSUPPORTED_INSTRUMENT
+    evidence_ids:
+    - S14:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S14:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S14:portfolio_heat_check_available
+  expected_plan_states:
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - UNSUPPORTED_INSTRUMENT
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S14: Leveraged ETF'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: INSTRUMENT_ELIGIBILITY
+    fixture_id: S14_LEVERAGED_ETF
+    expected_fields:
+      reason_code: UNSUPPORTED_INSTRUMENT
+- id: S15
+  title: Halted or identity-uncertain instrument
+  fixture_set: S15_HALTED_OR_UNCERTAIN_IDENTITY
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S15:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S15:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S15:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S15:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S15:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: false
+    reason_codes:
+    - INVALID_RESPONSE
+    evidence_ids:
+    - S15:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S15:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S15:portfolio_heat_check_available
+  expected_plan_states:
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - INVALID_RESPONSE
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S15: Halted or identity-uncertain instrument'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: INSTRUMENT_ELIGIBILITY
+    fixture_id: S15_HALTED_OR_UNCERTAIN_IDENTITY
+    expected_fields:
+      halted_or_identity_uncertain: true
+- id: S16
+  title: Entry zone already exceeded
+  fixture_set: S16_EXCEEDED_ENTRY_ZONE
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S16:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S16:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S16:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S16:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S16:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S16:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S16:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S16:portfolio_heat_check_available
+  expected_plan_states:
+  - EXPIRED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S16: Entry zone already exceeded'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: PLAN_EXPIRY
+    fixture_id: S16_EXCEEDED_ENTRY_ZONE
+    expected_fields:
+      status: EXPIRED
+- id: S17
+  title: Stop not below long entry
+  fixture_set: S17_INVALID_STOP
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S17:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S17:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S17:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S17:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S17:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S17:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: false
+    reason_codes:
+    - SIZING_UNAVAILABLE
+    evidence_ids:
+    - S17:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S17:portfolio_heat_check_available
+  expected_plan_states:
+  - BLOCKED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - SIZING_UNAVAILABLE
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S17: Stop not below long entry'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: POSITION_SIZING
+    fixture_id: S17_INVALID_STOP
+    expected_fields:
+      status: SIZING_UNAVAILABLE
+      units: null
+- id: S18
+  title: Planning capital missing
+  fixture_set: S18_MISSING_CAPITAL
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S18:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S18:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S18:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S18:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S18:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S18:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: false
+    reason_codes:
+    - CONFIGURATION_INVALID
+    evidence_ids:
+    - S18:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S18:portfolio_heat_check_available
+  expected_plan_states:
+  - REVIEW_REQUIRED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - CONFIGURATION_INVALID
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S18: Planning capital missing'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: POSITION_SIZING
+    fixture_id: S18_MISSING_CAPITAL
+    expected_fields:
+      status: SIZING_UNAVAILABLE
+      units: null
+- id: S19
+  title: Portfolio heat missing
+  fixture_set: S19_MISSING_PORTFOLIO_HEAT
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S19:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S19:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S19:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S19:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S19:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S19:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S19:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: false
+    reason_codes:
+    - PORTFOLIO_HEAT_UNAVAILABLE
+    evidence_ids:
+    - S19:portfolio_heat_check_available
+  expected_plan_states:
+  - REVIEW_REQUIRED
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - PORTFOLIO_HEAT_UNAVAILABLE
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S19: Portfolio heat missing'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: PLAN_BUILD
+    fixture_id: S19_MISSING_PORTFOLIO_HEAT
+    expected_fields:
+      status: REVIEW_REQUIRED
+      heat_check: UNAVAILABLE
+- id: S20
+  title: Highly correlated candidates
+  fixture_set: S20_CORRELATED_CANDIDATES
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S20:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S20:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S20:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S20:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S20:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S20:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S20:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S20:portfolio_heat_check_available
+  expected_plan_states:
+  - DRAFT
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S20: Highly correlated candidates'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: CANDIDATE_RANKING
+    fixture_id: S20_CORRELATED_CANDIDATES
+    expected_fields:
+      highest_ranked_remains_primary: true
+      holdings_inferred: false
+- id: S21
+  title: One daily bar touches entry and invalidation
+  fixture_set: S21_AMBIGUOUS_DAILY_BAR
+  injected_failures: []
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: PASS
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S21:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S21:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S21:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S21:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S21:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S21:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S21:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S21:portfolio_heat_check_available
+  expected_plan_states:
+  - DRAFT
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - DOMAIN_ASSERTIONS_PASS
+  original_scope_reference: 'Task 18 S21: One daily bar touches entry and invalidation'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions:
+  - kind: PRIOR_OBSERVATION
+    fixture_id: S21_AMBIGUOUS_DAILY_BAR
+    expected_fields:
+      outcome: AMBIGUOUS_SEQUENCE
+- id: S22
+  title: Synthesis inserts unsupported number
+  fixture_set: S22_UNSUPPORTED_NUMERIC_CLAIM
+  injected_failures:
+  - F07
+  - F08
+  - F09
+  - F10
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S22:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S22:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S22:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S22:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S22:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S22:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S22:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S22:portfolio_heat_check_available
+  expected_plan_states: []
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - VALIDATION_FAILED
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - PACKET_HASH_STABLE
+  - INVALID_DRAFT_NEVER_PUBLISHED
+  - REPAIR_LIMIT_ENFORCED
+  original_scope_reference: 'Task 18 S22: Synthesis inserts unsupported number'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases: []
+  domain_assertions: []
+- id: S23
+  title: Synthesis cites irrelevant evidence
+  fixture_set: S23_IRRELEVANT_CITATION
+  injected_failures:
+  - F06
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S23:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S23:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S23:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S23:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S23:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S23:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S23:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S23:portfolio_heat_check_available
+  expected_plan_states: []
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - VALIDATION_FAILED
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - INVALID_DRAFT_NEVER_PUBLISHED
+  - REPAIR_LIMIT_ENFORCED
+  original_scope_reference: 'Task 18 S23: Synthesis cites irrelevant evidence'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes: &id001
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes: &id002
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes: &id003
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes: &id004
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes: &id005
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases:
+    - case_id: VALID_REPAIR
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes: *id001
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes: *id002
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes: *id003
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes: *id004
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes: *id005
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    - case_id: DETERMINISTIC_REDUCED_FALLBACK
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes: *id001
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes: *id002
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes: *id003
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes: *id004
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes: *id005
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: A deterministic reduced report is published; unavailable source roles remain visible.
+      error_codes:
+      - VALIDATION_FAILED
+      recoverability: true
+  domain_assertions: []
+- id: S24
+  title: Prompt injection in untrusted excerpt
+  fixture_set: S24_UNTRUSTED_EXCERPT
+  injected_failures:
+  - F06
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: ON_TIME
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S24:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S24:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S24:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S24:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S24:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S24:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S24:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S24:portfolio_heat_check_available
+  expected_plan_states: []
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes:
+  - VALIDATION_FAILED
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - UNTRUSTED_EXCERPT_INERT
+  - PACKET_HASH_STABLE
+  original_scope_reference: 'Task 18 S24: Prompt injection in untrusted excerpt'
+  current_scope_expectation:
+    primary:
+      case_id: PRIMARY
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes: &id006
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes: &id007
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes: &id008
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes: &id009
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes: &id010
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    subcases:
+    - case_id: VALID_REPAIR
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes: *id006
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes: *id007
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes: *id008
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes: *id009
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes: *id010
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: Research is limited to Alpaca market data and the local market calendar; unavailable
+        source roles are disclosed.
+      error_codes: []
+      recoverability: true
+    - case_id: DETERMINISTIC_REDUCED_FALLBACK
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: ON_TIME
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes: *id006
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes: *id007
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes: *id008
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes: *id009
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes: *id010
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: A deterministic reduced report is published; unavailable source roles remain visible.
+      error_codes:
+      - VALIDATION_FAILED
+      recoverability: true
+  domain_assertions: []
+- id: S25
+  title: Run begins at or after 09:30
+  fixture_set: S25_MISSED_WINDOW
+  injected_failures:
+  - F14
+  - F15
+  - F16
+  expected_execution_status: PUBLISHED
+  expected_data_quality_status: DEGRADED
+  expected_delivery_status: MISSED_WINDOW
+  expected_capabilities:
+  - capability: MARKET_SUMMARY_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S25:market_summary_available
+  - capability: REGIME_CLASSIFICATION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S25:regime_classification_available
+  - capability: WATCHLIST_METRICS_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S25:watchlist_metrics_available
+  - capability: EVENT_RISK_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S25:event_risk_check_available
+  - capability: SETUP_DETECTION_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S25:setup_detection_available
+  - capability: PLAN_DRAFT_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S25:plan_draft_available
+  - capability: POSITION_SIZING_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S25:position_sizing_available
+  - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+    available: true
+    reason_codes: []
+    evidence_ids:
+    - S25:portfolio_heat_check_available
+  expected_plan_states: []
+  expected_report_banner: NOT_SPECIFIED_IN_TASK_18
+  expected_error_codes: []
+  expected_recoverability: true
+  assertions:
+  - CURRENT_SCOPE_MATCHES
+  - NO_PROVIDER_READ_AFTER_WINDOW
+  - MISSED_RUN_RECORD_DURABLE
+  original_scope_reference: 'Task 18 S25: Run begins at or after 09:30'
+  current_scope_expectation:
+    primary:
+      case_id: BEFORE_CLOSE_MISSED_WINDOW
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: MISSED_WINDOW
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:market_summary_available
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:regime_classification_available
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids:
+        - SCOPE:watchlist_metrics_available
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:event_risk_check_available
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:setup_detection_available
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:plan_draft_available
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:position_sizing_available
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids:
+        - SCOPE:portfolio_heat_check_available
+      plan_states: []
+      report_banner: 'MISSED_WINDOW: no normal premarket conclusion or plan is published.'
+      error_codes: []
+      recoverability: true
+    subcases:
+    - case_id: AT_OR_AFTER_CLOSE
+      execution_status: SKIPPED
+      data_quality_status: FAIL
+      delivery_status: MISSED_WINDOW
+      capabilities: []
+      plan_states: []
+      report_banner: 'MISSED_WINDOW: one durable missed-run record; no formal research publication or
+        provider read.'
+      error_codes: []
+      recoverability: true
+  domain_assertions:
+  - kind: RUN_WINDOW
+    fixture_id: S25_MISSED_WINDOW
+    expected_fields:
+      after_close_is_missed_record_only: true
