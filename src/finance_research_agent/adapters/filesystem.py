@@ -57,6 +57,8 @@ class LeaseHeldError(RuntimeError):
 class PublicationError(RuntimeError):
     """Raised when complete publication cannot be committed."""
 
+    code: ErrorCode = ErrorCode.PUBLICATION_FAILED
+
 
 def _path_error() -> PathNotAllowedError:
     return PathNotAllowedError(f"{ErrorCode.PATH_NOT_ALLOWED}: unsafe run identifier")
@@ -1034,14 +1036,17 @@ class FileSystemRunRepository:
             raise PublicationError("report SHA-256 does not match canonical report bytes")
         bundle_bytes = canonical_bytes(bundle)
         bundle_sha256 = _sha256(bundle_bytes)
-        self._atomic_write(staging / "bundle.json", bundle_bytes)
-        self._atomic_write(staging / "report.md", report_bytes)
-        if _sha256((staging / "bundle.json").read_bytes()) != bundle_sha256:
-            raise PublicationError("bundle SHA-256 changed before publication")
-        if _sha256((staging / "report.md").read_bytes()) != markdown_sha256:
-            raise PublicationError("report SHA-256 changed before publication")
-        self._fsync_directory(staging)
-        self._fsync_directory(staging.parent)
+        try:
+            self._atomic_write(staging / "bundle.json", bundle_bytes)
+            self._atomic_write(staging / "report.md", report_bytes)
+            if _sha256((staging / "bundle.json").read_bytes()) != bundle_sha256:
+                raise PublicationError("bundle SHA-256 changed before publication")
+            if _sha256((staging / "report.md").read_bytes()) != markdown_sha256:
+                raise PublicationError("report SHA-256 changed before publication")
+            self._fsync_directory(staging)
+            self._fsync_directory(staging.parent)
+        except OSError as error:
+            raise PublicationError("publication staging write or fsync failed") from error
         if self.inject_failure_before_rename:
             raise PublicationError("injected failure before atomic publication rename")
         renamed = False

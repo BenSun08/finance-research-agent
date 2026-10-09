@@ -1,9 +1,12 @@
 """R11 failure injections against real application and repository services."""
 
+import json
 from datetime import date
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
+
+import pytest
 
 from finance_research_agent.domain.enums import (
     BriefOrigin,
@@ -791,3 +794,59 @@ def test_f10_repair_exhaustion_records_three_validations_and_never_requests_a_fo
     )
     assert replay.json_matches is True
     assert replay.markdown_matches is True
+
+
+@pytest.mark.parametrize("failure_stage", ["write", "fsync"])
+def test_f11_pre_rename_disk_failure_is_typed_and_never_visible_as_published(
+    tmp_path: Path, valid_packet, valid_brief_draft, monkeypatch, failure_stage: str
+) -> None:
+    from finance_research_agent.adapters.filesystem import PublicationError
+    from finance_research_agent.application.operations import ProductAOperation
+    from tests.integration.test_premarket_workflow_matrix import _support
+
+    protocol, packet, _ = _support().prepared_protocol(tmp_path, valid_packet, valid_brief_draft)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    if failure_stage == "write":
+        original_atomic_write = protocol.repository._atomic_write
+
+        def fail_bundle_write(target: Path, payload: bytes) -> None:
+            if target.name == "bundle.json":
+                raise OSError("injected publication bundle write failure")
+            original_atomic_write(target, payload)
+
+        monkeypatch.setattr(protocol.repository, "_atomic_write", fail_bundle_write)
+    else:
+        original_fsync_directory = protocol.repository._fsync_directory
+
+        def fail_staging_fsync(directory: Path) -> None:
+            if directory.name == packet.run.run_id:
+                raise OSError("injected staging directory fsync failure")
+            original_fsync_directory(directory)
+
+        monkeypatch.setattr(protocol.repository, "_fsync_directory", fail_staging_fsync)
+
+    with pytest.raises(PublicationError) as raised:
+        protocol.dispatch(
+            ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value,
+            json.dumps({"draft": draft.model_dump(mode="json")}),
+        )
+
+    assert raised.value.code is ErrorCode.PUBLICATION_FAILED
+    assert protocol.repository.get_latest(packet.run.market_date) is None
+    assert protocol.repository.get_published_artifact(packet.run.run_id) is None
+    assert protocol.repository.load_published_bundle(packet.run.run_id) is None
+    assert protocol.repository.get_report(packet.run.run_id) is None
+    assert protocol.repository.diagnostic_staging_exists(packet.run.run_id)
+    stored = protocol.repository.load(packet.run.run_id)
+    assert stored is not None and stored.published is False
+    assert stored.checkpoints[-1].stage == "PUBLISHED"
+    final_run = (
+        tmp_path
+        / "runs"
+        / str(packet.run.market_date.year)
+        / packet.run.market_date.isoformat()
+        / packet.run.run_id
+    )
+    assert final_run.exists() is False
