@@ -249,3 +249,34 @@ at publication time; this document does not predeclare those remote results.
 - Scoped Ruff, mypy (two changed source files), schema drift and diff checks
   passed. Independent whole-feature review, full repository checks and coverage
   remain the coordinator's next gate. No push, PR or CI result is claimed here.
+
+### Final bootstrap integration gate
+
+- Fresh independent whole-feature reviewer `review_bootstrap_feature` found no
+  actionable P1/P2 findings at `9700b15`, against base `92fe327`. It independently
+  passed 168 tests: 71 bootstrap/integration/Alpaca, 52 protocol/facade/HTTP/security,
+  and 45 preparation/checkpoint/settings/calendar tests. Commit-range diff check
+  passed and the reviewed checkout was clean.
+- The coordinator separately rebuilt from `git archive 9700b15`, installed the
+  wheel with `--no-deps --no-index --target`, asserted the imported package was
+  inside that temporary installation, and checked its canonical prompt digest.
+  The generated console script launched directly from an unrelated directory,
+  initialized/listed exactly eleven tools, ignored malformed secret-canary dotenv,
+  and left the launch tree unchanged. Temporary artifacts were cleaned.
+- Frozen-source full suite under branch coverage: **2,162 passed, one live test
+  deselected, one existing websockets warning**, 515.72 seconds. Ruff passed;
+  mypy passed across 90 source files; generated schema drift and diff checks passed.
+
+| Changed module | Statement coverage | Branch coverage |
+| --- | ---: | ---: |
+| Stdio bootstrap | 99.03% (102/103) | 90% (9/10) |
+| Alpaca adapter | 85.78% (374/436) | 79.33% (119/150) |
+
+The sole unmeasured bootstrap statement/branch is the module `__main__` invocation
+in the parent coverage process. Separate actual module and installed-console
+subprocess checks exercised launch behavior. The changed Alpaca symbol declaration
+is covered; overall adapter gaps remain in existing defensive parsing, identity,
+timestamp and provider-response guards. Coverage is not represented as complete.
+
+Remote PR, exact-head CI/review checks and merge are verified independently after
+this local gate. Plugin/skill/workflow packaging and R11 remain subsequent work.
