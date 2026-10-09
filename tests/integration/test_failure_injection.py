@@ -581,3 +581,62 @@ def test_f07_malformed_draft_json_is_not_recorded_as_a_validated_attempt(
     )
     assert replay.json_matches is True
     assert replay.markdown_matches is True
+
+
+def test_f08_unsupported_claim_is_rejected_before_valid_repair_publishes(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.enums import ValidationCode
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.integration.test_premarket_workflow_matrix import _support
+    from tests.support.premarket_workflow import run_workflow
+
+    scenario = load_evaluation_scenarios()[21]
+    assert scenario.id.value == "S22"
+    assert FailureInjectionId.F08 in scenario.injected_failures
+    support = _support()
+    protocol, packet, _ = support.prepared_protocol(
+        tmp_path, valid_packet, valid_brief_draft
+    )
+    valid_repair = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    unsupported = valid_repair.model_copy(
+        update={"data_warnings": ("unverified earnings are confirmed",)}
+    )
+    host = support.ScriptedSynthesis([unsupported, valid_repair])
+    before_packet = canonical_bytes(packet)
+
+    result = run_workflow(protocol, host)
+
+    assert result.outcome == "published"
+    assert (result.validations, result.repairs) == (2, 1)
+    assert protocol.names.count("validate_and_publish_brief") == 2
+    assert host.packet_objects == [packet, packet]
+    assert host.packet_hashes == [packet.canonical_sha256] * 2
+    assert canonical_bytes(packet) == before_packet
+    assert host.issues[1] is not None
+    assert any(issue.code is ValidationCode.UNSUPPORTED_CLAIM for issue in host.issues[1].issues)
+
+    bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    artifact = protocol.repository.get_published_artifact(packet.run.run_id)
+    assert bundle is not None and artifact is not None
+    assert bundle.bundle["brief_draft"]["data_warnings"] == ()
+    final_report = bundle.bundle["validation_report"]
+    assert final_report["is_valid"] is True
+    assert final_report["validation_attempt"] == 2
+    assert artifact.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    report = protocol.repository.get_report(packet.run.run_id)
+    assert report == result.report.report_markdown
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(bundle),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
