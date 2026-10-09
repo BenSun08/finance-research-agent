@@ -1079,3 +1079,71 @@ def test_f14_duplicate_scheduled_initialization_reuses_one_unpublished_revision(
     )
     assert deps.run_repository.get_latest(date(2026, 9, 28)) is None
     assert deps.run_repository.get_published_artifact(first.research_packet.run.run_id) is None
+
+
+@pytest.mark.parametrize(
+    ("invoked_at", "allow_normal_plan", "force_review_required", "delivery", "outcome"),
+    [
+        ("2026-09-28T13:10:00+00:00", False, False, DeliveryStatus.DELAYED, "PACKET_READY"),
+        ("2026-09-28T13:27:00+00:00", True, True, DeliveryStatus.DELAYED, "PACKET_READY"),
+        ("2026-09-28T13:31:00+00:00", False, False, DeliveryStatus.MISSED_WINDOW, "PUBLISHED"),
+    ],
+)
+def test_f15_scheduled_wake_boundaries_reuse_one_revision(
+    tmp_path: Path,
+    invoked_at: str,
+    allow_normal_plan: bool,
+    force_review_required: bool,
+    delivery: DeliveryStatus,
+    outcome: str,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.run_service import PreparePremarketRunRequest
+    from finance_research_agent.domain.enums import InvocationType
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+
+    class FixedClock:
+        def now_utc(self):
+            return datetime.fromisoformat(invoked_at).astimezone(UTC)
+
+    scenario = load_evaluation_scenarios()[24]
+    assert scenario.id.value == "S25"
+    assert FailureInjectionId.F15 in scenario.injected_failures
+    market_date = date(2026, 9, 28)
+    deps = dependencies(tmp_path)
+    deps = replace(deps, clock=FixedClock())
+    scheduled = PreparePremarketRunRequest(market_date, None, InvocationType.SCHEDULED)
+
+    first = prepare_research_packet(scheduled, deps)
+
+    assert first.outcome == outcome
+    assert first.window_decision.delivery_status is delivery
+    assert first.window_decision.allow_normal_plan is allow_normal_plan
+    assert first.window_decision.force_review_required is force_review_required
+    assert first.stored_run is not None
+    run_id = first.stored_run.run_id
+    first_calls = tuple(deps.market_data.calls)
+
+    duplicate = prepare_research_packet(scheduled, deps)
+
+    assert duplicate.outcome == outcome
+    assert duplicate.stored_run is not None
+    assert duplicate.stored_run.run_id == run_id
+    assert tuple(deps.market_data.calls) == first_calls
+    assert deps.run_repository._existing_revision_ids(market_date) == (run_id,)
+    if outcome == "PACKET_READY":
+        assert first.research_packet is not None
+        assert duplicate.research_packet == first.research_packet
+        assert deps.run_repository.get_latest(market_date) is None
+        assert deps.run_repository.get_published_artifact(run_id) is None
+    else:
+        assert first.research_packet is None
+        assert duplicate.research_packet is None
+        assert first.publication is not None
+        assert duplicate.publication == first.publication
+        assert deps.run_repository.get_latest(market_date) == run_id
+        assert deps.run_repository.get_published_artifact(run_id) == first.publication
