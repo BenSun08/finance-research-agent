@@ -90,6 +90,7 @@ class _SynthesisTrace:
     validation_reports: tuple[ValidationReport, ...]
     invalid_draft_hashes: tuple[str, ...]
     provider_calls_before: int
+    error_codes: tuple[ErrorCode, ...]
 
 
 def execute_current_scope_scenario(
@@ -185,6 +186,7 @@ def _publish_with_offline_synthesis(
     packet_hashes: list[str] = []
     validation_reports: list[ValidationReport] = []
     invalid_draft_hashes: list[str] = []
+    error_codes: list[ErrorCode] = []
     previous_report: ValidationReport | None = None
     reduced_reason: ReducedReportReason | None = None
     published = False
@@ -208,9 +210,11 @@ def _publish_with_offline_synthesis(
             draft = ResearchBriefDraft.model_validate(candidate, strict=True)
         except (TypeError, ValueError):
             reduced_reason = ReducedReportReason.SYNTHESIS_UNAVAILABLE
+            error_codes.append(ErrorCode.INVALID_RESPONSE)
             break
         if draft.origin is not BriefOrigin.SYNTHESIZED:
             reduced_reason = ReducedReportReason.SYNTHESIS_UNAVAILABLE
+            error_codes.append(ErrorCode.INVALID_RESPONSE)
             break
         report, repair = validate_staged_brief(
             repository,
@@ -247,6 +251,7 @@ def _publish_with_offline_synthesis(
         validation_reports=tuple(validation_reports),
         invalid_draft_hashes=tuple(invalid_draft_hashes),
         provider_calls_before=provider_calls_before,
+        error_codes=tuple(dict.fromkeys(error_codes)),
     )
 
 
@@ -333,6 +338,8 @@ def _observe_published_scenario(
         error_codes = (ErrorCode(failure_code),)
     else:
         raise ValueError("published scenario failure_code is not a stable string")
+    if synthesis_trace is not None:
+        error_codes = tuple(dict.fromkeys((*error_codes, *synthesis_trace.error_codes)))
     observed = ScenarioOutcomeExpectation(
         case_id=selected_expectation.case_id,
         execution_status=bundle.run.execution_status,
