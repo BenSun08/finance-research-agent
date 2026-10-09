@@ -11,11 +11,12 @@ import ssl
 import unicodedata
 import urllib.parse
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
+from threading import Event, Lock, Thread
 from typing import Literal, cast
 
 import httpcore
@@ -132,6 +133,15 @@ class SafeResponse:
     content_type: str
     url: str
     attempts: int
+
+
+@dataclass(slots=True)
+class _PendingResolution:
+    host: str
+    port: int
+    completed: Event = field(default_factory=Event)
+    addresses: tuple[str, ...] = ()
+    error: BaseException | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -440,6 +450,46 @@ class SafeHttpClient:
             self._jitter = jitter
         self._clock = clock
         self._run_deadline = run_deadline
+        self._resolution_lock = Lock()
+        self._pending_resolution: _PendingResolution | None = None
+
+    def _resolve_addresses(
+        self, host: str, port: int, deadline: datetime | None,
+    ) -> tuple[str, ...]:
+        if self._run_deadline is None:
+            return self._resolver(host, port)
+        effective = self._run_deadline if deadline is None else min(deadline, self._run_deadline)
+        if self._clock() >= effective:
+            raise RequestDeadlineExceeded("request deadline exceeded")
+        with self._resolution_lock:
+            if self._clock() >= effective:
+                raise RequestDeadlineExceeded("request deadline exceeded")
+            pending = self._pending_resolution
+            if pending is None or pending.completed.is_set():
+                new_pending = _PendingResolution(host, port)
+                pending = new_pending
+
+                def resolve(attempt: _PendingResolution = new_pending) -> None:
+                    try:
+                        attempt.addresses = self._resolver(attempt.host, attempt.port)
+                    except BaseException as error:
+                        # Preserve resolver failures on the caller's existing
+                        # boundary without emitting an uncaught worker traceback.
+                        attempt.error = error
+                    finally:
+                        attempt.completed.set()
+
+                worker = Thread(target=resolve, name="finance-dns-resolution", daemon=True)
+                worker.start()
+                self._pending_resolution = pending
+            elif (pending.host, pending.port) != (host, port):
+                raise RequestDeadlineExceeded("host resolution is already in progress")
+        remaining = (effective - self._clock()).total_seconds()
+        if remaining <= 0 or not pending.completed.wait(remaining) or self._clock() >= effective:
+            raise RequestDeadlineExceeded("request deadline exceeded")
+        if pending.error is not None:
+            raise pending.error
+        return pending.addresses
 
     def validate(self, request: AllowedRequest) -> str:
         """Validate a request and return its safe absolute URL."""
@@ -447,7 +497,9 @@ class SafeHttpClient:
         url, _addresses = self._validate_request(request)
         return url
 
-    def _validate_request(self, request: AllowedRequest) -> tuple[str, tuple[str, ...]]:
+    def _validate_request(
+        self, request: AllowedRequest, deadline: datetime | None = None,
+    ) -> tuple[str, tuple[str, ...]]:
         """Validate a request and retain the addresses for the actual connection."""
 
         if not isinstance(request, AllowedRequest):
@@ -489,7 +541,7 @@ class SafeHttpClient:
             addresses = (host,)
         else:
             try:
-                addresses = self._resolver(host, request.port)
+                addresses = self._resolve_addresses(host, request.port, deadline)
             except OSError as error:
                 raise RequestRejected("host could not be resolved") from error
             if not addresses or any(_unsafe_address(address) for address in addresses):
@@ -561,7 +613,7 @@ class SafeHttpClient:
             type(value) is not str or not value for value in provider_credentials
         ):
             raise RequestRejected("provider credentials must be non-empty strings")
-        url, addresses = self._validate_request(request)
+        url, addresses = self._validate_request(request, deadline)
         if deadline.tzinfo is None or deadline.utcoffset() is None:
             raise RequestRejected("deadline must be timezone-aware")
         if deadline <= self._clock():
@@ -631,11 +683,14 @@ class SafeHttpClient:
                             url=str(response.url),
                             attempts=attempt,
                         )
-                except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as error:
+                except (
+                    httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError,
+                    httpcore.TimeoutException, httpcore.NetworkError, httpcore.ProtocolError,
+                ):
                     if self._run_deadline is not None and self._clock() >= deadline:
                         raise RequestDeadlineExceeded("request deadline exceeded") from None
                     if attempt >= max_attempts:
-                        raise RequestTransportUnavailable("request transport failed") from error
+                        raise RequestTransportUnavailable("request transport failed") from None
                     self._sleep_before_retry(
                         retry_delay(
                             attempt,
