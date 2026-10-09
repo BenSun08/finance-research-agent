@@ -23,6 +23,7 @@ from pydantic import (
 
 from finance_research_agent.adapters.http_client import (
     AllowedRequest,
+    RequestDeadlineExceeded,
     RequestRejected,
     RequestTransportUnavailable,
     SafeHttpClient,
@@ -1022,6 +1023,15 @@ class AlpacaMarketDataProvider:
                 deadline=self._now() + timedelta(seconds=60),
                 provider_credentials=(key.get_secret_value(), secret.get_secret_value()),
                 telemetry_observer=telemetry_observer,
+            )
+        except RequestDeadlineExceeded:
+            return (
+                self._failure(
+                    error_code=ErrorCode.DEADLINE_EXCEEDED,
+                    retryable=False,
+                    message="market-data run deadline exceeded",
+                ),
+                None,
             )
         except RequestTransportUnavailable:
             return (
