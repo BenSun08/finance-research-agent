@@ -25,6 +25,7 @@ from finance_research_agent.application.replay_service import ArtifactNotFoundEr
 from finance_research_agent.domain.models import ConfigurationSnapshot, PublishedRunBundle
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.settings import Settings
+from tests.support.component_versions import synthetic_component_versions
 
 
 class _Services:
@@ -261,6 +262,7 @@ def test_default_replay_uses_the_stored_bundle_without_loading_configuration(
     monkeypatch.setattr(cli, "Settings", lambda: Settings(data_dir=tmp_path))
     monkeypatch.setattr(cli, "YamlConfigurationRepository", _Configuration)
     monkeypatch.setattr(cli, "FileSystemRunRepository", lambda root, **kwargs: reader)
+    monkeypatch.setattr(cli, "current_component_versions", synthetic_component_versions)
     monkeypatch.setattr(cli, "replay_published_artifact", fake_replay)
 
     result = main(["replay", run_id])
@@ -376,6 +378,7 @@ def test_frozen_replay_never_constructs_settings_or_diagnostic_services(
         return Reader()
 
     monkeypatch.setattr(cli, "FileSystemRunRepository", reader)
+    monkeypatch.setattr(cli, "current_component_versions", synthetic_component_versions)
     monkeypatch.setattr(cli, "replay_published_artifact", lambda *args: {"replayed": True})
     assert main(["replay", "premarket-2026-09-30-r1"]) == 0
     assert json.loads(capsys.readouterr().out) == {"replayed": True}

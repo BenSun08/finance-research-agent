@@ -1,1 +1,7 @@
 include prompts/research-brief-draft.md
+include .codex-plugin/plugin.json
+include .mcp.json
+include skills/market-regime/SKILL.md
+include skills/watchlist-management/SKILL.md
+include skills/premarket-research/SKILL.md
+include skills/premarket-research/references/workflow-contract.yaml
