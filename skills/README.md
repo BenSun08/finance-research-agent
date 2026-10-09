@@ -1,4 +1,5 @@
 # Project Skills
 
-- [`market-regime`](market-regime/SKILL.md): classify or explain the deterministic
-  research-only market regime from approved synthetic completed daily data.
+- [market-regime](market-regime/SKILL.md)
+- [premarket-research](premarket-research/SKILL.md)
+- [watchlist-management](watchlist-management/SKILL.md)

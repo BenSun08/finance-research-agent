@@ -9,6 +9,7 @@ from scripts.check_docs_examples import (
     REQUIRED_SKILL_SECTIONS,
     declared_resources,
     parse_skill,
+    validate_documentation,
     validate_product_a_contracts,
     validate_skill_contracts,
     validate_workflow,
@@ -127,3 +128,17 @@ def test_workflow_drift_is_rejected(tmp_path, mutation):
     target = tmp_path / "workflow-contract.yaml"
     target.write_text(mutation(source.read_text()))
     assert validate_workflow(target)
+
+
+def test_navigation_and_paused_scheduling_are_derived_from_canonical_contracts():
+    assert validate_documentation(ROOT) == ()
+
+
+def test_broken_documentation_link_is_rejected(tmp_path):
+    copytree(ROOT / "skills", tmp_path / "skills")
+    copytree(ROOT / "docs", tmp_path / "docs")
+    copytree(ROOT / "src", tmp_path / "src")
+    (tmp_path / "README.md").write_text((ROOT / "README.md").read_text())
+    path = tmp_path / "skills/README.md"
+    path.write_text(path.read_text() + "\n- [Missing](missing.md)\n")
+    assert validate_documentation(tmp_path)

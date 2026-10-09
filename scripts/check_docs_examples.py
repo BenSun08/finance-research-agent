@@ -166,11 +166,63 @@ def validate_product_a_contracts(root: Path) -> tuple[str, ...]:
     return tuple(errors)
 
 
+def validate_documentation(root: Path) -> tuple[str, ...]:
+    errors = []
+    documents = (
+        root / "README.md", root / "skills/README.md",
+        root / "docs/architecture/v0.1-boundaries.md",
+        root / "docs/operations/scheduling-and-recovery.md",
+    )
+    for path in documents:
+        if not path.is_file():
+            errors.append(f"missing documentation: {path.relative_to(root)}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", text):
+            if target.startswith(("https://", "http://", "#")):
+                continue
+            target_path = path.parent / target.split("#", 1)[0]
+            if (
+                not target_path.is_file()
+                or not target_path.resolve().is_relative_to(root.resolve())
+            ):
+                errors.append(f"broken or unconfined link: {path.relative_to(root)} -> {target}")
+    index = documents[1]
+    if index.is_file() and any(
+        line and not line.startswith(("# ", "- ["))
+        for line in index.read_text(encoding="utf-8").splitlines()
+    ):
+        errors.append("skills README must be a link index only")
+    architecture = documents[2]
+    if architecture.is_file():
+        text = architecture.read_text(encoding="utf-8")
+        authorities = (
+            "Approved Product A specification", "Python typed domain", "Generated JSON Schemas",
+            "workflow-contract.yaml", "SKILL.md", "Canonical synthesis prompt",
+            "Canonical report template", "Immutable JSON run bundle", "Derived documentation",
+        )
+        positions = [text.find(value) for value in authorities]
+        if any(position < 0 for position in positions) or positions != sorted(positions):
+            errors.append("architecture must state the canonical authority hierarchy in order")
+        if "does not rewrite history" not in text:
+            errors.append("architecture must preserve frozen historical authority")
+    schedule = documents[3]
+    if schedule.is_file():
+        text = schedule.read_text(encoding="utf-8")
+        for required in ("PAUSED", "premarket-research", "frozen evidence", "deterministic truth",
+                         "human review", "no execution"):
+            if required not in text:
+                errors.append(f"schedule documentation missing {required}")
+        if any(name in text for name in OPERATION_NAMES):
+            errors.append("saved scheduling prompt must not duplicate MCP operation order")
+    return tuple(errors)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     args = parser.parse_args()
-    errors = validate_product_a_contracts(args.root)
+    errors = (*validate_product_a_contracts(args.root), *validate_documentation(args.root))
     for error in errors:
         print(error)
     return int(bool(errors))

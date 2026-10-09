@@ -72,6 +72,13 @@ The current development package version is `0.5.0.dev0`.
 
 ## Product A stdio server
 
+Canonical host instructions are indexed in [Project Skills](skills/README.md).
+See [authority and boundaries](docs/architecture/v0.1-boundaries.md) and the
+[paused scheduling and recovery guidance](docs/operations/scheduling-and-recovery.md).
+The premarket [workflow contract](skills/premarket-research/references/workflow-contract.yaml)
+owns orchestration order and handoffs. Packaging does not enable a schedule or
+install a plugin into a desktop host.
+
 Launch the installed local server from an MCP host with command
 `ai-market-research-mcp` and an empty argument list. For a source checkout, run:
 
