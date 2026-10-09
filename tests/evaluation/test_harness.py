@@ -26,7 +26,7 @@ from finance_research_agent.evaluation.models import (
     ScenarioAssertionId,
 )
 from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
-from tests.application.test_premarket_preparation import dependencies
+from tests.application.test_premarket_preparation import MarketData, dependencies
 from tests.unit import test_setups as setup_fixtures
 
 
@@ -109,6 +109,44 @@ def test_current_scope_harness_checks_watchlist_exclusions_in_rendered_report(
     observation = execute_current_scope_scenario(scenario, harness)
 
     assert observation.watchlist_exclusions_visible is True
+
+
+def test_s05_unknown_regime_current_scope_projection_uses_missing_broad_evidence(
+    tmp_path: Path,
+) -> None:
+    from finance_research_agent.domain.errors import ErrorCode
+    from finance_research_agent.domain.models import ProviderFailure
+
+    class MissingBroadData(MarketData):
+        def fetch_daily_bars(self, symbols, start, end, **kwargs):
+            outcomes = dict(super().fetch_daily_bars(symbols, start, end, **kwargs))
+            outcomes["SPY"] = ProviderFailure(
+                provider="alpaca",
+                symbol="SPY",
+                error_code=ErrorCode.PROVIDER_NO_DATA,
+                retryable=False,
+            )
+            return outcomes
+
+    scenario = load_evaluation_scenarios()[4]
+    deps = dependencies(tmp_path, market=MissingBroadData())
+    harness = EvaluationHarness(
+        dependencies_factory=lambda current_scenario, expectation: deps,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+    )
+
+    observation = execute_current_scope_scenario(scenario, harness)
+
+    assert observation.current_scope == scenario.current_scope_expectation.primary
+    assert observation.source_limitations_adjacent is True
+    assert observation.watchlist_exclusions_visible is True
+    run_id = deps.run_repository.get_latest(date(2026, 9, 28))
+    assert run_id is not None
+    report = deps.run_repository.get_report(run_id)
+    assert report is not None
+    assert "Regime classification is UNKNOWN" in report
+    assert "PROVIDER_NO_DATA" in report
 
 
 @pytest.mark.parametrize(
