@@ -1,6 +1,7 @@
 """R11 failure injections against real application and repository services."""
 
 from datetime import date
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 
@@ -633,6 +634,80 @@ def test_f08_unsupported_claim_is_rejected_before_valid_repair_publishes(
     assert artifact.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
     report = protocol.repository.get_report(packet.run.run_id)
     assert report == result.report.report_markdown
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(bundle),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f09_numeric_mismatch_is_rejected_without_changing_packet_values(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.enums import ValidationCode
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.integration.test_premarket_workflow_matrix import _support
+    from tests.support.premarket_workflow import run_workflow
+
+    scenario = load_evaluation_scenarios()[21]
+    assert scenario.id.value == "S22"
+    assert FailureInjectionId.F09 in scenario.injected_failures
+    support = _support()
+    protocol, packet, _ = support.prepared_protocol(
+        tmp_path, valid_packet, valid_brief_draft
+    )
+    valid_repair = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    numeric_claim = valid_repair.claims[1].model_copy(
+        update={
+            "numeric_value": Decimal("104.00"),
+            "text": "AAPL two-session SMA is 104.00 price.",
+        }
+    )
+    unsupported = valid_repair.model_copy(
+        update={"claims": (valid_repair.claims[0], numeric_claim)}
+    )
+    host = support.ScriptedSynthesis([unsupported, valid_repair])
+    before_packet = canonical_bytes(packet)
+    metric = next(
+        item
+        for item in packet.metrics
+        if item.metric_id == valid_repair.claims[1].metric_ids[0]
+    )
+
+    result = run_workflow(protocol, host)
+
+    assert result.outcome == "published"
+    assert (result.validations, result.repairs) == (2, 1)
+    assert host.packet_objects == [packet, packet]
+    assert host.packet_hashes == [packet.canonical_sha256] * 2
+    assert canonical_bytes(packet) == before_packet
+    assert host.issues[1] is not None
+    assert any(
+        issue.code is ValidationCode.DETERMINISTIC_VALUE_MISMATCH
+        for issue in host.issues[1].issues
+    )
+
+    bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    published_claim = next(
+        item
+        for item in bundle.bundle["brief_draft"]["claims"]
+        if item["claim_id"] == valid_repair.claims[1].claim_id
+    )
+    assert Decimal(published_claim["numeric_value"]) == metric.value
+    assert Decimal(published_claim["numeric_value"]) != Decimal("104.00")
+    final_report = bundle.bundle["validation_report"]
+    assert final_report["is_valid"] is True
+    assert final_report["validation_attempt"] == 2
     replay = replay_published_artifact(
         protocol.repository,
         packet.run.run_id,
