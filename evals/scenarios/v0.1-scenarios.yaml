@@ -2658,6 +2658,7 @@ scenarios:
     fixture_id: S21_AMBIGUOUS_DAILY_BAR
     expected_fields:
       outcomes:
+      - ENTRY_ZONE_OBSERVED
       - AMBIGUOUS_SEQUENCE
 - id: S22
   title: Synthesis inserts unsupported number

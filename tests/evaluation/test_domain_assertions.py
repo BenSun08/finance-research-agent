@@ -28,8 +28,10 @@ from finance_research_agent.evaluation.domain_assertions import (
     DomainFixtureBank,
     EventRiskFixture,
     InstrumentEligibilityFixture,
+    PlanBuildFixture,
     PlanExpiryFixture,
     PositionSizingFixture,
+    PriorObservationFixture,
     RegimeCalculationFixture,
     RunWindowFixture,
     SetupDetectionFixture,
@@ -38,6 +40,7 @@ from finance_research_agent.evaluation.domain_assertions import (
 from finance_research_agent.evaluation.models import DomainAssertion
 from tests.support.synthetic_market import CUTOFF, make_regime_case
 from tests.unit import test_eligibility as eligibility_fixtures
+from tests.unit import test_observations as observation_fixtures
 from tests.unit import test_scoring as scoring_fixtures
 from tests.unit import test_setups as setup_fixtures
 from tests.unit import test_trade_plan as trade_plan_fixtures
@@ -421,6 +424,89 @@ def test_plan_expiry_assertion_calls_real_expiry_rules() -> None:
 
     assert outcome.status == "PASS"
     assert outcome.matched_fields == ("plan_status", "expiry_reasons")
+
+
+def test_plan_build_assertion_calls_real_plan_builder() -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "PLAN_BUILD",
+                "fixture_id": "S19_MISSING_PORTFOLIO_HEAT",
+                "expected_fields": {
+                    "plan_status": "REVIEW_REQUIRED",
+                    "data_quality_flags": ["PORTFOLIO_HEAT_UNAVAILABLE"],
+                },
+            }
+        )
+    )
+    plan_inputs = trade_plan_fixtures.inputs.__wrapped__()
+    plan_inputs["risk_policy"] = plan_inputs["risk_policy"].model_copy(
+        update={"existing_portfolio_heat_pct": None}
+    )
+    bank = DomainFixtureBank(
+        {
+            assertion.fixture_id: PlanBuildFixture(
+                candidate=plan_inputs["candidate"],
+                run=plan_inputs["run"],
+                watchlist_item=plan_inputs["watchlist_item"],
+                regime=plan_inputs["regime"],
+                event_assessment=plan_inputs["event_assessment"],
+                gates=plan_inputs["gates"],
+                current_price=plan_inputs["current_price"],
+                capability_states=plan_inputs["capability_states"],
+                setup_policy=plan_inputs["setup_policy"],
+                risk_policy=plan_inputs["risk_policy"],
+                generated_at=plan_inputs["generated_at"],
+            )
+        }
+    )
+
+    outcome = execute_domain_assertion(assertion, bank)
+
+    assert outcome.status == "PASS"
+    assert outcome.matched_fields == ("plan_status", "data_quality_flags")
+
+
+def test_prior_observation_assertion_calls_real_completed_bar_analysis() -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "PRIOR_OBSERVATION",
+                "fixture_id": "S21_AMBIGUOUS_DAILY_BAR",
+                "expected_fields": {
+                    "outcomes": ["ENTRY_ZONE_OBSERVED", "AMBIGUOUS_SEQUENCE"],
+                },
+            }
+        )
+    )
+    plan = plans.build_trade_plan(**trade_plan_fixtures.inputs.__wrapped__())
+    entry = plan.entry_zone.upper.value
+    bars = (
+        observation_fixtures._bar(
+            plan, date(2026, 9, 22), entry - 20, entry - 10, entry - 15
+        ),
+        observation_fixtures._bar(
+            plan,
+            date(2026, 9, 23),
+            plan.candidate_stop.value - 1,
+            plan.target_scenarios[0].price.value + 1,
+            entry,
+        ),
+    )
+    bank = DomainFixtureBank(
+        {
+            assertion.fixture_id: PriorObservationFixture(
+                plan=plan,
+                completed_bars=bars,
+                observed_through=date(2026, 9, 23),
+            )
+        }
+    )
+
+    outcome = execute_domain_assertion(assertion, bank)
+
+    assert outcome.status == "PASS"
+    assert outcome.matched_fields == ("outcomes",)
 
 
 @pytest.mark.parametrize(

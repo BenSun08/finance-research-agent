@@ -107,6 +107,11 @@ def test_manifest_domain_assertions_use_closed_typed_variants() -> None:
     event_risk = scenarios[6].domain_assertions[0].expected_fields
     assert event_risk.plan_status is PlanStatus.BLOCKED
     assert not hasattr(event_risk, "event_verified")
+    prior_observation = scenarios[20].domain_assertions[0].expected_fields
+    assert tuple(outcome.value for outcome in prior_observation.outcomes) == (
+        "ENTRY_ZONE_OBSERVED",
+        "AMBIGUOUS_SEQUENCE",
+    )
 
 
 def test_domain_assertion_rejects_fixture_from_another_operation() -> None:

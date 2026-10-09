@@ -18,14 +18,18 @@ from finance_research_agent.domain.events import (
 from finance_research_agent.domain.market import RegimeMarketSnapshot
 from finance_research_agent.domain.market_calendar import TradingCalendar, resolve_run_window
 from finance_research_agent.domain.models import (
+    CapabilityState,
+    CompletedDailyBar,
     EventRecord,
     GateResult,
     InstrumentIdentity,
     MarketSnapshot,
     PriceObservation,
+    RunContext,
     SourceHealth,
 )
-from finance_research_agent.domain.plans import TradePlanDraft, expire_plan
+from finance_research_agent.domain.observations import observe_prior_plan
+from finance_research_agent.domain.plans import TradePlanDraft, build_trade_plan, expire_plan
 from finance_research_agent.domain.policies import RiskPolicy, SetupPolicy, WatchlistItem
 from finance_research_agent.domain.quality import DataQualityResult
 from finance_research_agent.domain.regime import (
@@ -51,8 +55,10 @@ from finance_research_agent.evaluation.models import (
     EventRiskAssertion,
     FixtureSetId,
     InstrumentEligibilityAssertion,
+    PlanBuildAssertion,
     PlanExpiryAssertion,
     PositionSizingAssertion,
+    PriorObservationAssertion,
     RegimeCalculationAssertion,
     RunWindowAssertion,
     SetupDetectionAssertion,
@@ -156,6 +162,32 @@ class PlanExpiryFixture:
     incompatible_regime: bool
     stale_or_conflicting_data: bool
     eligibility_changed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PlanBuildFixture:
+    """Complete frozen inputs for one deterministic conditional plan draft."""
+
+    candidate: SetupCandidate
+    run: RunContext
+    watchlist_item: WatchlistItem
+    regime: RegimeResult
+    event_assessment: EventAssessment
+    gates: tuple[GateResult, ...]
+    current_price: PriceObservation | None
+    capability_states: tuple[CapabilityState, ...]
+    setup_policy: SetupPolicy
+    risk_policy: RiskPolicy
+    generated_at: UtcDatetime
+
+
+@dataclass(frozen=True, slots=True)
+class PriorObservationFixture:
+    """Complete historical completed-bar coverage for one conditional plan."""
+
+    plan: TradePlanDraft
+    completed_bars: tuple[CompletedDailyBar, ...]
+    observed_through: date
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +392,30 @@ def execute_domain_assertion(
                 "expiry_reasons": expired.expiry_reasons,
             },
         )
+    if isinstance(assertion, PlanBuildAssertion):
+        fixture = fixtures.get(assertion.fixture_id)
+        if type(fixture) is not PlanBuildFixture:
+            raise TypeError("PLAN_BUILD requires PlanBuildFixture")
+        plan = build_trade_plan(
+            candidate=fixture.candidate,
+            run=fixture.run,
+            watchlist_item=fixture.watchlist_item,
+            regime=fixture.regime,
+            event_assessment=fixture.event_assessment,
+            gates=fixture.gates,
+            current_price=fixture.current_price,
+            capability_states=fixture.capability_states,
+            setup_policy=fixture.setup_policy,
+            risk_policy=fixture.risk_policy,
+            generated_at=fixture.generated_at,
+        )
+        return _compare(
+            assertion,
+            {
+                "plan_status": plan.plan_status,
+                "data_quality_flags": plan.data_quality_flags,
+            },
+        )
     if isinstance(assertion, PositionSizingAssertion):
         fixture = fixtures.get(assertion.fixture_id)
         if type(fixture) is not PositionSizingFixture:
@@ -379,6 +435,16 @@ def execute_domain_assertion(
                 "suggested_units": sizing.suggested_units,
             },
         )
+    if isinstance(assertion, PriorObservationAssertion):
+        fixture = fixtures.get(assertion.fixture_id)
+        if type(fixture) is not PriorObservationFixture:
+            raise TypeError("PRIOR_OBSERVATION requires PriorObservationFixture")
+        observation = observe_prior_plan(
+            fixture.plan,
+            fixture.completed_bars,
+            fixture.observed_through,
+        )
+        return _compare(assertion, {"outcomes": observation.outcomes})
     raise NotImplementedError(
         f"domain assertion operation {assertion.kind.value} is not registered"
     )
