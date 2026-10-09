@@ -114,6 +114,32 @@ diff review; commit as `feat: add diagnostic and replay CLI`.
 
 ## Slice R10c: Plugin, Skills, Workflow, and Provenance
 
+### Sequencing correction selected on 2026-10-09
+
+Selected under the user's standing delegated decision authority after PR #69
+merged as `807f607`. Tasks 5 and 6 are delivered in one reviewed feature with
+separate tested subtask commits. Task 5 needs exact installed premarket resources
+for its digest, while Task 6 creates those resources; the original sequential
+merge gate would require a placeholder or a competing source copy. Create and
+verify the canonical contracts first, package those same root bytes, then wire
+their installed digest and verify the finite protocol/replay matrix before the
+feature PR. The typed operations and runnable transport remain prerequisites.
+
+Keep the approved local compatibility manifest at `.codex-plugin/plugin.json`,
+plugin identity `ai-market-research-agent`, and version `0.1.0`. Correct the older
+blueprint's direct MCP map to the supported `.mcp.json` `mcpServers` wrapper;
+its sole server runs `ai-market-research-mcp` with no arguments or secret values.
+The compatibility layout and wrapper are documented in the
+[official plugin packaging guide](https://developers.openai.com/plugins/build/plugins).
+Do not install or enable the plugin or activate a schedule in this code slice.
+
+Production provenance reads the fixed installed distribution resources and
+fails closed when they are missing or invalid. Offline source tests inject a
+trusted synthetic skill digest through the existing component-version callback.
+No mutable source fallback or caller-supplied MCP digest is introduced. Wheel and
+sdist verification uses temporary builds/installations and includes root/ancestor
+symlink rejection, exact resource allowlists and no source-import fallback.
+
 ### Task 5: Add the local Product A plugin package and component digest
 
 **Tests first:** Test manifest schema, exact resource allowlist, package build
@@ -130,8 +156,10 @@ full checks and coverage; commit as `feat: version Product A skill bundle`.
 
 ### Task 6: Add the three skills and the single premarket workflow contract
 
-Start this task only after Task 5's local plugin package and Tasks 1–4's typed
-operation contracts/transport have been merged and are present on the base.
+Start after Tasks 1–4's typed operation contracts/transport and the runnable
+bootstrap have merged. Deliver alongside Task 5 under the sequencing correction
+above; all contracts, packaged resources and provenance must be verified before
+their combined feature is published.
 
 **Tests first:** Test exact shared skill frontmatter/sections, operation
 allowlist parity for every `mcp_tool` workflow step (the eleven MCP operations
