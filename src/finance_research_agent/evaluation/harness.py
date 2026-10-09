@@ -27,6 +27,8 @@ from finance_research_agent.application.run_service import (
 from finance_research_agent.domain.enums import (
     Capability,
     DataQualityStatus,
+    DeliveryStatus,
+    ExecutionStatus,
     InvocationType,
     ReducedReportReason,
 )
@@ -89,6 +91,17 @@ def execute_current_scope_scenario(
         dependencies,
     )
     repository = cast(PublicationRepository, dependencies.run_repository)
+    if prepared.outcome == "SKIPPED":
+        if prepared.window_decision.delivery_status is None:
+            raise ValueError("skipped scenario is missing its delivery status")
+        return _observe_skipped_scenario(
+            scenario,
+            selected_expectation,
+            dependencies,
+            repository,
+            harness.market_date,
+            prepared.window_decision.delivery_status,
+        )
     packet: ResearchPacket | None
     if prepared.outcome == "PACKET_READY":
         packet = _require_packet(prepared)
@@ -113,6 +126,39 @@ def execute_current_scope_scenario(
         packet,
         harness.market_date,
         prepared.data_quality,
+    )
+
+
+def _observe_skipped_scenario(
+    scenario: EvaluationScenario,
+    selected_expectation: ScenarioOutcomeExpectation,
+    dependencies: RunDependencies,
+    repository: PublicationRepository,
+    market_date: date,
+    delivery_status: DeliveryStatus,
+) -> CurrentScopeServiceObservation:
+    record = repository.get_missed_run(market_date)
+    observed = ScenarioOutcomeExpectation(
+        case_id=selected_expectation.case_id,
+        execution_status=ExecutionStatus.SKIPPED,
+        data_quality_status=None,
+        delivery_status=delivery_status,
+        capabilities=(),
+        plan_states=(),
+        report_banner=None,
+        error_codes=(),
+        recoverability=None,
+    )
+    return CurrentScopeServiceObservation(
+        scenario_id=scenario.id,
+        current_scope=observed,
+        artifact_hashes=FrozenMap({}),
+        replay_json_matches=None,
+        replay_markdown_matches=None,
+        source_limitations_adjacent=None,
+        watchlist_exclusions_visible=None,
+        provider_call_count=_provider_call_count(dependencies),
+        missed_run_record_durable=record is not None,
     )
 
 
@@ -263,6 +309,28 @@ def execute_evaluation_scenario(
         )
         (passed if matches else failed).append(
             ScenarioAssertionId.ALL_WATCHLIST_EXCLUSIONS_VISIBLE
+        )
+    if ScenarioAssertionId.NO_PROVIDER_READ_AFTER_WINDOW in declared:
+        matches = all(
+            outcome.current_scope.delivery_status is DeliveryStatus.MISSED_WINDOW
+            and outcome.provider_call_count == 0
+            for outcome in current_scope_outcomes
+        )
+        (passed if matches else failed).append(
+            ScenarioAssertionId.NO_PROVIDER_READ_AFTER_WINDOW
+        )
+    if ScenarioAssertionId.MISSED_RUN_RECORD_DURABLE in declared:
+        has_skipped_outcome = any(
+            outcome.current_scope.execution_status is ExecutionStatus.SKIPPED
+            for outcome in current_scope_outcomes
+        )
+        matches = has_skipped_outcome and all(
+            outcome.missed_run_record_durable
+            == (outcome.current_scope.execution_status is ExecutionStatus.SKIPPED)
+            for outcome in current_scope_outcomes
+        )
+        (passed if matches else failed).append(
+            ScenarioAssertionId.MISSED_RUN_RECORD_DURABLE
         )
     completed = set(passed) | set(failed)
     classified = completed | set(pending)

@@ -325,20 +325,32 @@ class ScenarioOutcomeExpectation(StrictModel):
 
     case_id: Identifier
     execution_status: ExecutionStatus
-    data_quality_status: DataQualityStatus
+    data_quality_status: DataQualityStatus | None
     delivery_status: DeliveryStatus
     capabilities: tuple[CapabilityState, ...]
     plan_states: tuple[PlanStatus, ...]
-    report_banner: Annotated[str, Field(min_length=1, max_length=500, pattern=r"\S")]
+    report_banner: Annotated[str, Field(min_length=1, max_length=500, pattern=r"\S")] | None
     error_codes: tuple[ScenarioErrorCode, ...]
-    recoverability: bool
+    recoverability: bool | None
 
     @model_validator(mode="after")
     def _exact_capabilities(self) -> ScenarioOutcomeExpectation:
         if self.execution_status is ExecutionStatus.SKIPPED:
-            if self.capabilities:
-                raise ValueError("skipped outcome cannot contain computed capabilities")
+            if any(
+                value is not None
+                for value in (
+                    self.data_quality_status,
+                    self.report_banner,
+                    self.recoverability,
+                )
+            ) or self.capabilities or self.plan_states or self.error_codes:
+                raise ValueError("skipped outcome cannot contain report or quality artifacts")
             return self
+        if any(
+            value is None
+            for value in (self.data_quality_status, self.report_banner, self.recoverability)
+        ):
+            raise ValueError("published outcome requires report and quality observations")
         _require_exact_capabilities(self.capabilities)
         return self
 
@@ -398,10 +410,10 @@ class CurrentScopeServiceObservation(StrictModel):
     scenario_id: ScenarioId
     current_scope: ScenarioOutcomeExpectation
     artifact_hashes: FrozenMap[Identifier, Sha256]
-    replay_json_matches: bool
-    replay_markdown_matches: bool
-    source_limitations_adjacent: bool
-    watchlist_exclusions_visible: bool
+    replay_json_matches: bool | None
+    replay_markdown_matches: bool | None
+    source_limitations_adjacent: bool | None
+    watchlist_exclusions_visible: bool | None
     provider_call_count: Annotated[int, Field(ge=0)]
     missed_run_record_durable: bool
 

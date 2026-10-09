@@ -3145,69 +3145,64 @@ scenarios:
     primary:
       case_id: BEFORE_CLOSE_MISSED_WINDOW
       execution_status: PUBLISHED
-      data_quality_status: DEGRADED
+      data_quality_status: FAIL
       delivery_status: MISSED_WINDOW
       capabilities:
       - capability: MARKET_SUMMARY_AVAILABLE
-        available: true
-        reason_codes: []
-        evidence_ids:
-        - SCOPE:market_summary_available
+        available: false
+        reason_codes:
+        - MISSED_WINDOW
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
-        available: true
-        reason_codes: []
-        evidence_ids:
-        - SCOPE:regime_classification_available
+        available: false
+        reason_codes:
+        - MISSED_WINDOW
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
-        available: true
-        reason_codes: []
-        evidence_ids:
-        - SCOPE:watchlist_metrics_available
+        available: false
+        reason_codes:
+        - MISSED_WINDOW
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
-        - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:event_risk_check_available
+        - MISSED_WINDOW
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
-        - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:setup_detection_available
+        - MISSED_WINDOW
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
-        - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:plan_draft_available
+        - MISSED_WINDOW
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
-        - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:position_sizing_available
+        - MISSED_WINDOW
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
-        - SOURCE_NOT_CONFIGURED
-        evidence_ids:
-        - SCOPE:portfolio_heat_check_available
+        - MISSED_WINDOW
+        evidence_ids: []
       plan_states: []
-      report_banner: 'MISSED_WINDOW: no normal premarket conclusion or plan is published.'
-      error_codes: []
+      report_banner: 'Brief origin: OPERATIONAL'
+      error_codes:
+      - MISSED_WINDOW
       recoverability: true
     subcases:
     - case_id: AT_OR_AFTER_CLOSE
       execution_status: SKIPPED
-      data_quality_status: FAIL
+      data_quality_status: null
       delivery_status: MISSED_WINDOW
       capabilities: []
       plan_states: []
-      report_banner: 'MISSED_WINDOW: one durable missed-run record; no formal research publication or
-        provider read.'
+      report_banner: null
       error_codes: []
-      recoverability: true
+      recoverability: null
   domain_assertions:
   - kind: RUN_WINDOW
     fixture_id: S25_MISSED_WINDOW

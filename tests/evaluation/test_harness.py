@@ -228,6 +228,227 @@ def test_s05_global_outage_current_scope_observes_operational_publication(
     assert observation.watchlist_exclusions_visible is True
 
 
+def test_s25_before_close_missed_window_observes_operational_publication(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    class MissedWindowClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 13, 30, tzinfo=UTC)
+
+    scenario = load_evaluation_scenarios()[24]
+    expectation = scenario.current_scope_expectation.primary
+    deps = replace(dependencies(tmp_path), clock=MissedWindowClock())
+    harness = EvaluationHarness(
+        dependencies_factory=lambda current_scenario, selected: deps,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+    )
+
+    observation = execute_current_scope_scenario(scenario, harness, expectation)
+
+    assert observation.current_scope == expectation
+    assert observation.provider_call_count == 0
+    assert observation.missed_run_record_durable is False
+    assert observation.replay_json_matches is True
+    assert observation.replay_markdown_matches is True
+
+
+def test_s25_after_close_missed_run_observes_skipped_without_publication(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    class AfterCloseClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+
+    scenario = load_evaluation_scenarios()[24]
+    expectation = scenario.current_scope_expectation.subcases[0]
+    deps = replace(dependencies(tmp_path), clock=AfterCloseClock())
+    harness = EvaluationHarness(
+        dependencies_factory=lambda current_scenario, selected: deps,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+    )
+
+    observation = execute_current_scope_scenario(scenario, harness, expectation)
+
+    assert observation.current_scope == expectation
+    assert observation.artifact_hashes == FrozenMap({})
+    assert observation.replay_json_matches is None
+    assert observation.replay_markdown_matches is None
+    assert observation.provider_call_count == 0
+    assert observation.missed_run_record_durable is True
+
+
+def test_s25_evaluation_classifies_missed_window_assertions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from finance_research_agent.evaluation import harness as harness_module
+    from finance_research_agent.evaluation.models import (
+        CurrentScopeServiceObservation,
+        DomainAssertionOutcome,
+    )
+
+    scenario = load_evaluation_scenarios()[24]
+    before_close = scenario.current_scope_expectation.primary
+    after_close = scenario.current_scope_expectation.subcases[0]
+    observations = {
+        before_close.case_id: CurrentScopeServiceObservation(
+            scenario_id=scenario.id,
+            current_scope=before_close,
+            artifact_hashes=FrozenMap({}),
+            replay_json_matches=True,
+            replay_markdown_matches=True,
+            source_limitations_adjacent=False,
+            watchlist_exclusions_visible=False,
+            provider_call_count=0,
+            missed_run_record_durable=False,
+        ),
+        after_close.case_id: CurrentScopeServiceObservation(
+            scenario_id=scenario.id,
+            current_scope=after_close,
+            artifact_hashes=FrozenMap({}),
+            replay_json_matches=None,
+            replay_markdown_matches=None,
+            source_limitations_adjacent=None,
+            watchlist_exclusions_visible=None,
+            provider_call_count=0,
+            missed_run_record_durable=True,
+        ),
+    }
+
+    def observe(_scenario, _harness, selected):
+        return observations[selected.case_id]
+
+    def pass_domain_assertion(assertion, _fixtures):
+        return DomainAssertionOutcome(
+            kind=assertion.kind,
+            fixture_id=assertion.fixture_id,
+            status="PASS",
+            matched_fields=("observed",),
+            mismatched_fields=(),
+        )
+
+    def unused_dependencies_factory(_scenario, _selected):
+        raise AssertionError("the observation stub should bypass application dependencies")
+
+    monkeypatch.setattr(harness_module, "execute_current_scope_scenario", observe)
+    monkeypatch.setattr(harness_module, "execute_domain_assertion", pass_domain_assertion)
+    harness = EvaluationHarness(
+        dependencies_factory=unused_dependencies_factory,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        domain_fixtures=DomainFixtureBank({}),
+    )
+
+    outcome = execute_evaluation_scenario(scenario, harness)
+
+    assert outcome.assertions_failed == ()
+    assert outcome.assertions_pending == ()
+    assert ScenarioAssertionId.CURRENT_SCOPE_MATCHES in outcome.assertions_passed
+    assert ScenarioAssertionId.NO_PROVIDER_READ_AFTER_WINDOW in outcome.assertions_passed
+    assert ScenarioAssertionId.MISSED_RUN_RECORD_DURABLE in outcome.assertions_passed
+
+    observations[after_close.case_id] = observations[after_close.case_id].model_copy(
+        update={"provider_call_count": 1}
+    )
+    provider_read_outcome = execute_evaluation_scenario(scenario, harness)
+    assert provider_read_outcome.assertions_failed == (
+        ScenarioAssertionId.NO_PROVIDER_READ_AFTER_WINDOW,
+    )
+    assert provider_read_outcome.assertions_pending == ()
+
+    observations[after_close.case_id] = observations[after_close.case_id].model_copy(
+        update={"provider_call_count": 0, "missed_run_record_durable": False}
+    )
+    missing_record_outcome = execute_evaluation_scenario(scenario, harness)
+    assert missing_record_outcome.assertions_failed == (
+        ScenarioAssertionId.MISSED_RUN_RECORD_DURABLE,
+    )
+    assert missing_record_outcome.assertions_pending == ()
+
+
+def test_s25_full_evaluation_runs_both_missed_window_service_outcomes(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime, time
+
+    from finance_research_agent.domain.enums import InvocationType
+    from finance_research_agent.evaluation.domain_assertions import RunWindowFixture
+    from finance_research_agent.evaluation.models import FixtureSetId
+
+    class FixedClock:
+        def __init__(self, value: datetime) -> None:
+            self.value = value
+
+        def now_utc(self) -> datetime:
+            return self.value
+
+    class MissedCalendar:
+        def is_trading_day(self, market_date):
+            return market_date == date(2026, 9, 28)
+
+        def session_open_close(self, market_date):
+            return (
+                datetime.combine(market_date, time(13, 30), UTC),
+                datetime.combine(market_date, time(20, 0), UTC),
+            )
+
+    scenario = load_evaluation_scenarios()[24]
+    case_times = {
+        "BEFORE_CLOSE_MISSED_WINDOW": datetime(2026, 9, 28, 13, 30, tzinfo=UTC),
+        "AT_OR_AFTER_CLOSE": datetime(2026, 9, 28, 20, 0, tzinfo=UTC),
+    }
+
+    def create_dependencies(current_scenario, selected):
+        return replace(
+            dependencies(tmp_path / selected.case_id),
+            clock=FixedClock(case_times[selected.case_id]),
+        )
+
+    harness = EvaluationHarness(
+        dependencies_factory=create_dependencies,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        domain_fixtures=DomainFixtureBank(
+            {
+                FixtureSetId.S25_MISSED_WINDOW: RunWindowFixture(
+                    now_utc=case_times["AT_OR_AFTER_CLOSE"],
+                    calendar=MissedCalendar(),
+                    requested_market_date=date(2026, 9, 28),
+                    invocation=InvocationType.SCHEDULED,
+                )
+            }
+        ),
+    )
+
+    outcome = execute_evaluation_scenario(scenario, harness)
+
+    assert outcome.current_scope_outcomes[0].current_scope == (
+        scenario.current_scope_expectation.primary
+    )
+    assert outcome.current_scope_outcomes[1].current_scope == (
+        scenario.current_scope_expectation.subcases[0]
+    )
+    assert outcome.current_scope_outcomes[0].missed_run_record_durable is False
+    assert outcome.current_scope_outcomes[1].missed_run_record_durable is True
+    assert outcome.current_scope_outcomes[0].provider_call_count == 0
+    assert outcome.current_scope_outcomes[1].provider_call_count == 0
+    assert outcome.assertions_failed == ()
+    assert outcome.assertions_pending == ()
+    assert outcome.assertions_passed == (
+        ScenarioAssertionId.CURRENT_SCOPE_MATCHES,
+        ScenarioAssertionId.NO_PROVIDER_READ_AFTER_WINDOW,
+        ScenarioAssertionId.MISSED_RUN_RECORD_DURABLE,
+    )
+
+
 @pytest.mark.parametrize(
     ("scenario_index", "assertion", "evidence_field"),
     [
