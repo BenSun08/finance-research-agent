@@ -1036,6 +1036,35 @@ def test_publication_hashes_and_visibility_are_atomic(tmp_path: Path) -> None:
     assert not (final / ".staging").exists()
 
 
+def test_publication_receipt_uses_injected_clock_and_keeps_original_time(
+    tmp_path: Path,
+) -> None:
+    from inspect import signature
+
+    assert "clock" in signature(FileSystemRunRepository).parameters, (
+        "publication receipt timestamps must use the trusted injected clock"
+    )
+    published_at = NOW + timedelta(minutes=20)
+
+    def publication_clock() -> datetime:
+        return published_at
+
+    repository = FileSystemRunRepository(tmp_path, clock=publication_clock)
+    context = _context()
+    repository.create(context)
+
+    receipt = repository.publish_atomically(_bundle(context))
+
+    assert receipt.published_at == published_at
+    assert repository.get_published_artifact(context.run_id) == receipt
+
+    def later_clock() -> datetime:
+        return published_at + timedelta(minutes=5)
+
+    reloaded = FileSystemRunRepository(tmp_path, create_layout=False, clock=later_clock)
+    assert reloaded.get_published_artifact(context.run_id) == receipt
+
+
 def test_publication_rejects_report_hash_mismatch_without_exposing_output(tmp_path: Path) -> None:
     repository = FileSystemRunRepository(tmp_path)
     context = _context()

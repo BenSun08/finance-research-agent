@@ -7,7 +7,7 @@ import json
 import os
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from fcntl import LOCK_EX, LOCK_UN, flock
@@ -66,6 +66,10 @@ def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _system_utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 class FileSystemRunRepository:
     """Store run state beneath one resolved data root.
 
@@ -77,8 +81,17 @@ class FileSystemRunRepository:
     inject_failure_before_rename = False
     inject_failure_during_index_update = False
 
-    def __init__(self, data_root: Path, *, create_layout: bool = True) -> None:
+    def __init__(
+        self,
+        data_root: Path,
+        *,
+        create_layout: bool = True,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.root = Path(data_root).expanduser().resolve()
+        if clock is not None and not callable(clock):
+            raise TypeError("clock must be callable")
+        self._clock = clock if clock is not None else _system_utc_now
         if create_layout:
             self.root.mkdir(parents=True, exist_ok=True)
             for name in ("config", "runs", "reports", "cache", "diagnostics", "logs"):
@@ -1045,7 +1058,7 @@ class FileSystemRunRepository:
                 index_bytes = None
             if index_bytes is not None:
                 index_payload = json.loads(index_bytes)
-            published_at = datetime.now(UTC)
+            published_at = self._require_utc(self._clock())
             index_payload[bundle.run.run_id] = {
                 "bundle_sha256": bundle_sha256,
                 "markdown_sha256": markdown_sha256,

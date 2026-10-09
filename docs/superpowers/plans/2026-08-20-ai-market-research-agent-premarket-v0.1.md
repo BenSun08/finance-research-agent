@@ -1346,7 +1346,7 @@ Expected: one commit with deterministic DST and transition tests.
 
 **Interfaces:**
 - Consumes: RunContext, RunKey, RunCheckpoint, StoredRun, PublishedRunBundle, PublishedArtifact, ErrorCode.
-- Produces: FileSystemRunRepository implementing RunRepository; acquire_lease(), heartbeat(), create(), checkpoint(), freeze_evidence(), publish_atomically(), get_latest(); allocate_revision(market_date: date, invocation: InvocationType, now: datetime) -> RunContext.
+- Produces: `FileSystemRunRepository(data_root: Path, *, create_layout: bool = True, clock: Callable[[], datetime] | None = None)` implementing RunRepository; acquire_lease(), heartbeat(), create(), checkpoint(), freeze_evidence(), publish_atomically(), get_latest(); allocate_revision(market_date: date, invocation: InvocationType, now: datetime) -> RunContext. The optional clock supplies UTC publication receipt timestamps; omission retains the system UTC clock.
 
 - [ ] **Step 1: Write failing revision and idempotency tests**
 

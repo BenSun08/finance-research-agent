@@ -176,7 +176,9 @@ def create_default_services(
     )
     trusted_clock = clock if clock is not None else SystemClock()
     configuration = YamlConfigurationRepository(root / "config")
-    repository = FileSystemRunRepository(root, create_layout=False)
+    repository = FileSystemRunRepository(
+        root, create_layout=False, clock=trusted_clock.now_utc
+    )
     settings: Settings | None = None
 
     def get_settings() -> Settings:
