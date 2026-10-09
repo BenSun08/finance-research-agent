@@ -850,3 +850,111 @@ def test_f11_pre_rename_disk_failure_is_typed_and_never_visible_as_published(
         / packet.run.run_id
     )
     assert final_run.exists() is False
+
+
+def test_f12_index_interruption_hides_then_recovers_the_same_frozen_publication(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.adapters.filesystem import PublicationError
+    from finance_research_agent.application.operations import ProductAOperation
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from tests.integration.test_premarket_workflow_matrix import _support
+
+    protocol, packet, _ = _support().prepared_protocol(tmp_path, valid_packet, valid_brief_draft)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    protocol.repository.inject_failure_during_index_update = True
+    arguments = json.dumps({"draft": draft.model_dump(mode="json")})
+
+    with pytest.raises(PublicationError) as raised:
+        protocol.dispatch(ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value, arguments)
+
+    assert raised.value.code is ErrorCode.PUBLICATION_FAILED
+    assert protocol.repository.get_latest(packet.run.market_date) is None
+    assert protocol.repository.get_published_artifact(packet.run.run_id) is None
+    assert protocol.repository.load_published_bundle(packet.run.run_id) is None
+    assert protocol.repository.get_report(packet.run.run_id) is None
+    assert protocol.repository.load(packet.run.run_id) is None
+    assert protocol.repository.diagnostic_orphan_exists(packet.run.run_id)
+    orphan = (
+        tmp_path
+        / "diagnostics"
+        / "orphans"
+        / str(packet.run.market_date.year)
+        / packet.run.market_date.isoformat()
+        / packet.run.run_id
+    )
+    expected_bundle = (orphan / "bundle.json").read_bytes()
+    expected_report = (orphan / "report.md").read_bytes()
+    expected_bundle_sha256 = sha256(expected_bundle).hexdigest()
+    expected_report_sha256 = sha256(expected_report).hexdigest()
+
+    protocol.repository.inject_failure_during_index_update = False
+    receipt = protocol.repository.recover_interrupted_publication(packet.run.run_id)
+    assert protocol.repository.recover_interrupted_publication(packet.run.run_id) == receipt
+
+    assert receipt.run_id == packet.run.run_id
+    assert receipt.bundle_sha256 == expected_bundle_sha256
+    assert receipt.markdown_sha256 == expected_report_sha256
+    assert protocol.repository.diagnostic_orphan_exists(packet.run.run_id) is False
+    assert protocol.repository.get_latest(packet.run.market_date) == packet.run.run_id
+    stored = protocol.repository.load(packet.run.run_id)
+    assert stored is not None and stored.published is True
+    recovered_bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    assert recovered_bundle is not None
+    assert canonical_bytes(recovered_bundle) == expected_bundle
+    recovered_report = protocol.repository.get_report(packet.run.run_id)
+    assert recovered_report is not None
+    assert recovered_report.encode("utf-8") == expected_report
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(recovered_bundle),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f12_recovery_rejects_an_orphan_with_a_changed_staged_artifact(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.adapters.filesystem import PublicationError
+    from finance_research_agent.application.operations import ProductAOperation
+    from tests.integration.test_premarket_workflow_matrix import _support
+
+    protocol, packet, _ = _support().prepared_protocol(tmp_path, valid_packet, valid_brief_draft)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    protocol.repository.inject_failure_during_index_update = True
+    with pytest.raises(PublicationError):
+        protocol.dispatch(
+            ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value,
+            json.dumps({"draft": draft.model_dump(mode="json")}),
+        )
+
+    orphan_artifact = (
+        tmp_path
+        / "diagnostics"
+        / "orphans"
+        / str(packet.run.market_date.year)
+        / packet.run.market_date.isoformat()
+        / packet.run.run_id
+        / "artifacts"
+        / "research_packet.bin"
+    )
+    assert orphan_artifact.is_file()
+    orphan_artifact.write_bytes(b"changed frozen packet bytes")
+    protocol.repository.inject_failure_during_index_update = False
+
+    with pytest.raises(PublicationError, match="artifact hash differs"):
+        protocol.repository.recover_interrupted_publication(packet.run.run_id)
+
+    assert protocol.repository.diagnostic_orphan_exists(packet.run.run_id)
+    assert protocol.repository.get_latest(packet.run.market_date) is None
+    assert protocol.repository.load_published_bundle(packet.run.run_id) is None
+    assert protocol.repository.get_published_artifact(packet.run.run_id) is None

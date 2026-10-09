@@ -986,6 +986,84 @@ class FileSystemRunRepository:
         with self._run_lock(bundle.run.market_date):
             return self._publish_atomically_unlocked(bundle)
 
+    def recover_interrupted_publication(self, run_id: str) -> PublishedArtifact:
+        """Explicitly retry one complete, hash-verified quarantined publication."""
+        market_date, _ = self._validated_run_id(run_id)
+        with self._run_lock(market_date):
+            existing = self.get_published_artifact(run_id)
+            if existing is not None:
+                return existing
+            staging, final, _, _ = self._publication_paths(run_id)
+            market_year = f"{market_date.year:04d}"
+            orphan = self._unaliased_publication_path(
+                "diagnostics", "orphans", market_year, market_date.isoformat(), run_id
+            )
+            if staging.exists() or final.exists() or not orphan.exists():
+                raise PublicationError("no interrupted publication is available for recovery")
+            if orphan.is_symlink() or any(path.is_symlink() for path in orphan.rglob("*")):
+                raise _path_error()
+            try:
+                bundle_bytes = self._read_confined(orphan, "bundle.json")
+                report_bytes = self._read_confined(orphan, "report.md")
+            except OSError as error:
+                raise PublicationError("interrupted publication files cannot be read") from error
+            try:
+                bundle = PublishedRunBundle.model_validate_json(bundle_bytes, strict=True)
+                stored = self._load_from_path(run_id, orphan, False)
+            except (OSError, TypeError, ValueError) as error:
+                raise PublicationError("interrupted publication metadata is invalid") from error
+            if (
+                stored is None
+                or not stored.checkpoints
+                or canonical_bytes(bundle) != bundle_bytes
+                or bundle.run.run_id != run_id
+                or bundle.markdown_sha256 != _sha256(report_bytes)
+                or bundle.report_markdown.encode("utf-8") != report_bytes
+            ):
+                raise PublicationError("interrupted publication pair is incomplete or inconsistent")
+            self._ensure_run_identity(stored.run, run_id)
+            checkpoint = stored.checkpoints[-1]
+            if (
+                checkpoint.stage != "PUBLISHED"
+                or checkpoint.execution_status is not ExecutionStatus.PUBLISHED
+                or checkpoint.data_quality_status is not bundle.run.data_quality_status
+                or checkpoint.delivery_status is not bundle.run.delivery_status
+                or checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at
+                or checkpoint.resumable
+                or bundle.run
+                != stored.run.model_copy(
+                    update={
+                        "execution_status": checkpoint.execution_status,
+                        "data_quality_status": checkpoint.data_quality_status,
+                        "delivery_status": checkpoint.delivery_status,
+                    }
+                )
+            ):
+                raise PublicationError("interrupted publication checkpoint is not recoverable")
+            for name, digest in checkpoint.artifact_hashes.items():
+                if not _ARTIFACT_NAME.fullmatch(name):
+                    raise PublicationError("interrupted publication artifact name is invalid")
+                artifact_path = orphan / "artifacts" / f"{name}.bin"
+                if not artifact_path.is_file() or artifact_path.is_symlink():
+                    raise PublicationError("interrupted publication artifact hash differs")
+                try:
+                    artifact_bytes = artifact_path.read_bytes()
+                except OSError as error:
+                    raise PublicationError(
+                        "interrupted publication artifact cannot be read"
+                    ) from error
+                if _sha256(artifact_bytes) != digest:
+                    raise PublicationError("interrupted publication artifact hash differs")
+            try:
+                os.replace(orphan, staging)
+                self._fsync_directory(staging.parent)
+                self._fsync_directory(orphan.parent)
+            except OSError as error:
+                raise PublicationError(
+                    "interrupted publication could not return to staging"
+                ) from error
+            return self._publish_atomically_unlocked(bundle)
+
     def _publish_atomically_unlocked(self, bundle: PublishedRunBundle) -> PublishedArtifact:
         staging, final, index_path, latest_path = self._publication_paths(bundle.run.run_id)
         if not staging.is_dir():
