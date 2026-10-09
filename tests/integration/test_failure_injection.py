@@ -411,3 +411,68 @@ def test_f04_conflicting_event_fixture_stays_out_of_current_source_publication(
     assert current.artifact_hashes["report_markdown"] == artifact.markdown_sha256
     assert artifact.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
     assert artifact.markdown_sha256 == sha256(report.encode("utf-8")).hexdigest()
+
+
+def test_f05_missing_macro_fixture_does_not_create_an_operational_event_calendar(
+    tmp_path: Path,
+) -> None:
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.publication_service import publish_reduced_report
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.evaluation.domain_assertions import execute_domain_assertion
+    from finance_research_agent.evaluation.models import FailureInjectionId, FixtureSetId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.evaluation.fixture_bank import build_domain_fixture_bank
+
+    scenario = load_evaluation_scenarios()[11]
+    assert scenario.id.value == "S12"
+    assert scenario.injected_failures == (FailureInjectionId.F05,)
+    fixture_bank = build_domain_fixture_bank()
+    domain_result = execute_domain_assertion(
+        scenario.domain_assertions[0], fixture_bank
+    )
+    assert domain_result.fixture_id is FixtureSetId.S12_MISSING_MACRO_CALENDAR
+    assert domain_result.status == "PASS"
+    assert "gate_reason_codes" in domain_result.matched_fields
+
+    deps = dependencies(tmp_path)
+    prepared = prepare_research_packet(request(), deps)
+    assert prepared.outcome == "PACKET_READY"
+    packet = prepared.research_packet
+    assert packet is not None
+    assert packet.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert packet.events == ()
+    assert packet.deterministic_plan_inputs == ()
+    event_capability = next(
+        state
+        for state in packet.capability_states
+        if state.capability is Capability.EVENT_RISK_CHECK_AVAILABLE
+    )
+    assert event_capability.available is False
+    assert event_capability.reason_codes == (ErrorCode.SOURCE_NOT_CONFIGURED,)
+    assert deps.event_providers == ()
+    assert deps.market_data.calls == ["instruments", "bars", "prices", "readiness"]
+
+    receipt = publish_reduced_report(
+        deps.run_repository,
+        packet,
+        ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        deps.clock.now_utc(),
+    )
+    report = deps.run_repository.get_report(receipt.run_id)
+    bundle = deps.run_repository.load_published_bundle(receipt.run_id)
+    assert report is not None and bundle is not None
+    assert "Brief origin: DETERMINISTIC_REDUCED" in report
+    assert "EVENT_RISK_CHECK_AVAILABLE" in report
+    assert "SOURCE_NOT_CONFIGURED" in report
+    assert "earnings" not in report.lower()
+    assert receipt.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    assert receipt.markdown_sha256 == sha256(report.encode("utf-8")).hexdigest()
+    replay = replay_published_artifact(
+        deps.run_repository, receipt.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
