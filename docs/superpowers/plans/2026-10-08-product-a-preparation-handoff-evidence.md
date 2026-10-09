@@ -180,3 +180,103 @@ measurement retained only unchanged source whose selected cases passed.
 The executable stdio bootstrap, R10 plugin/skills/workflow and R11 remain
 subsequent features. PR state, exact-head CI and merge are independently verified
 at publication time; this document does not predeclare those remote results.
+
+## Executable stdio bootstrap (base: merged PR #68, `92fe327`)
+
+### Subtask 1: Lazy trusted composition
+
+- RED: bootstrap test collection failed because the executable composition module
+  did not exist. Tests covered deferred construction, validation before dispatch,
+  failure recovery, complete market-data forwarding, frozen policy/run deadline
+  isolation, and production retry sleep before implementation.
+- Additional RED: three stored/watchlist operations failed on eager calendar
+  construction and the lazy-calendar forwarding test failed on its missing type.
+  After deferring calendar construction, the isolated expired-client test failed
+  because the adapter deadline exception was not an application TimeoutError.
+- GREEN: 36 bootstrap/MCP/application-facade tests passed. Calendar and settings
+  factories cache successful construction only; actual run providers are distinct
+  and receive their frozen source policy and exact trusted deadline. Constructor
+  expiry maps to a closed application timeout with suppressed exception context.
+- Scoped Ruff and mypy checks passed; final diff check passed. HTTP sessions,
+  streams and transports retain their existing request-local cleanup ownership.
+- Real stdio subprocess, preparation integration, packaging, whole-feature review,
+  full-suite coverage and repository checks remain pending at this subtask.
+
+### Subtask 2: Real-provider symbol-order handoff correction
+
+- Real offline bootstrap preparation exposed an existing adapter mismatch: the
+  watchlist-first collection order was passed to HistoricalDailyBarsRequest,
+  which requires canonical sorted symbols. Healthy daily-bar responses became
+  INVALID_REQUEST and preparation published an operational failure.
+- RED: the focused unsorted `(MSFT, AAPL)` regression returned ProviderFailure
+  for AAPL instead of its normalized bars. The whole real-provider packet and
+  frozen-quality resume cases also failed before this correction.
+- GREEN: sort only the normalizer request's symbol declaration. The provider's
+  HTTP query retains caller order; returned bars/failures remain correctly bound
+  to symbols, identities, session dates, feed, adjustment and evidence cutoff.
+- 197 Alpaca/historical/collection/security tests passed, with one existing
+  websockets deprecation warning. Scoped Ruff/mypy and diff checks passed.
+- This narrow correction was explicitly authorized after the integration probe;
+  it adds no provider or financial capability.
+
+### Subtask 3: Executable entrypoint and complete offline handoff
+
+- RED: console metadata lacked the authoritative ai-market-research-mcp entry.
+  Added that entry using the current finance_research_agent package namespace;
+  the existing diagnostic CLI remains separate. README documents launch, the
+  environment-only data locator, deferred credential access and current scope.
+- GREEN: 173 focused bootstrap/MCP/facade/preparation/deadline/settings/schema/CLI
+  tests passed. The selection includes real subprocess initialize/list against
+  a malformed owner-readable .env secret canary, with empty captured output and
+  no data directory or file-content changes.
+- Actual Alpaca adapter composition over offline HTTP produces the frozen packet
+  with injected component versions and real regime results. Missing credentials
+  and transport failures self-publish closed operational outcomes. Packet,
+  quality-checkpoint and published resumes work after removing current config
+  and forbidding settings, client and version factories.
+- Success closes all three request streams/transports; network failures close
+  their request clients; a body reaching the run cap closes its stream/transport
+  and publishes DEADLINE_EXCEEDED without another network request. Real provider
+  readiness/status remains read-only and sends no requests.
+- Offline wheel build passed using the bundled Python 3.12/setuptools runtime.
+  A temporary --no-deps/--no-index installation supplied the generated console
+  script, verified from an unrelated directory with only its installed site on
+  PYTHONPATH. Package imports had no source fallback; the packaged canonical
+  prompt digest matched root prompt bytes; installed initialize/list returned
+  exactly eleven tools despite malformed .env and made no storage changes.
+  Temporary build/install artifacts were cleaned without changing the active
+  environment or installing dependencies.
+- Scoped Ruff, mypy (two changed source files), schema drift and diff checks
+  passed. Independent whole-feature review, full repository checks and coverage
+  remain the coordinator's next gate. No push, PR or CI result is claimed here.
+
+### Final bootstrap integration gate
+
+- Fresh independent whole-feature reviewer `review_bootstrap_feature` found no
+  actionable P1/P2 findings at `9700b15`, against base `92fe327`. It independently
+  passed 168 tests: 71 bootstrap/integration/Alpaca, 52 protocol/facade/HTTP/security,
+  and 45 preparation/checkpoint/settings/calendar tests. Commit-range diff check
+  passed and the reviewed checkout was clean.
+- The coordinator separately rebuilt from `git archive 9700b15`, installed the
+  wheel with `--no-deps --no-index --target`, asserted the imported package was
+  inside that temporary installation, and checked its canonical prompt digest.
+  The generated console script launched directly from an unrelated directory,
+  initialized/listed exactly eleven tools, ignored malformed secret-canary dotenv,
+  and left the launch tree unchanged. Temporary artifacts were cleaned.
+- Frozen-source full suite under branch coverage: **2,162 passed, one live test
+  deselected, one existing websockets warning**, 515.72 seconds. Ruff passed;
+  mypy passed across 90 source files; generated schema drift and diff checks passed.
+
+| Changed module | Statement coverage | Branch coverage |
+| --- | ---: | ---: |
+| Stdio bootstrap | 99.03% (102/103) | 90% (9/10) |
+| Alpaca adapter | 85.78% (374/436) | 79.33% (119/150) |
+
+The sole unmeasured bootstrap statement/branch is the module `__main__` invocation
+in the parent coverage process. Separate actual module and installed-console
+subprocess checks exercised launch behavior. The changed Alpaca symbol declaration
+is covered; overall adapter gaps remain in existing defensive parsing, identity,
+timestamp and provider-response guards. Coverage is not represented as complete.
+
+Remote PR, exact-head CI/review checks and merge are verified independently after
+this local gate. Plugin/skill/workflow packaging and R11 remain subsequent work.

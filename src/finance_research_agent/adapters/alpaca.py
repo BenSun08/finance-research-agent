@@ -739,7 +739,7 @@ class AlpacaMarketDataProvider:
             return {symbol: request_failure for symbol in requested}
         try:
             normalization_request = HistoricalDailyBarsRequest(
-                symbols=requested,
+                symbols=tuple(sorted(requested)),
                 start_at=datetime.combine(start, time.min, tzinfo=UTC),
                 end_at=min(datetime.combine(end, time.max, tzinfo=UTC), retrieved_at),
                 expected_sessions=expected_sessions,
