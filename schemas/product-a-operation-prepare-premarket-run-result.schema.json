@@ -3800,6 +3800,17 @@
   "additionalProperties": false,
   "description": "Explicit immutable handoff; transport success alone never authorizes synthesis.",
   "properties": {
+    "data_quality": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DataQualityResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "failure_code": {
       "anyOf": [
         {
