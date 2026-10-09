@@ -13,6 +13,7 @@ from finance_research_agent.domain.models import (
     CompletedDailyBar,
     EventCollection,
     InstrumentIdentity,
+    MissedRunRecord,
     PriceObservation,
     ProviderFailure,
     ProviderReadiness,
@@ -164,6 +165,10 @@ class RunRepository(Protocol):
     def acquire_lease(self, key: RunKey, now: datetime) -> RunLease: ...
 
     def heartbeat(self, lease: RunLease, now: datetime) -> RunLease: ...
+
+    def record_missed_run(self, record: MissedRunRecord) -> MissedRunRecord: ...
+
+    def get_missed_run(self, market_date: date) -> MissedRunRecord | None: ...
 
     def load(self, run_id: str) -> StoredRun | None: ...
 

@@ -196,6 +196,62 @@ def test_global_quality_failure_publishes_operational_report_without_packet(tmp_
     assert "PROVIDER_UNAVAILABLE" in report
 
 
+def test_preparation_publishes_missed_window_before_collecting_market_data(tmp_path):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market = MarketData()
+    deps = dependencies(tmp_path, market=market)
+
+    class MissedClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 13, 30, tzinfo=UTC)
+
+    result = prepare_research_packet(request(), replace(deps, clock=MissedClock()))
+
+    assert result.outcome == "PUBLISHED"
+    assert result.failure_code.value == "MISSED_WINDOW"
+    assert result.stored_run.run.delivery_status.value == "MISSED_WINDOW"
+    assert market.calls == []
+    report = deps.run_repository.get_report(result.stored_run.run_id)
+    assert "Brief origin: OPERATIONAL" in report
+    assert "MISSED_WINDOW" in report
+
+
+def test_after_close_missed_run_is_durable_without_formal_publication_or_provider_reads(
+    tmp_path,
+):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market = MarketData()
+    deps = dependencies(tmp_path, market=market)
+
+    class AfterCloseClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+
+    missed_run_reader = getattr(deps.run_repository, "get_missed_run", None)
+    assert callable(missed_run_reader), "missed-run records require a durable repository read"
+
+    result = prepare_research_packet(request(), replace(deps, clock=AfterCloseClock()))
+
+    assert result.outcome == "SKIPPED"
+    assert result.window_decision.missed_record_only is True
+    record = missed_run_reader(date(2026, 9, 28))
+    assert record is not None
+    assert record.market_date == date(2026, 9, 28)
+    assert record.reason_code == "MISSED_WINDOW"
+    assert record.detected_at == datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+    assert record.regular_close_at == datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+    assert market.calls == []
+    assert deps.run_repository.get_latest(date(2026, 9, 28)) is None
+    assert deps.run_repository._existing_revision_ids(date(2026, 9, 28)) == ()
+
+    retry = prepare_research_packet(request(), replace(deps, clock=AfterCloseClock()))
+
+    assert retry.outcome == "SKIPPED"
+    assert missed_run_reader(date(2026, 9, 28)) == record
+
+
 def test_explicit_published_revision_returns_original_receipt_without_new_collection(tmp_path):
     from finance_research_agent.application.premarket_preparation import prepare_research_packet
 

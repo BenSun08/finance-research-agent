@@ -57,6 +57,7 @@ from finance_research_agent.domain.events import assess_event_risk
 from finance_research_agent.domain.market_calendar import NEW_YORK, RunWindowDecision, format_run_id
 from finance_research_agent.domain.models import (
     GateResult,
+    MissedRunRecord,
     ProviderFailure,
     PublishedArtifact,
     RunContext,
@@ -249,9 +250,29 @@ def prepare_research_packet(
     stored = initialized.stored_run
     decision = initialized.window_decision
     if stored is None:
+        if decision.missed_record_only:
+            regular_close_at = dependencies.calendar.session_open_close(
+                decision.market_date
+            )[1]
+            repository.record_missed_run(
+                MissedRunRecord(
+                    market_date=decision.market_date,
+                    detected_at=dependencies.clock.now_utc(),
+                    regular_close_at=utc_datetime(regular_close_at),
+                    reason_code="MISSED_WINDOW",
+                )
+            )
         return PreparedPremarketRunResult(outcome="SKIPPED", window_decision=decision)
     if stored.published:
         return _published_result(repository, stored, decision)
+    if decision.publish_missed_report:
+        return _operational_failure(
+            repository,
+            stored,
+            decision,
+            ErrorCode.MISSED_WINDOW,
+            dependencies.clock.now_utc(),
+        )
     latest = stored.checkpoints[-1]
     # Reuse an existing packet before consulting the clock, configuration, or
     # providers. This also completes a crash between packet staging/checkpoint.

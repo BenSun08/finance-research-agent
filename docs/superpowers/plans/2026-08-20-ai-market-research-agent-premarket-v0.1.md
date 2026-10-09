@@ -277,6 +277,8 @@ The following names and signatures are binding. A task may add private helpers b
         def allocate_revision(self, market_date: date, invocation: InvocationType, now: datetime) -> RunContext
         def acquire_lease(self, key: RunKey, now: datetime) -> RunLease
         def heartbeat(self, lease: RunLease, now: datetime) -> RunLease
+        def record_missed_run(self, record: MissedRunRecord) -> MissedRunRecord
+        def get_missed_run(self, market_date: date) -> MissedRunRecord | None
         def load(self, run_id: str) -> StoredRun | None
         def create(self, context: RunContext) -> None
         def checkpoint(self, run_id: str, checkpoint: RunCheckpoint) -> None
@@ -312,6 +314,7 @@ The following names and signatures are binding. A task may add private helpers b
 ### Required top-level contract fields
 
 - RunContext: schema_version, run_id, run_type, market_date, revision, invoked_at, evidence_cutoff_at, execution_status, data_quality_status, delivery_status, configuration_snapshot, core_version, mcp_contract_version, plugin_version, skill_version, prompt_version, report_template_version, schema_versions.
+- MissedRunRecord: market_date, detected_at, regular_close_at, and reason_code=`MISSED_WINDOW`. One immutable record per market date is stored under diagnostics; retries return the original record and create no formal research run or publication.
 - SourceObservation: observation_id, provider, source_url, source_hash_sha256, observed_at, retrieved_at, content_type, excerpt, persistence_allowed, quality_flags.
 - EvidenceItem: evidence_id, source, authority_tier, instrument_id, event_time, published_time, structured_fields, citation_label.
 - PriceObservation: instrument_id, value, currency, session, provider, feed, coverage, observed_at, retrieved_at, evidence_id, quality_flags.

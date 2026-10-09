@@ -112,6 +112,64 @@ def _seed() -> RunContextSeed:
     )
 
 
+def test_missed_run_record_is_durable_and_idempotent_by_market_date(tmp_path: Path) -> None:
+    from finance_research_agent.domain import models
+
+    record_model = getattr(models, "MissedRunRecord", None)
+    assert record_model is not None, "after-close diagnostics need a typed missed-run record"
+    first_record = record_model(
+        market_date=date(2026, 8, 19),
+        detected_at=datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+        regular_close_at=datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+        reason_code="MISSED_WINDOW",
+    )
+    later_record = first_record.model_copy(
+        update={"detected_at": datetime(2026, 8, 19, 20, 1, tzinfo=UTC)}
+    )
+    repository = FileSystemRunRepository(tmp_path)
+    recorder = getattr(repository, "record_missed_run", None)
+    reader = getattr(repository, "get_missed_run", None)
+    assert callable(recorder), "repository must durably record missed-run diagnostics"
+    assert callable(reader), "repository must read the immutable missed-run diagnostic"
+
+    assert recorder(first_record) == first_record
+    assert recorder(later_record) == first_record
+    assert reader(date(2026, 8, 19)) == first_record
+    assert FileSystemRunRepository(tmp_path, create_layout=False).get_missed_run(
+        date(2026, 8, 19)
+    ) == first_record
+    with pytest.raises(TypeError, match="market_date must be a date"):
+        repository.get_missed_run("2026-08-19")
+
+
+def test_missed_run_record_rejects_detection_before_regular_close() -> None:
+    from finance_research_agent.domain import models
+
+    record_model = getattr(models, "MissedRunRecord", None)
+    assert record_model is not None
+    with pytest.raises(ValueError, match="at or after regular close"):
+        record_model(
+            market_date=date(2026, 8, 19),
+            detected_at=datetime(2026, 8, 19, 19, 59, tzinfo=UTC),
+            regular_close_at=datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+            reason_code="MISSED_WINDOW",
+        )
+
+
+def test_missed_run_record_requires_regular_close_on_market_date() -> None:
+    from finance_research_agent.domain import models
+
+    record_model = getattr(models, "MissedRunRecord", None)
+    assert record_model is not None
+    with pytest.raises(ValueError, match="regular_close_at must fall on the market date"):
+        record_model(
+            market_date=date(2026, 8, 19),
+            detected_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+            regular_close_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+            reason_code="MISSED_WINDOW",
+        )
+
+
 def _bundle(context: RunContext, report: str = "# Synthetic report\n") -> PublishedRunBundle:
     return PublishedRunBundle(
         run=context,

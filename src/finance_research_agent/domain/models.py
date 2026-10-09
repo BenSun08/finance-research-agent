@@ -233,6 +233,23 @@ class RunKey(StrictModel):
     market_date: date
 
 
+class MissedRunRecord(StrictModel):
+    """Immutable diagnostic for a market-date invocation detected after close."""
+
+    market_date: date
+    detected_at: UtcDatetime
+    regular_close_at: UtcDatetime
+    reason_code: Literal["MISSED_WINDOW"]
+
+    @model_validator(mode="after")
+    def _detected_after_close(self) -> Self:
+        if self.regular_close_at.date() != self.market_date:
+            raise ValueError("regular_close_at must fall on the market date")
+        if self.detected_at < self.regular_close_at:
+            raise ValueError("missed-run diagnostic must be detected at or after regular close")
+        return self
+
+
 class RunLease(StrictModel):
     """Short-lived ownership record for one logical run family."""
 

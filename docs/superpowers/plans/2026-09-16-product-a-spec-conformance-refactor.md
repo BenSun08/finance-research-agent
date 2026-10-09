@@ -741,6 +741,8 @@ Adapters and surfaces: constrained HTTP, official evidence adapters, broader Alp
 
 **Public contracts:** `load_evaluation_scenarios`/`execute_evaluation_scenario`, `select_citation_entailment_sample`, compatible feedback and citation reviews, append-only shadow-day and operator-attestation writers, `load_shadow_evaluation_evidence`, `build_shadow_scorecard`, `build_migration_readiness`, and release-evidence receipts. Exact signatures and gate states are in the focused R11 design and the Task 18 interface registry.
 
+**R11b preparation boundary:** for a 09:30-to-close invocation, preparation publishes the existing operational report with the closed `MISSED_WINDOW` error code before market-data collection. At/after close, `RunRepository.record_missed_run(record: MissedRunRecord) -> MissedRunRecord` and `get_missed_run(market_date: date) -> MissedRunRecord | None` persist and return one immutable diagnostic record per market date; repeated invocations reuse its original `detected_at`, without allocating or publishing a formal run.
+
 **Tests first:** exact 25 scenarios; failure injection; append-only feedback; 20-day gates; no P&L/execution fields; tracked-data/secret/plugin boundaries; schemas/docs/skills drift; fresh-environment rehearsal.
 
 **Implementation steps:**

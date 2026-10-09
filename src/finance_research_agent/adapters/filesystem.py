@@ -24,6 +24,7 @@ from finance_research_agent.domain.enums import (
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.market_calendar import format_run_id
 from finance_research_agent.domain.models import (
+    MissedRunRecord,
     PerformanceTelemetry,
     PublishedArtifact,
     PublishedRunBundle,
@@ -90,6 +91,35 @@ class FileSystemRunRepository:
         except ValueError as error:
             raise _path_error() from error
         return candidate
+
+    def _missed_run_path(self, market_date: date) -> Path:
+        return self._safe_path(
+            "diagnostics",
+            "missed-runs",
+            f"{market_date.year:04d}",
+            f"{market_date.isoformat()}.json",
+        )
+
+    def record_missed_run(self, record: MissedRunRecord) -> MissedRunRecord:
+        """Persist the first missed-run diagnostic for a market date unchanged."""
+        record = MissedRunRecord.model_validate(record, strict=True)
+        with self._run_lock(record.market_date):
+            existing = self.get_missed_run(record.market_date)
+            if existing is not None:
+                return existing
+            self._atomic_write(self._missed_run_path(record.market_date), canonical_bytes(record))
+            return record
+
+    def get_missed_run(self, market_date: date) -> MissedRunRecord | None:
+        """Load the immutable diagnostic written for an after-close invocation."""
+        if type(market_date) is not date:
+            raise TypeError("market_date must be a date")
+        path = self._missed_run_path(market_date)
+        try:
+            payload = path.read_bytes()
+        except FileNotFoundError:
+            return None
+        return MissedRunRecord.model_validate_json(payload, strict=True)
 
     @staticmethod
     def _validated_run_id(run_id: str) -> tuple[date, int]:
