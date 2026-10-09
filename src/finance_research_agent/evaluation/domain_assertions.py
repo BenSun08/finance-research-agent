@@ -7,25 +7,39 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from types import MappingProxyType
 
+from finance_research_agent.domain.eligibility import evaluate_instrument_eligibility
 from finance_research_agent.domain.enums import InvocationType, PlanStatus
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.events import EventEvidenceProjection, assess_event_risk
+from finance_research_agent.domain.events import (
+    EventAssessment,
+    EventEvidenceProjection,
+    assess_event_risk,
+)
 from finance_research_agent.domain.market import RegimeMarketSnapshot
 from finance_research_agent.domain.market_calendar import TradingCalendar, resolve_run_window
 from finance_research_agent.domain.models import (
     EventRecord,
+    GateResult,
     InstrumentIdentity,
+    MarketSnapshot,
     SourceHealth,
 )
+from finance_research_agent.domain.policies import SetupPolicy, WatchlistItem
+from finance_research_agent.domain.quality import DataQualityResult
 from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+from finance_research_agent.domain.scoring import score_candidate
+from finance_research_agent.domain.setups import RawSetup, detect_setups
 from finance_research_agent.domain.types import UtcDatetime
 from finance_research_agent.evaluation.models import (
+    CandidateScoreAssertion,
     DomainAssertion,
     DomainAssertionOutcome,
     EventRiskAssertion,
     FixtureSetId,
+    InstrumentEligibilityAssertion,
     RegimeCalculationAssertion,
     RunWindowAssertion,
+    SetupDetectionAssertion,
 )
 
 
@@ -62,6 +76,44 @@ class RunWindowFixture:
     calendar: TradingCalendar
     requested_market_date: date | None
     invocation: InvocationType
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentEligibilityFixture:
+    """Complete inputs for one binary instrument-eligibility decision."""
+
+    instrument: InstrumentIdentity
+    watchlist_item: WatchlistItem
+    snapshot: MarketSnapshot
+    setup_policy: SetupPolicy
+    direction: str
+    halted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SetupDetectionFixture:
+    """Complete inputs for deterministic setup detection."""
+
+    snapshot: MarketSnapshot
+    benchmark: MarketSnapshot | None
+    sector_proxy: MarketSnapshot | None
+    setup_policy: SetupPolicy
+    evidence_cutoff_at: UtcDatetime
+    eligibility_gates: tuple[GateResult, ...]
+    event_assessment: EventAssessment
+    data_quality: DataQualityResult
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateScoreFixture:
+    """Complete inputs for deterministic candidate scoring."""
+
+    setup: RawSetup
+    setup_policy: SetupPolicy
+    eligibility_gates: tuple[GateResult, ...]
+    event_assessment: EventAssessment
+    data_quality: DataQualityResult
+    regime_policy_version: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +199,63 @@ def execute_domain_assertion(
                 "publish_missed_report": decision.publish_missed_report,
                 "missed_record_only": decision.missed_record_only,
                 "reason_code": decision.reason_code,
+            },
+        )
+    if isinstance(assertion, InstrumentEligibilityAssertion):
+        fixture = fixtures.get(assertion.fixture_id)
+        if type(fixture) is not InstrumentEligibilityFixture:
+            raise TypeError("INSTRUMENT_ELIGIBILITY requires InstrumentEligibilityFixture")
+        gates = evaluate_instrument_eligibility(
+            instrument=fixture.instrument,
+            watchlist_item=fixture.watchlist_item,
+            snapshot=fixture.snapshot,
+            setup_policy=fixture.setup_policy,
+            direction=fixture.direction,
+            halted=fixture.halted,
+        )
+        return _compare(
+            assertion,
+            {
+                "gate_statuses": tuple(gate.status for gate in gates),
+                "reason_codes": tuple(gate.reason_code for gate in gates),
+            },
+        )
+    if isinstance(assertion, SetupDetectionAssertion):
+        fixture = fixtures.get(assertion.fixture_id)
+        if type(fixture) is not SetupDetectionFixture:
+            raise TypeError("SETUP_DETECTION requires SetupDetectionFixture")
+        setups = detect_setups(
+            snapshot=fixture.snapshot,
+            benchmark=fixture.benchmark,
+            sector_proxy=fixture.sector_proxy,
+            setup_policy=fixture.setup_policy,
+            evidence_cutoff_at=fixture.evidence_cutoff_at,
+            eligibility_gates=fixture.eligibility_gates,
+            event_assessment=fixture.event_assessment,
+            data_quality=fixture.data_quality,
+        )
+        return _compare(
+            assertion,
+            {"setup_types": tuple(setup.setup_type for setup in setups)},
+        )
+    if isinstance(assertion, CandidateScoreAssertion):
+        fixture = fixtures.get(assertion.fixture_id)
+        if type(fixture) is not CandidateScoreFixture:
+            raise TypeError("CANDIDATE_SCORE requires CandidateScoreFixture")
+        candidate = score_candidate(
+            fixture.setup,
+            setup_policy=fixture.setup_policy,
+            eligibility_gates=fixture.eligibility_gates,
+            event_assessment=fixture.event_assessment,
+            data_quality=fixture.data_quality,
+            regime_policy_version=fixture.regime_policy_version,
+        )
+        return _compare(
+            assertion,
+            {
+                "setup_type": candidate.setup_type,
+                "total_score": candidate.total_score,
+                "plan_status": candidate.plan_status,
             },
         )
     raise NotImplementedError(

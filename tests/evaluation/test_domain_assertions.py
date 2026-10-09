@@ -19,15 +19,21 @@ from finance_research_agent.domain import (
 from finance_research_agent.domain.enums import InvocationType, PlanStatus
 from finance_research_agent.domain.events import EventEvidenceProjection
 from finance_research_agent.domain.models import EventRecord, InstrumentIdentity, SourceHealth
+from finance_research_agent.domain.regime import RegimePolicy
 from finance_research_agent.evaluation.domain_assertions import (
+    CandidateScoreFixture,
     DomainFixtureBank,
     EventRiskFixture,
+    InstrumentEligibilityFixture,
     RegimeCalculationFixture,
     RunWindowFixture,
+    SetupDetectionFixture,
     execute_domain_assertion,
 )
 from finance_research_agent.evaluation.models import DomainAssertion
 from tests.support.synthetic_market import CUTOFF, make_regime_case
+from tests.unit import test_eligibility as eligibility_fixtures
+from tests.unit import test_setups as setup_fixtures
 
 
 def test_domain_assertion_calls_real_regime_function_and_compares_typed_output() -> None:
@@ -180,6 +186,108 @@ def test_run_window_assertion_calls_real_after_close_decision() -> None:
 
     assert outcome.status == "PASS"
     assert outcome.matched_fields == ("missed_record_only", "reason_code")
+
+
+def test_instrument_eligibility_assertion_calls_real_eligibility_gates() -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "INSTRUMENT_ELIGIBILITY",
+                "fixture_id": "S14_LEVERAGED_ETF",
+                "expected_fields": {
+                    "gate_statuses": ["BLOCK"],
+                    "reason_codes": ["UNSUPPORTED_INSTRUMENT"],
+                },
+            }
+        )
+    )
+    instrument = eligibility_fixtures._eligible_instrument().model_copy(
+        update={"instrument_type": "ETF", "is_leveraged": True}
+    )
+    bank = DomainFixtureBank(
+        {
+            assertion.fixture_id: InstrumentEligibilityFixture(
+                instrument=instrument,
+                watchlist_item=eligibility_fixtures._watchlist_item(),
+                snapshot=eligibility_fixtures._snapshot(instrument),
+                setup_policy=eligibility_fixtures._setup_policy(),
+                direction="LONG",
+                halted=False,
+            )
+        }
+    )
+
+    outcome = execute_domain_assertion(assertion, bank)
+
+    assert outcome.status == "PASS"
+    assert outcome.matched_fields == ("gate_statuses", "reason_codes")
+
+
+def test_setup_detection_assertion_calls_real_pullback_detection() -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "SETUP_DETECTION",
+                "fixture_id": "S02_PULLBACK",
+                "expected_fields": {"setup_types": ["TREND_PULLBACK"]},
+            }
+        )
+    )
+    context = setup_fixtures._load_context("valid-pullback.json")
+    bank = DomainFixtureBank(
+        {
+            assertion.fixture_id: SetupDetectionFixture(
+                snapshot=context["snapshot"],
+                benchmark=context["benchmark"],
+                sector_proxy=context["sector_proxy"],
+                setup_policy=context["setup_policy"],
+                evidence_cutoff_at=context["evidence_cutoff_at"],
+                eligibility_gates=context["eligibility_gates"],
+                event_assessment=context["event_assessment"],
+                data_quality=context["data_quality"],
+            )
+        }
+    )
+
+    outcome = execute_domain_assertion(assertion, bank)
+
+    assert outcome.status == "PASS"
+    assert outcome.matched_fields == ("setup_types",)
+
+
+def test_candidate_score_assertion_calls_real_score_calculation() -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "CANDIDATE_SCORE",
+                "fixture_id": "S01_BREAKOUT",
+                "expected_fields": {
+                    "setup_type": "BREAKOUT_CONTINUATION",
+                    "total_score": "79.65965732087227414330218068",
+                    "plan_status": "DRAFT",
+                },
+            }
+        )
+    )
+    context = setup_fixtures._load_context("valid-breakout.json")
+    setup = setups.detect_setups(**context)[0]
+    bank = DomainFixtureBank(
+        {
+            assertion.fixture_id: CandidateScoreFixture(
+                setup=setup,
+                setup_policy=context["setup_policy"],
+                eligibility_gates=context["eligibility_gates"],
+                event_assessment=context["event_assessment"],
+                data_quality=context["data_quality"],
+                regime_policy_version=RegimePolicy().version,
+            )
+        }
+    )
+
+    outcome = execute_domain_assertion(assertion, bank)
+
+    assert outcome.status == "PASS"
+    assert outcome.matched_fields == ("setup_type", "total_score", "plan_status")
 
 
 def test_closed_domain_function_signatures_remain_pinned() -> None:

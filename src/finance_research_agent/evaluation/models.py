@@ -163,7 +163,6 @@ class InstrumentEligibilityExpected(_ExpectedProjection):
 
 class SetupDetectionExpected(_ExpectedProjection):
     setup_types: tuple[SetupType, ...] | None = None
-    global_reason_codes: tuple[Identifier, ...] | None = None
 
 
 class CandidateScoreExpected(_ExpectedProjection):

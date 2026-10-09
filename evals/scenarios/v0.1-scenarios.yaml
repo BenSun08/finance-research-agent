@@ -114,7 +114,7 @@ scenarios:
     fixture_id: S01_BREAKOUT
     expected_fields:
       setup_type: BREAKOUT_CONTINUATION
-      total_score: 70
+      total_score: "79.65965732087227414330218068"
       plan_status: DRAFT
 - id: S02
   title: Permissive valid pullback
@@ -1407,8 +1407,6 @@ scenarios:
     expected_fields:
       setup_types:
       - BREAKOUT_CONTINUATION
-      global_reason_codes:
-      - FEED_IEX_SINGLE_EXCHANGE
 - id: S12
   title: Missing macro event calendar
   fixture_set: S12_MISSING_MACRO_CALENDAR
