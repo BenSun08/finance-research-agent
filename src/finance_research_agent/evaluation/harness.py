@@ -32,9 +32,16 @@ from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import CapabilityState
 from finance_research_agent.domain.packets import ResearchPacket
 from finance_research_agent.domain.types import FrozenMap
+from finance_research_agent.evaluation.domain_assertions import (
+    DomainFixtureBank,
+    execute_domain_assertion,
+)
 from finance_research_agent.evaluation.models import (
     CurrentScopeServiceObservation,
+    DomainAssertionOutcome,
+    EvaluationOutcome,
     EvaluationScenario,
+    ScenarioAssertionId,
     ScenarioOutcomeExpectation,
 )
 
@@ -43,9 +50,12 @@ from finance_research_agent.evaluation.models import (
 class EvaluationHarness:
     """Injected offline application dependencies for one isolated scenario run."""
 
-    dependencies_factory: Callable[[], RunDependencies]
+    dependencies_factory: Callable[
+        [EvaluationScenario, ScenarioOutcomeExpectation], RunDependencies
+    ]
     market_date: date
     reduced_report_reason: ReducedReportReason
+    domain_fixtures: DomainFixtureBank | None = None
 
     def __post_init__(self) -> None:
         if type(self.market_date) is not date:
@@ -55,11 +65,16 @@ class EvaluationHarness:
 def execute_current_scope_scenario(
     scenario: EvaluationScenario,
     harness: EvaluationHarness,
+    expectation: ScenarioOutcomeExpectation | None = None,
 ) -> CurrentScopeServiceObservation:
     """Prepare, reduce, publish, read, and replay one offline scenario run."""
 
     scenario = EvaluationScenario.model_validate(scenario, strict=True)
-    dependencies = harness.dependencies_factory()
+    selected_expectation = expectation or scenario.current_scope_expectation.primary
+    selected_expectation = ScenarioOutcomeExpectation.model_validate(
+        selected_expectation, strict=True
+    )
+    dependencies = harness.dependencies_factory(scenario, selected_expectation)
     if type(dependencies) is not RunDependencies:
         raise TypeError("dependencies_factory must return RunDependencies")
     prepared = prepare_research_packet(
@@ -102,9 +117,8 @@ def execute_current_scope_scenario(
         error_codes = (ErrorCode(failure_code),)
     else:
         raise ValueError("published scenario failure_code is not a stable string")
-    expected_case_id = scenario.current_scope_expectation.primary.case_id
     observed = ScenarioOutcomeExpectation(
-        case_id=expected_case_id,
+        case_id=selected_expectation.case_id,
         execution_status=bundle.run.execution_status,
         data_quality_status=bundle.run.data_quality_status,
         delivery_status=bundle.run.delivery_status,
@@ -132,6 +146,68 @@ def execute_current_scope_scenario(
         artifact_hashes=FrozenMap(artifact_hashes),
         replay_json_matches=replay.json_matches,
         replay_markdown_matches=replay.markdown_matches,
+    )
+
+
+def execute_evaluation_scenario(
+    scenario: EvaluationScenario,
+    harness: EvaluationHarness,
+) -> EvaluationOutcome:
+    """Run every declared current-scope case and typed domain assertion."""
+
+    scenario = EvaluationScenario.model_validate(scenario, strict=True)
+    expectations = (
+        scenario.current_scope_expectation.primary,
+        *scenario.current_scope_expectation.subcases,
+    )
+    if scenario.domain_assertions and harness.domain_fixtures is None:
+        raise ValueError("scenario domain assertions require an explicit DomainFixtureBank")
+    current_scope_outcomes = tuple(
+        execute_current_scope_scenario(scenario, harness, expectation)
+        for expectation in expectations
+    )
+    domain_outcomes: tuple[DomainAssertionOutcome, ...]
+    if harness.domain_fixtures is None:
+        domain_outcomes = ()
+    else:
+        domain_outcomes = tuple(
+            execute_domain_assertion(assertion, harness.domain_fixtures)
+            for assertion in scenario.domain_assertions
+        )
+    passed: list[ScenarioAssertionId] = []
+    failed: list[ScenarioAssertionId] = []
+    pending: list[ScenarioAssertionId] = []
+    declared = set(scenario.assertions)
+    if ScenarioAssertionId.CURRENT_SCOPE_MATCHES in declared:
+        matches = all(
+            actual.current_scope == expected
+            for actual, expected in zip(current_scope_outcomes, expectations, strict=True)
+        )
+        (passed if matches else failed).append(ScenarioAssertionId.CURRENT_SCOPE_MATCHES)
+    if ScenarioAssertionId.DOMAIN_ASSERTIONS_PASS in declared:
+        if not scenario.domain_assertions or len(domain_outcomes) != len(
+            scenario.domain_assertions
+        ):
+            pending.append(ScenarioAssertionId.DOMAIN_ASSERTIONS_PASS)
+        elif all(outcome.status == "PASS" for outcome in domain_outcomes):
+            passed.append(ScenarioAssertionId.DOMAIN_ASSERTIONS_PASS)
+        else:
+            failed.append(ScenarioAssertionId.DOMAIN_ASSERTIONS_PASS)
+    completed = set(passed) | set(failed)
+    classified = completed | set(pending)
+    pending.extend(assertion for assertion in scenario.assertions if assertion not in classified)
+    artifact_hashes: dict[str, str] = {}
+    for outcome in current_scope_outcomes:
+        for name, digest in outcome.artifact_hashes.items():
+            artifact_hashes[f"{outcome.current_scope.case_id}.{name}"] = digest
+    return EvaluationOutcome(
+        scenario_id=scenario.id,
+        current_scope_outcomes=current_scope_outcomes,
+        domain_assertion_outcomes=domain_outcomes,
+        artifact_hashes=FrozenMap(artifact_hashes),
+        assertions_passed=tuple(passed),
+        assertions_failed=tuple(failed),
+        assertions_pending=tuple(pending),
     )
 
 

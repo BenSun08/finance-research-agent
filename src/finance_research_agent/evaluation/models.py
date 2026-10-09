@@ -426,6 +426,47 @@ class DomainAssertionOutcome(StrictModel):
         return self
 
 
+class EvaluationOutcome(StrictModel):
+    """Observed current-scope service and domain results for one scenario."""
+
+    scenario_id: ScenarioId
+    current_scope_outcomes: tuple[CurrentScopeServiceObservation, ...] = Field(min_length=1)
+    domain_assertion_outcomes: tuple[DomainAssertionOutcome, ...]
+    artifact_hashes: FrozenMap[Identifier, Sha256]
+    assertions_passed: tuple[ScenarioAssertionId, ...]
+    assertions_failed: tuple[ScenarioAssertionId, ...]
+    assertions_pending: tuple[ScenarioAssertionId, ...]
+
+    @model_validator(mode="after")
+    def _coherent_scenario_results(self) -> EvaluationOutcome:
+        if any(
+            outcome.scenario_id is not self.scenario_id
+            for outcome in self.current_scope_outcomes
+        ):
+            raise ValueError("current-scope outcomes must belong to the evaluation scenario")
+        case_ids = tuple(
+            outcome.current_scope.case_id for outcome in self.current_scope_outcomes
+        )
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("current-scope outcome case ids must be unique")
+        observed_hashes = {
+            f"{outcome.current_scope.case_id}.{name}": digest
+            for outcome in self.current_scope_outcomes
+            for name, digest in outcome.artifact_hashes.items()
+        }
+        if dict(self.artifact_hashes) != observed_hashes:
+            raise ValueError("evaluation artifact hashes must exactly match case observations")
+        status_groups = (
+            self.assertions_passed,
+            self.assertions_failed,
+            self.assertions_pending,
+        )
+        all_ids = tuple(item for group in status_groups for item in group)
+        if len(all_ids) != len(set(all_ids)):
+            raise ValueError("scenario assertions must have one unique result each")
+        return self
+
+
 def _require_exact_capabilities(capabilities: Sequence[CapabilityState]) -> None:
     actual = tuple(state.capability for state in capabilities)
     expected = tuple(Capability)
