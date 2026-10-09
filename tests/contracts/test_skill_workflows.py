@@ -233,3 +233,20 @@ def test_checker_cli_reports_success_and_failure(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["checker", "--root", str(tmp_path)])
     assert main() == 1
     assert "missing documentation" in capsys.readouterr().out
+
+
+def test_watchlist_skill_names_exact_typed_write_operations():
+    from finance_research_agent.application.operations import OPERATION_NAMES
+
+    body = parse_skill(ROOT / "skills/watchlist-management/SKILL.md").body
+    for operation in ("list_watchlist", "upsert_watchlist_item", "remove_watchlist_item"):
+        assert operation in OPERATION_NAMES
+        assert f"`{operation}`" in body
+
+
+@pytest.mark.parametrize("operation", ["upsert_watchlist_item", "remove_watchlist_item"])
+def test_watchlist_operation_alias_cannot_pass_static_gate(tmp_path, operation):
+    copytree(ROOT / "skills", tmp_path / "skills")
+    path = tmp_path / "skills/watchlist-management/SKILL.md"
+    path.write_text(path.read_text().replace(operation, operation.replace("_item", "_entry")))
+    assert validate_skill_contracts(tmp_path)

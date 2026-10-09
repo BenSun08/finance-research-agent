@@ -18,8 +18,8 @@ Application validation owns symbol eligibility, entry shape, the maximum of
 
 ## Allowed Operations
 
-Use only `list_watchlist`, `upsert_watchlist_entry`, and
-`remove_watchlist_entry`. List current entries before preparing an edit. A write
+Use only `list_watchlist`, `upsert_watchlist_item`, and
+`remove_watchlist_item`. List current entries before preparing an edit. A write
 requires the user's expressed intent and the current `expected_version` from
 the typed watchlist. Registry membership and discovery do not authorize a write.
 

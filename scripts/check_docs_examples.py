@@ -61,6 +61,12 @@ def parse_skill(path: Path) -> Skill:
     headings = re.findall(r"^## (.+)$", body, flags=re.MULTILINE)
     if tuple(headings) != REQUIRED_SKILL_SECTIONS:
         raise ValueError("skill sections must occur exactly once in the required order")
+    if metadata["name"] == "watchlist-management":
+        allowed = body.split("## Allowed Operations\n", 1)[1].split("\n## ", 1)[0]
+        operations = set(re.findall(r"`([a-z][a-z_]+)`", allowed)) - {"expected_version"}
+        expected = {"list_watchlist", "upsert_watchlist_item", "remove_watchlist_item"}
+        if operations != expected or not expected.issubset(OPERATION_NAMES):
+            raise ValueError("watchlist skill must name the exact typed operations")
     return Skill(path, metadata, body)
 
 
