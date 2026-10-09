@@ -1040,3 +1040,42 @@ def test_f13_stale_lease_checkpoint_is_rejected_before_same_revision_recovery(
     )
     assert replay.json_matches is True
     assert replay.markdown_matches is True
+
+
+def test_f14_duplicate_scheduled_initialization_reuses_one_unpublished_revision(
+    tmp_path: Path,
+) -> None:
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.run_service import PreparePremarketRunRequest
+    from finance_research_agent.domain.enums import InvocationType
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+
+    scenario = load_evaluation_scenarios()[24]
+    assert scenario.id.value == "S25"
+    assert FailureInjectionId.F14 in scenario.injected_failures
+    deps = dependencies(tmp_path)
+    scheduled = PreparePremarketRunRequest(
+        date(2026, 9, 28), None, InvocationType.SCHEDULED
+    )
+
+    first = prepare_research_packet(scheduled, deps)
+    assert first.outcome == "PACKET_READY"
+    assert first.research_packet is not None
+    first_calls = tuple(deps.market_data.calls)
+    first_stored = first.stored_run
+    assert first_stored is not None
+
+    duplicate = prepare_research_packet(scheduled, deps)
+
+    assert duplicate.outcome == "PACKET_READY"
+    assert duplicate.research_packet == first.research_packet
+    assert duplicate.stored_run == first_stored
+    assert tuple(deps.market_data.calls) == first_calls
+    assert first.research_packet.run.run_id == "premarket-2026-09-28-r1"
+    assert first.research_packet.run.revision == 1
+    assert deps.run_repository._existing_revision_ids(date(2026, 9, 28)) == (
+        first.research_packet.run.run_id,
+    )
+    assert deps.run_repository.get_latest(date(2026, 9, 28)) is None
+    assert deps.run_repository.get_published_artifact(first.research_packet.run.run_id) is None
