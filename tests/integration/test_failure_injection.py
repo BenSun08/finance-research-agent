@@ -1147,3 +1147,64 @@ def test_f15_scheduled_wake_boundaries_reuse_one_revision(
         assert duplicate.publication == first.publication
         assert deps.run_repository.get_latest(market_date) == run_id
         assert deps.run_repository.get_published_artifact(run_id) == first.publication
+
+
+@pytest.mark.parametrize(
+    ("invoked_at", "record_only"),
+    [("2026-09-28T13:30:00+00:00", False), ("2026-09-28T20:00:00+00:00", True)],
+)
+def test_f16_missed_window_cutoffs_publish_before_close_or_record_after_close(
+    tmp_path: Path,
+    invoked_at: str,
+    record_only: bool,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.run_service import PreparePremarketRunRequest
+    from finance_research_agent.domain.enums import InvocationType
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+
+    class FixedClock:
+        def now_utc(self):
+            return datetime.fromisoformat(invoked_at).astimezone(UTC)
+
+    scenario = load_evaluation_scenarios()[24]
+    assert scenario.id.value == "S25"
+    assert FailureInjectionId.F16 in scenario.injected_failures
+    market_date = date(2026, 9, 28)
+    deps = dependencies(tmp_path)
+    deps = replace(deps, clock=FixedClock())
+    scheduled = PreparePremarketRunRequest(market_date, None, InvocationType.SCHEDULED)
+
+    first = prepare_research_packet(scheduled, deps)
+
+    assert first.window_decision.delivery_status is DeliveryStatus.MISSED_WINDOW
+    assert first.window_decision.missed_record_only is record_only
+    assert first.window_decision.publish_missed_report is (not record_only)
+    assert deps.market_data.calls == []
+
+    duplicate = prepare_research_packet(scheduled, deps)
+
+    assert duplicate.window_decision.delivery_status is DeliveryStatus.MISSED_WINDOW
+    assert deps.market_data.calls == []
+    if record_only:
+        assert first.outcome == duplicate.outcome == "SKIPPED"
+        assert first.stored_run is duplicate.stored_run is None
+        assert first.publication is duplicate.publication is None
+        assert deps.run_repository.get_missed_run(market_date) is not None
+        assert deps.run_repository.get_latest(market_date) is None
+        assert deps.run_repository._existing_revision_ids(market_date) == ()
+    else:
+        assert first.outcome == duplicate.outcome == "PUBLISHED"
+        assert first.failure_code is ErrorCode.MISSED_WINDOW
+        assert first.stored_run is not None
+        assert duplicate.stored_run is not None
+        assert duplicate.stored_run.run_id == first.stored_run.run_id
+        assert first.publication is not None
+        assert duplicate.publication == first.publication
+        assert deps.run_repository.get_missed_run(market_date) is None
+        assert deps.run_repository._existing_revision_ids(market_date) == (first.stored_run.run_id,)
+        assert deps.run_repository.get_latest(market_date) == first.stored_run.run_id
