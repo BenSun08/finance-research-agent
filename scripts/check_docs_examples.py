@@ -187,14 +187,25 @@ def validate_documentation(root: Path) -> tuple[str, ...]:
             continue
         text = path.read_text(encoding="utf-8")
         for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", text):
-            if target.startswith(("https://", "http://", "#")):
+            if target.startswith(("https://", "http://")):
                 continue
-            target_path = path.parent / target.split("#", 1)[0]
+            link_path, _, anchor = target.partition("#")
+            target_path = path.parent / link_path if link_path else path
             if (
                 not target_path.is_file()
                 or not target_path.resolve().is_relative_to(root.resolve())
             ):
                 errors.append(f"broken or unconfined link: {path.relative_to(root)} -> {target}")
+            elif anchor:
+                headings = re.findall(
+                    r"^#{1,6} (.+)$", target_path.read_text(encoding="utf-8"), re.MULTILINE
+                )
+                anchors = {
+                    re.sub(r"[^\w -]", "", heading.lower()).replace(" ", "-")
+                    for heading in headings
+                }
+                if anchor not in anchors:
+                    errors.append(f"missing internal heading: {target}")
     index = documents[1]
     if index.is_file() and any(
         line and not line.startswith(("# ", "- ["))

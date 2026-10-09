@@ -167,3 +167,13 @@ def test_skill_local_executable_script_is_rejected(tmp_path):
     (path.parent / "scripts").mkdir()
     (path.parent / "scripts/calculate.py").write_text("print('wrong owner')")
     assert validate_product_a_contracts(tmp_path)
+
+
+def test_missing_internal_documentation_anchor_is_rejected(tmp_path):
+    copytree(ROOT / "skills", tmp_path / "skills")
+    copytree(ROOT / "docs", tmp_path / "docs")
+    copytree(ROOT / "src", tmp_path / "src")
+    (tmp_path / "README.md").write_text((ROOT / "README.md").read_text())
+    path = tmp_path / "docs/operations/scheduling-and-recovery.md"
+    path.write_text(path.read_text().replace("#product-a-stdio-server", "#missing-heading"))
+    assert validate_documentation(tmp_path)
