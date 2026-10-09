@@ -66,11 +66,19 @@ def _direct_network_escape_hatches(path: Path, relative: Path) -> set[str]:
         node for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom) and node.module == "importlib.metadata"
     ]
-    if relative == Path("application/skill_bundle.py") and metadata_nodes and all(
+    metadata_module_import = any(
+        isinstance(node, ast.Import) and any(
+            alias.name.startswith("importlib") for alias in node.names
+        ) for node in ast.walk(tree)
+    )
+    if (
+        relative == Path("application/skill_bundle.py")
+        and metadata_nodes and not metadata_module_import and all(
         node.level == 0 and all(
             alias.name in {"PackagePath", "distribution"} and alias.asname is None
             for alias in node.names
         ) for node in metadata_nodes
+        )
     ):
         allowed = {
             "importlib.metadata", "importlib.metadata.PackagePath",
@@ -222,6 +230,7 @@ def test_production_code_contains_no_brokerage_endpoint_literal() -> None:
     "import importlib", "from importlib import import_module",
     "from importlib.metadata import entry_points", "import socket",
     "import requests", "from importlib.metadata import distribution as loader",
+    "from importlib.metadata import distribution\nimport importlib.metadata",
 ])
 def test_installed_metadata_exception_does_not_allow_transport_or_dynamic_loading(
     tmp_path, source,
