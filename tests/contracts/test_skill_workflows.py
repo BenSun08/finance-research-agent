@@ -177,3 +177,59 @@ def test_missing_internal_documentation_anchor_is_rejected(tmp_path):
     path = tmp_path / "docs/operations/scheduling-and-recovery.md"
     path.write_text(path.read_text().replace("#product-a-stdio-server", "#missing-heading"))
     assert validate_documentation(tmp_path)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda text: text.removeprefix("---\n"),
+    lambda text: text.replace("description: Use", "description: \nignored: Use"),
+    lambda text: text.replace("- Required: None.", "Unexpected prose"),
+    lambda text: text.replace("- Required: None.", "- Required: invalid"),
+    lambda text: text.replace("- Conditional: None.", ""),
+    lambda text: text.replace("- Conditional: None.", "- Conditional: [X](references/x.md)"),
+    lambda text: text.replace("- Required: None.", "- Required: [X](references/missing.md)"),
+])
+def test_static_checker_failure_branches(tmp_path, mutation):
+    path = _copy(tmp_path)
+    path.write_text(mutation(path.read_text()))
+    assert validate_skill_contracts(tmp_path)
+
+
+@pytest.mark.parametrize("target, old, new", [
+    ("skills/README.md", "# Project Skills", "Unapproved workflow prose"),
+    ("docs/architecture/v0.1-boundaries.md", "Python typed domain", "Missing authority"),
+    ("docs/architecture/v0.1-boundaries.md", "does not rewrite history", "rewrites history"),
+    ("docs/operations/scheduling-and-recovery.md", "PAUSED", "ACTIVE"),
+    ("docs/operations/scheduling-and-recovery.md", "no execution", "get_system_status"),
+])
+def test_documentation_contract_drift_branches(tmp_path, target, old, new):
+    copytree(ROOT / "skills", tmp_path / "skills")
+    copytree(ROOT / "docs", tmp_path / "docs")
+    copytree(ROOT / "src", tmp_path / "src")
+    (tmp_path / "README.md").write_text((ROOT / "README.md").read_text())
+    path = tmp_path / target
+    path.write_text(path.read_text().replace(old, new))
+    assert validate_documentation(tmp_path)
+
+
+def test_missing_inventory_and_documentation_fail_closed(tmp_path):
+    assert validate_product_a_contracts(tmp_path)
+    assert validate_documentation(tmp_path)
+
+
+def test_unavailable_operation_allowlist_fails_closed(monkeypatch):
+    from scripts import check_docs_examples
+
+    monkeypatch.setattr(check_docs_examples, "OPERATION_NAMES", ())
+    manifest = ROOT / "skills/premarket-research/references/workflow-contract.yaml"
+    assert validate_workflow(manifest)
+
+
+def test_checker_cli_reports_success_and_failure(tmp_path, monkeypatch, capsys):
+    from scripts.check_docs_examples import main
+
+    monkeypatch.setattr("sys.argv", ["checker", "--root", str(ROOT)])
+    assert main() == 0
+    assert capsys.readouterr().out == ""
+    monkeypatch.setattr("sys.argv", ["checker", "--root", str(tmp_path)])
+    assert main() == 1
+    assert "missing documentation" in capsys.readouterr().out
