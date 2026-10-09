@@ -69,3 +69,114 @@ validation. These figures do not claim 100% coverage or operational preparation.
 
 This feature contains prerequisites only. The typed prepare handoff, shared
 deadline, prior observations, stdio executable, plugin/skills and R11 remain.
+
+## Preparation handoff feature (base: merged PR #66, `6f08022`)
+
+### Tested subtasks
+
+- `664fa39`: trusted request/run deadline, closed Alpaca deadline failures.
+  Initial RED: 12 failures; GREEN: 16 focused cases. Review found that body reads
+  retained the original timeout after headers. A realistic HTTPX/httpcore RED
+  probe observed timeouts `[1.0, 1.0]` and rejection at 1.6 seconds; GREEN uses
+  `[1.0, 0.2]` and rejects at 1.0 second. A separate expired-iterator RED now
+  makes zero iterator advances. Final scoped adapter/security tests: 97 passed.
+- `dc8acf9`: strict JSON model-valued FrozenMap reload. The generic model-map
+  round-trip and actual populated-packet resume failed before the schema fix.
+  JSON preserves nested model validation mode; complete otherwise-valid Python
+  payloads still reject string integers, Decimal strings, and timestamp strings.
+- `f351ae9`: full-history evidence projection. RED: the 252-bar array exceeded
+  the 128-value evidence bound. GREEN: deterministic 128/124-bar chunks retain
+  every bar and original evidence ID; short-history payload identity is retained.
+  Combined deadline/foundation/bridge verification: 119 tests passed.
+- `1287144`: separate bounded artifact JSON envelope. Actual full preparation
+  publication failed with 263 array-bound errors. GREEN: the 5,208,120-byte
+  example packet publishes and reloads exactly. Artifact arrays permit 8,192
+  entries; evidence arrays remain bounded at 128, maps at 128, strings at 8,192.
+  Foundation tests: 41 passed, including bounds, strictness, detached immutable
+  inputs, and unchanged bytes for previously valid values.
+- `fc860e5`: prior-publication discovery and post-freeze failure storage.
+  Initial query RED: 21 missing-method failures; later integrity RED: three
+  inconsistent-state failures and one invalid date-directory shape. Review
+  regressions reject unrecognized packetless origin/code/quality, malformed
+  telemetry pairs/schema/hash/checkpoint, missing or inconsistent legacy final
+  runs, and missing/corrupt/symlinked final telemetry artifacts. No fallback to
+  older research occurs on corruption. Nine failure-checkpoint tests preserve
+  cutoff, identity, execution/delivery states, hashes, closed reason, and no-packet
+  restriction. Combined query/prior/failure verification: 160 tests passed.
+- `53645e1`: immutable prior selection and completed-bar observations.
+  Initial missing-module RED preceded implementation. Review RED reproduced
+  crash-before-checkpoint recovery and selection after collection (four cases),
+  then actual synthesized publication origin failed because it is stored inside
+  the draft. GREEN restores canonical staged bytes without publication requery,
+  preserves CAS semantics, prohibits late first selection, accepts real validated
+  publication shape, and skips blocked reduced publications. Prior reference
+  evidence is retained; missing observation inputs produce a closed gate.
+  Scoped coverage: 111/111 statements and 48/48 branches. Query coverage:
+  98/98 statements and 64/64 branches. These are scoped coverage measurements.
+
+### Orchestration and review regressions
+
+- Initial preparation RED: six tests could not import the missing orchestrator.
+  Public-operation RED proved the facade still returned CONFIG_FROZEN.
+- New preparation composes existing collection, freeze, quality, regime,
+  eligibility/event/setup assessment, packet/reduced staging and publication.
+  Missing macro health remains a blocking gate; current source scope has no
+  candidates or conditional plans. No healthy event source is fabricated.
+- Review corrections use the prior trading session for Monday observations and
+  named packet-builder arguments. An actual configured prior symbol now produces
+  a completed-bar observation with its retained reference evidence.
+- Review RED reproduced a budget-failure reason staged before checkpoint crash,
+  followed by a late resume; the original INTERNAL_ERROR is now recovered.
+- Known historical-calendar failure RED escaped after allocation. The typed
+  RuntimeError subclass now maps only that known failure to an operational
+  MARKET_CALENDAR_UNAVAILABLE; storage/publication errors still propagate.
+- Scheduled explicit-revision requests are rejected before the published shortcut.
+  Typed provider DEADLINE_EXCEEDED produces an operational result even when the
+  test clock does not advance. Frozen-quality resume RED attempted current
+  provider reconstruction; GREEN reuses frozen quality without that factory.
+- First full integration/coverage baseline: 2,093 passed, one live test deselected,
+  one existing websockets warning, 356.08 seconds. Ruff, mypy (89 source files),
+  schema drift and diff checks passed. This baseline predates the final DNS and
+  frozen-quality-resume additions; final verification remains below.
+
+### Final verification and review
+
+- `94ebc64`: bounded DNS admission and closed core transport failures. Three
+  wall-clock RED cases showed a one-second resolver escaping a 50 ms deadline
+  and repeated-call worker growth; all three passed after the correction.
+  Core transport RED included 17 exception cases and four additional protocol
+  cases. Final adapter/deadline/security verification passed 190 tests. DNS is
+  bounded at the caller and admits at most one pending worker per client; the
+  underlying OS resolution itself cannot be cancelled and may finish later.
+- `15d28bb`: typed preparation handoff and public facade. Fresh review regressions
+  cover the second calendar lookup after allocation, stored publication context
+  against immutable bundle metadata, original scheduled-window preservation on
+  manual resume, and frozen-quality resume without current provider construction.
+- Independent whole-feature reviewer `review_handoff_final` approved integration
+  with no remaining actionable P1/P2 findings. It inspected the complete feature
+  against `6f08022`, ran 131 tests initially and 40 targeted tests after fixes,
+  and verified the deadline/DNS corrections. Its verdict is separate from CI.
+- Frozen-source full suite: **2,131 passed, one live test deselected, one existing
+  websockets deprecation warning**, 143.08 seconds. Final HTTP selection: 98 passed.
+  Ruff passed; mypy passed across 89 source files; schema drift and diff checks
+  passed. Earlier overlapping runs imported the pre-fix HTTP protocol handler and
+  had four failures; those runs are discarded as final verification evidence.
+
+| Scope | Statement coverage | Branch coverage |
+| --- | ---: | ---: |
+| Preparation orchestrator | 88.30% (166/188) | 72.86% (51/70) |
+| HTTP client, focused adapter selection | 80.00% (396/495) | 58.75% (94/160) |
+| Prior research helper, scoped | 100% (111/111) | 100% (48/48) |
+| Prior publication query, scoped | 100% (98/98) | 100% (64/64) |
+
+Preparation gaps include invalid result construction, missing verified artifacts,
+hash/canonical-byte corruption guards, missing-symbol exclusions and the guard
+against plan-producing setups. HTTP figures include existing parsing/security
+branches outside the focused selection. These figures do not claim complete
+coverage. Stale HTTP coverage from the overlapping run was explicitly removed
+and replaced with a fresh 98-test frozen-source measurement; the preparation
+measurement retained only unchanged source whose selected cases passed.
+
+The executable stdio bootstrap, R10 plugin/skills/workflow and R11 remain
+subsequent features. PR state, exact-head CI and merge are independently verified
+at publication time; this document does not predeclare those remote results.

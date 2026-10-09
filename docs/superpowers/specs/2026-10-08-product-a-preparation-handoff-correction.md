@@ -38,9 +38,21 @@ engine.
 - Use the existing 15 minute normal-provider duration target as the application
   deadline. Check it between bounded stages and cap every actual provider request
   by the same trusted deadline. No deadline is accepted from MCP arguments.
-- Use a trusted default packet limit of 5,000,000 bytes, overridable only at
+- Deadline-bound DNS admission uses at most one unfinished resolver worker per
+  client. The caller stops waiting at its remaining deadline and sends no HTTP
+  request afterward. The operating system DNS call cannot be cancelled and its
+  daemon worker may finish later; repeated calls do not create additional workers.
+  Core transport timeout/network/protocol errors retain bounded retry semantics
+  and become closed provider failures when exhausted.
+- Use a trusted default packet limit of 8,000,000 bytes, overridable only at
   application composition for offline tests/deployment. Protected overflow fails
   closed and publishes an operational report.
+  The initial 5,000,000-byte selection was insufficient: the complete example
+  configuration with 23 symbols and 252 completed sessions is 5,208,120 bytes.
+- The publication envelope uses a separate bounded artifact JSON value type
+  permitting arrays up to 8,192 entries. This stores full 252-session snapshots
+  and packet collections without weakening the 128-entry limit on evidence and
+  model-facing `JsonValue` fields. Existing publication bytes are unchanged.
 - Pre-synthesis hard failures after a run is allocated publish only a closed
   failure code. Publication/storage failures propagate to the existing redacted
   transport boundary; no successful publication is inferred.
