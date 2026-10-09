@@ -10,12 +10,53 @@ from pydantic import TypeAdapter, ValidationError
 
 from finance_research_agent.domain.models import StrictModel
 from finance_research_agent.domain.types import (
+    ArtifactJsonValue,
     FrozenMap,
     JsonValue,
     PositiveDecimal,
     UtcDatetime,
     canonical_bytes,
 )
+
+
+def test_storage_artifact_arrays_are_bounded_separately_from_evidence_values():
+    adapter = TypeAdapter(FrozenMap[str, ArtifactJsonValue], config={"strict": True})
+    values = list(range(8192))
+    original = {"items": values}
+    frozen = adapter.validate_python(original)
+    wire = adapter.dump_json(frozen)
+    values.append(8192)
+    assert len(frozen["items"]) == 8192
+    assert adapter.validate_json(wire, strict=True) == frozen
+    with pytest.raises(ValidationError, match="8192"):
+        adapter.validate_python(original)
+    with pytest.raises(ValidationError, match="128"):
+        TypeAdapter(FrozenMap[str, JsonValue]).validate_python({"items": tuple(range(129))})
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        float("nan"),
+        float("inf"),
+        Decimal("1"),
+        b"bytes",
+        {1},
+        object(),
+        "x" * 8193,
+        {str(index): index for index in range(129)},
+    ],
+)
+def test_storage_artifact_values_remain_strict_bounded_json(value):
+    with pytest.raises(ValidationError):
+        TypeAdapter(FrozenMap[str, ArtifactJsonValue]).validate_python({"invalid": value})
+
+
+def test_storage_artifact_value_change_preserves_existing_json_bytes():
+    value = FrozenMap({"nested": {"items": (1, True, None, "original")}})
+    assert TypeAdapter(FrozenMap[str, ArtifactJsonValue]).dump_json(value) == (
+        TypeAdapter(FrozenMap[str, JsonValue]).dump_json(value)
+    )
 
 
 class Example(StrictModel):

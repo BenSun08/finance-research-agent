@@ -93,7 +93,9 @@ class FrozenMap(Mapping[_Key, _Value]):
                     raise ValueError("FrozenMap permits at most 128 entries")
                 # Typed nested models need their JSON objects intact until their
                 # schema validates them. JSON values require frozen containers.
-                copied[key] = _freeze(item) if value_type is JsonValue else item
+                copied[key] = (
+                    _freeze(item) if value_type in (JsonValue, ArtifactJsonValue) else item
+                )
             return copied
 
         return core_schema.no_info_after_validator_function(
@@ -101,7 +103,8 @@ class FrozenMap(Mapping[_Key, _Value]):
             core_schema.json_or_python_schema(
                 json_schema=(
                     core_schema.no_info_before_validator_function(mapping_input, dictionary)
-                    if value_type is JsonValue else dictionary
+                    if value_type in (JsonValue, ArtifactJsonValue)
+                    else dictionary
                 ),
                 python_schema=core_schema.no_info_before_validator_function(
                     mapping_input, dictionary
@@ -138,6 +141,18 @@ type JsonValue = Annotated[
     | None
     | Annotated[tuple[JsonValue, ...], Field(max_length=128)]
     | FrozenMap[str, JsonValue],
+    BeforeValidator(_json_value),
+]
+
+
+type ArtifactJsonValue = Annotated[
+    Annotated[str, Field(max_length=8192)]
+    | int
+    | Annotated[float, Field(allow_inf_nan=False)]
+    | bool
+    | None
+    | Annotated[tuple[ArtifactJsonValue, ...], Field(max_length=8192)]
+    | FrozenMap[str, ArtifactJsonValue],
     BeforeValidator(_json_value),
 ]
 
