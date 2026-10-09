@@ -13,12 +13,20 @@ from finance_research_agent.application.run_service import (
     PreparePremarketRunRequest,
     RunDependencies,
 )
-from finance_research_agent.domain.enums import Coverage, InvocationType, Session
+from finance_research_agent.domain.enums import (
+    Capability,
+    Coverage,
+    GateStatus,
+    InvocationType,
+    ReducedReportReason,
+    Session,
+)
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     CompletedDailyBar,
     InstrumentIdentity,
     PriceObservation,
+    ProviderFailure,
     ProviderReadiness,
 )
 from tests.support.component_versions import synthetic_component_versions
@@ -250,6 +258,96 @@ def test_after_close_missed_run_is_durable_without_formal_publication_or_provide
 
     assert retry.outcome == "SKIPPED"
     assert missed_run_reader(date(2026, 9, 28)) == record
+
+
+def test_unknown_regime_disables_usable_classification_and_discloses_missing_evidence(
+    tmp_path,
+):
+    from finance_research_agent.application.premarket_preparation import (
+        _unknown_regime_projection,
+        prepare_research_packet,
+    )
+    from finance_research_agent.application.reduced_report import render_reduced_report
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+
+    class MissingBroadData(MarketData):
+        def fetch_daily_bars(self, symbols, start, end, **kwargs):
+            outcomes = dict(super().fetch_daily_bars(symbols, start, end, **kwargs))
+            outcomes["SPY"] = ProviderFailure(
+                provider="alpaca",
+                symbol="SPY",
+                error_code=ErrorCode.PROVIDER_NO_DATA,
+                retryable=False,
+            )
+            return outcomes
+
+    baseline_result = prepare_research_packet(
+        request(), dependencies(tmp_path / "baseline", market=MarketData())
+    )
+    baseline_packet = baseline_result.research_packet
+    assert baseline_packet is not None
+    baseline_capabilities = {
+        state.capability: state for state in baseline_packet.capability_states
+    }
+
+    packet_result = prepare_research_packet(
+        request(), dependencies(tmp_path, market=MissingBroadData())
+    )
+
+    assert packet_result.outcome == "PACKET_READY"
+    packet = packet_result.research_packet
+    assert packet is not None and packet.regime_result is not None
+    assert packet.regime_result.regime.value == "unknown"
+    missing_evidence = tuple(
+        item.evidence_id
+        for item in packet.evidence
+        if item.structured_fields.get("outcome") == "DAILY_BARS"
+        and item.structured_fields.get("requested_symbol") == "SPY"
+        and item.structured_fields.get("error_code") == ErrorCode.PROVIDER_NO_DATA.value
+    )
+    assert len(missing_evidence) == 1
+    capabilities = {state.capability: state for state in packet.capability_states}
+    regime = capabilities[Capability.REGIME_CLASSIFICATION_AVAILABLE]
+    assert regime.available is False
+    assert regime.reason_codes == (ErrorCode.PROVIDER_NO_DATA,)
+    assert regime.evidence_ids == missing_evidence
+    plan = capabilities[Capability.PLAN_DRAFT_AVAILABLE]
+    assert plan.available is False
+    assert missing_evidence[0] in plan.evidence_ids
+    assert plan.reason_codes == tuple(dict.fromkeys((
+        *baseline_capabilities[Capability.PLAN_DRAFT_AVAILABLE].reason_codes,
+        ErrorCode.PROVIDER_NO_DATA,
+    )))
+    unknown_gates = tuple(
+        gate for gate in packet.gates if gate.gate_id == "regime-classification-unknown"
+    )
+    assert len(unknown_gates) == 1
+    assert unknown_gates[0].status is GateStatus.BLOCK
+    assert unknown_gates[0].reason_code == ErrorCode.PROVIDER_NO_DATA.value
+    assert unknown_gates[0].evidence_ids == missing_evidence
+    assert unknown_gates[0].capability is Capability.REGIME_CLASSIFICATION_AVAILABLE
+    assert unknown_gates[0].rule_version == packet.regime_result.formula_version
+    for capability in Capability:
+        if capability not in {
+            Capability.REGIME_CLASSIFICATION_AVAILABLE,
+            Capability.PLAN_DRAFT_AVAILABLE,
+        }:
+            assert capabilities[capability] == baseline_capabilities[capability]
+    assert packet.deterministic_plan_inputs == ()
+
+    evidence_free_unknown = calculate_regime({}, RegimePolicy(), NOW)
+    unchanged_capabilities, no_disclosure = _unknown_regime_projection(
+        evidence_free_unknown,
+        baseline_packet.evidence,
+        baseline_packet.capability_states,
+        ("SPY", "QQQ"),
+    )
+    assert unchanged_capabilities == baseline_packet.capability_states
+    assert no_disclosure is None
+
+    report = render_reduced_report(packet, ReducedReportReason.SYNTHESIS_UNAVAILABLE)
+    assert "Regime classification is UNKNOWN" in report
+    assert missing_evidence[0] in report
 
 
 def test_explicit_published_revision_returns_original_receipt_without_new_collection(tmp_path):

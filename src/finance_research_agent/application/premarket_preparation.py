@@ -47,15 +47,19 @@ from finance_research_agent.application.run_service import (
 from finance_research_agent.application.run_state import compose_publication_context
 from finance_research_agent.domain.eligibility import evaluate_instrument_eligibility
 from finance_research_agent.domain.enums import (
+    Capability,
     DataQualityStatus,
     DeliveryStatus,
     ExecutionStatus,
+    GateStatus,
     InvocationType,
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.events import assess_event_risk
 from finance_research_agent.domain.market_calendar import NEW_YORK, RunWindowDecision, format_run_id
 from finance_research_agent.domain.models import (
+    CapabilityState,
+    EvidenceItem,
     GateResult,
     MissedRunRecord,
     ProviderFailure,
@@ -65,13 +69,67 @@ from finance_research_agent.domain.models import (
     StrictModel,
 )
 from finance_research_agent.domain.packets import PacketBudgetExceeded, ResearchPacket
-from finance_research_agent.domain.regime import calculate_regime
+from finance_research_agent.domain.regime import Regime, RegimeResult, calculate_regime
 from finance_research_agent.domain.setups import CandidateExclusion, assess_setups, setup_gate
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes, utc_datetime
 
 _RUN_DURATION = timedelta(minutes=15)
 _MARKET_AUTHORITY_TIER = 2
 _DEFAULT_PACKET_BYTES = 8_000_000
+
+
+def _unknown_regime_projection(
+    regime: RegimeResult,
+    evidence: tuple[EvidenceItem, ...],
+    capabilities: tuple[CapabilityState, ...],
+    broad_symbols: tuple[str, ...],
+) -> tuple[tuple[CapabilityState, ...], GateResult | None]:
+    """Disable usable regime/plan claims when required broad data is absent."""
+    if regime.regime is not Regime.UNKNOWN:
+        return capabilities, None
+    missing_evidence_ids = tuple(
+        dict.fromkeys(
+            item.evidence_id
+            for item in evidence
+            if item.source.provider == "alpaca"
+            and item.structured_fields.get("outcome") == "DAILY_BARS"
+            and item.structured_fields.get("requested_symbol") in broad_symbols
+            and item.structured_fields.get("error_code") == ErrorCode.PROVIDER_NO_DATA.value
+        )
+    )
+    if not missing_evidence_ids:
+        return capabilities, None
+
+    projected: list[CapabilityState] = []
+    affected = {
+        Capability.REGIME_CLASSIFICATION_AVAILABLE,
+        Capability.PLAN_DRAFT_AVAILABLE,
+    }
+    for state in capabilities:
+        if state.capability not in affected:
+            projected.append(state)
+            continue
+        projected.append(CapabilityState(
+            capability=state.capability,
+            available=False,
+            reason_codes=tuple(dict.fromkeys(
+                (*state.reason_codes, ErrorCode.PROVIDER_NO_DATA)
+            )),
+            evidence_ids=tuple(dict.fromkeys((*state.evidence_ids, *missing_evidence_ids))),
+        ))
+    disclosure = GateResult(
+        gate_id="regime-classification-unknown",
+        status=GateStatus.BLOCK,
+        reason_code=ErrorCode.PROVIDER_NO_DATA.value,
+        message=(
+            "Regime classification is UNKNOWN because required broad-market inputs "
+            "are unavailable; no usable classification or new plan can be drafted."
+        ),
+        evidence_ids=missing_evidence_ids,
+        capability=Capability.REGIME_CLASSIFICATION_AVAILABLE,
+        rule_version=regime.formula_version,
+    )
+    return tuple(projected), disclosure
 
 
 class PreparedPremarketRunResult(StrictModel):
@@ -443,9 +501,18 @@ def prepare_research_packet(
         context = compose_publication_context(stored.run, stored.checkpoints[-1]).model_copy(
             update={"execution_status": ExecutionStatus.AWAITING_SYNTHESIS}
         )
+        packet_evidence = (*inputs.evidence, *prior_observations.evidence)
+        capabilities, regime_disclosure = _unknown_regime_projection(
+            regime,
+            inputs.evidence,
+            quality.capabilities,
+            configuration.regime.broad_symbols,
+        )
+        if regime_disclosure is not None:
+            gates.append(regime_disclosure)
         packet = build_research_packet(
             run=context,
-            evidence=(*inputs.evidence, *prior_observations.evidence),
+            evidence=packet_evidence,
             snapshots=inputs.market,
             events=(),
             metrics=regime.metrics,
@@ -453,7 +520,7 @@ def prepare_research_packet(
             candidates=(),
             exclusions=exclusions,
             plans=(),
-            capabilities=quality.capabilities,
+            capabilities=capabilities,
             observations=prior_observations.observations,
             max_serialized_bytes=max_packet_bytes,
             regime_result=regime,
