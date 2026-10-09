@@ -180,3 +180,24 @@ measurement retained only unchanged source whose selected cases passed.
 The executable stdio bootstrap, R10 plugin/skills/workflow and R11 remain
 subsequent features. PR state, exact-head CI and merge are independently verified
 at publication time; this document does not predeclare those remote results.
+
+## Executable stdio bootstrap (base: merged PR #68, `92fe327`)
+
+### Subtask 1: Lazy trusted composition
+
+- RED: bootstrap test collection failed because the executable composition module
+  did not exist. Tests covered deferred construction, validation before dispatch,
+  failure recovery, complete market-data forwarding, frozen policy/run deadline
+  isolation, and production retry sleep before implementation.
+- Additional RED: three stored/watchlist operations failed on eager calendar
+  construction and the lazy-calendar forwarding test failed on its missing type.
+  After deferring calendar construction, the isolated expired-client test failed
+  because the adapter deadline exception was not an application TimeoutError.
+- GREEN: 36 bootstrap/MCP/application-facade tests passed. Calendar and settings
+  factories cache successful construction only; actual run providers are distinct
+  and receive their frozen source policy and exact trusted deadline. Constructor
+  expiry maps to a closed application timeout with suppressed exception context.
+- Scoped Ruff and mypy checks passed; final diff check passed. HTTP sessions,
+  streams and transports retain their existing request-local cleanup ownership.
+- Real stdio subprocess, preparation integration, packaging, whole-feature review,
+  full-suite coverage and repository checks remain pending at this subtask.
