@@ -70,6 +70,37 @@ below.
 No production LLM provider or domain-tool adapter exists yet.
 The current development package version is `0.5.0.dev0`.
 
+## Product A stdio server
+
+Launch the installed local server from an MCP host with command
+`ai-market-research-mcp` and an empty argument list. For a source checkout, run:
+
+```bash
+PYTHONPATH=src python -m finance_research_agent.adapters.mcp_bootstrap
+```
+
+The server exposes the eleven typed Product A operations over stdin/stdout and
+opens no listening socket. Initialization and tool listing need no credentials,
+configuration files, Keychain access, provider requests or storage writes.
+Stdout is reserved for MCP protocol messages; startup failures use a closed error
+code on stderr.
+
+Set `AI_MARKET_RESEARCH_DATA_DIR` in the server process environment to locate
+local configuration and artifacts; the default is `data` relative to its working
+directory. This locator does not read `.env`. Place the validated five policy
+files under the chosen data directory's `config` folder. The example policies
+are offline fixtures, and their `example.test` allowlist does not permit Alpaca
+requests. Real requests require an operator-configured source policy allowing
+the existing Alpaca adapter and its market-data/instrument-reference hosts.
+
+Credentials are resolved only when provider readiness or collection needs them,
+using the existing environment, macOS Keychain and owner-only `.env` sources.
+Preparation constructs the real Alpaca provider from the run's frozen source
+policy and trusted deadline. Frozen packet, quality-checkpoint and published-run
+resumes preserve their stored evidence without current provider construction.
+The current source scope remains Alpaca market data and the local market calendar;
+missing event verification blocks actionable plans. Human review gates remain.
+
 ## v0.5 architecture: model, tools, and runtime (Slices 1–3B)
 
 `AgentRuntime` is a bounded generic orchestration shell. It does not own Product

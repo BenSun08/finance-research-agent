@@ -218,3 +218,34 @@ at publication time; this document does not predeclare those remote results.
   websockets deprecation warning. Scoped Ruff/mypy and diff checks passed.
 - This narrow correction was explicitly authorized after the integration probe;
   it adds no provider or financial capability.
+
+### Subtask 3: Executable entrypoint and complete offline handoff
+
+- RED: console metadata lacked the authoritative ai-market-research-mcp entry.
+  Added that entry using the current finance_research_agent package namespace;
+  the existing diagnostic CLI remains separate. README documents launch, the
+  environment-only data locator, deferred credential access and current scope.
+- GREEN: 173 focused bootstrap/MCP/facade/preparation/deadline/settings/schema/CLI
+  tests passed. The selection includes real subprocess initialize/list against
+  a malformed owner-readable .env secret canary, with empty captured output and
+  no data directory or file-content changes.
+- Actual Alpaca adapter composition over offline HTTP produces the frozen packet
+  with injected component versions and real regime results. Missing credentials
+  and transport failures self-publish closed operational outcomes. Packet,
+  quality-checkpoint and published resumes work after removing current config
+  and forbidding settings, client and version factories.
+- Success closes all three request streams/transports; network failures close
+  their request clients; a body reaching the run cap closes its stream/transport
+  and publishes DEADLINE_EXCEEDED without another network request. Real provider
+  readiness/status remains read-only and sends no requests.
+- Offline wheel build passed using the bundled Python 3.12/setuptools runtime.
+  A temporary --no-deps/--no-index installation supplied the generated console
+  script, verified from an unrelated directory with only its installed site on
+  PYTHONPATH. Package imports had no source fallback; the packaged canonical
+  prompt digest matched root prompt bytes; installed initialize/list returned
+  exactly eleven tools despite malformed .env and made no storage changes.
+  Temporary build/install artifacts were cleaned without changing the active
+  environment or installing dependencies.
+- Scoped Ruff, mypy (two changed source files), schema drift and diff checks
+  passed. Independent whole-feature review, full repository checks and coverage
+  remain the coordinator's next gate. No push, PR or CI result is claimed here.

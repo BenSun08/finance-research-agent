@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 finance-research-agent = "finance_research_agent.adapters.cli:main"
+ai-market-research-mcp = "finance_research_agent.adapters.mcp_bootstrap:main"
 
 [project.optional-dependencies]
 dev = [
