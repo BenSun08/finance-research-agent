@@ -357,9 +357,12 @@ scenarios:
   - kind: CANDIDATE_RANKING
     fixture_id: S03_NEUTRAL_THRESHOLD
     expected_fields:
+      ranked_symbols:
+      - AAA
+      selected_for_plan:
+      - false
       selection_reasons:
-      - SCORE_BELOW_THRESHOLD
-      selected_for_plan: false
+      - - SCORE_BELOW_THRESHOLD
 - id: S04
   title: Defensive technically strong candidate
   fixture_set: S04_DEFENSIVE_REGIME
@@ -2523,8 +2526,18 @@ scenarios:
   - kind: CANDIDATE_RANKING
     fixture_id: S20_CORRELATED_CANDIDATES
     expected_fields:
-      selected_for_plan: true
-      secondary_alternative: false
+      ranked_symbols:
+      - AAA
+      - BBB
+      selected_for_plan:
+      - true
+      - false
+      secondary_alternative:
+      - false
+      - true
+      primary_symbols:
+      - null
+      - AAA
 - id: S21
   title: One daily bar touches entry and invalidation
   fixture_set: S21_AMBIGUOUS_DAILY_BAR

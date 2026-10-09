@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from inspect import signature
 
 import pytest
@@ -20,11 +21,15 @@ from finance_research_agent.domain.enums import InvocationType, PlanStatus
 from finance_research_agent.domain.events import EventEvidenceProjection
 from finance_research_agent.domain.models import EventRecord, InstrumentIdentity, SourceHealth
 from finance_research_agent.domain.regime import RegimePolicy
+from finance_research_agent.domain.scoring import CorrelationEvidence
 from finance_research_agent.evaluation.domain_assertions import (
+    CandidateRankingFixture,
     CandidateScoreFixture,
     DomainFixtureBank,
     EventRiskFixture,
     InstrumentEligibilityFixture,
+    PlanExpiryFixture,
+    PositionSizingFixture,
     RegimeCalculationFixture,
     RunWindowFixture,
     SetupDetectionFixture,
@@ -33,7 +38,9 @@ from finance_research_agent.evaluation.domain_assertions import (
 from finance_research_agent.evaluation.models import DomainAssertion
 from tests.support.synthetic_market import CUTOFF, make_regime_case
 from tests.unit import test_eligibility as eligibility_fixtures
+from tests.unit import test_scoring as scoring_fixtures
 from tests.unit import test_setups as setup_fixtures
+from tests.unit import test_trade_plan as trade_plan_fixtures
 
 
 def test_domain_assertion_calls_real_regime_function_and_compares_typed_output() -> None:
@@ -288,6 +295,209 @@ def test_candidate_score_assertion_calls_real_score_calculation() -> None:
 
     assert outcome.status == "PASS"
     assert outcome.matched_fields == ("setup_type", "total_score", "plan_status")
+
+
+def test_candidate_ranking_assertion_compares_exact_order_and_selection() -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "CANDIDATE_RANKING",
+                "fixture_id": "S03_NEUTRAL_THRESHOLD",
+                "expected_fields": {
+                    "ranked_symbols": ["AAA"],
+                    "selected_for_plan": [False],
+                    "selection_reasons": [["SCORE_BELOW_THRESHOLD"]],
+                },
+            }
+        )
+    )
+    candidate = scoring_fixtures._candidate(quality="0.7999")
+    policy = RegimePolicy()
+    bank = DomainFixtureBank(
+        {
+            assertion.fixture_id: CandidateRankingFixture(
+                candidates=(candidate,),
+                regime=scoring_fixtures._regime(
+                    scoring_fixtures.Regime.NEUTRAL
+                ),
+                regime_policy=policy,
+                correlations=(),
+            )
+        }
+    )
+
+    outcome = execute_domain_assertion(assertion, bank)
+
+    assert outcome.status == "PASS"
+    assert outcome.matched_fields == (
+        "ranked_symbols",
+        "selection_reasons",
+        "selected_for_plan",
+    )
+
+
+def test_candidate_ranking_assertion_calls_real_correlation_selection() -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "CANDIDATE_RANKING",
+                "fixture_id": "S20_CORRELATED_CANDIDATES",
+                "expected_fields": {
+                    "ranked_symbols": ["AAA", "BBB"],
+                    "selected_for_plan": [True, False],
+                    "secondary_alternative": [False, True],
+                    "primary_symbols": [None, "AAA"],
+                },
+            }
+        )
+    )
+    first = scoring_fixtures._candidate("BBB")
+    second = scoring_fixtures._candidate("AAA")
+    bank = DomainFixtureBank(
+        {
+            assertion.fixture_id: CandidateRankingFixture(
+                candidates=(first, second),
+                regime=scoring_fixtures._regime(),
+                regime_policy=RegimePolicy(),
+                correlations=(
+                    CorrelationEvidence(
+                        left_symbol="AAA",
+                        right_symbol="BBB",
+                        coefficient=Decimal("0.95"),
+                        evidence_ids=("ev-correlation",),
+                        observed_at=CUTOFF,
+                        method_version="fixture-1",
+                        exposure_description="Shared technology factor exposure",
+                    ),
+                ),
+            )
+        }
+    )
+
+    outcome = execute_domain_assertion(assertion, bank)
+
+    assert outcome.status == "PASS"
+    assert outcome.matched_fields == (
+        "ranked_symbols",
+        "selected_for_plan",
+        "secondary_alternative",
+        "primary_symbols",
+    )
+
+
+def test_plan_expiry_assertion_calls_real_expiry_rules() -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "PLAN_EXPIRY",
+                "fixture_id": "S08_MATERIAL_REVISION",
+                "expected_fields": {
+                    "plan_status": "EXPIRED",
+                    "expiry_reasons": ["NEW_MATERIAL_INFORMATION"],
+                },
+            }
+        )
+    )
+    plan_inputs = trade_plan_fixtures.inputs.__wrapped__()
+    plan = plans.build_trade_plan(**plan_inputs)
+    bank = DomainFixtureBank(
+        {
+            assertion.fixture_id: PlanExpiryFixture(
+                plan=plan,
+                now_utc=plan.generated_at + timedelta(minutes=5),
+                current_price=None,
+                entry_trigger_satisfied=False,
+                invalidation_observed=False,
+                new_material_information=True,
+                earnings_blackout=False,
+                incompatible_regime=False,
+                stale_or_conflicting_data=False,
+                eligibility_changed=False,
+            )
+        }
+    )
+
+    outcome = execute_domain_assertion(assertion, bank)
+
+    assert outcome.status == "PASS"
+    assert outcome.matched_fields == ("plan_status", "expiry_reasons")
+
+
+@pytest.mark.parametrize(
+    ("fixture_id", "expected", "mutate"),
+    [
+        (
+            "S10_STALE_PREMARKET_QUOTE",
+            {"status": "SIZING_UNAVAILABLE"},
+            "stale_price",
+        ),
+        (
+            "S17_INVALID_STOP",
+            {
+                "status": "SIZING_UNAVAILABLE",
+                "unavailable_reasons": ["STOP_NOT_BELOW_ENTRY"],
+            },
+            "invalid_stop",
+        ),
+        (
+            "S18_MISSING_CAPITAL",
+            {
+                "status": "SIZING_UNAVAILABLE",
+                "unavailable_reasons": ["PLANNING_CAPITAL_MISSING"],
+            },
+            "missing_capital",
+        ),
+    ],
+)
+def test_position_sizing_assertion_calls_real_calculation(
+    fixture_id: str, expected: dict[str, object], mutate: str
+) -> None:
+    assertion = TypeAdapter(DomainAssertion).validate_json(
+        json.dumps(
+            {
+                "kind": "POSITION_SIZING",
+                "fixture_id": fixture_id,
+                "expected_fields": expected,
+            }
+        )
+    )
+    plan_inputs = trade_plan_fixtures.inputs.__wrapped__()
+    plan = plans.build_trade_plan(**plan_inputs)
+    now_utc = plan.generated_at + timedelta(minutes=5)
+    current_price = plan_inputs["current_price"]
+    risk_policy = plan_inputs["risk_policy"]
+    if mutate == "stale_price":
+        now_utc += timedelta(hours=3)
+    elif mutate == "invalid_stop":
+        plan = plan.model_copy(
+            update={
+                "candidate_stop": plan.candidate_stop.model_copy(
+                    update={"value": plan.entry_zone.upper.value}
+                )
+            }
+        )
+    elif mutate == "missing_capital":
+        risk_policy = risk_policy.model_copy(update={"planning_capital_usd": None})
+    bank = DomainFixtureBank(
+        {
+            assertion.fixture_id: PositionSizingFixture(
+                plan=plan,
+                risk_policy=risk_policy,
+                regime=scoring_fixtures._regime().regime,
+                current_price=current_price,
+                now_utc=now_utc,
+            )
+        }
+    )
+
+    outcome = execute_domain_assertion(assertion, bank)
+
+    assert outcome.status == "PASS"
+    assert outcome.matched_fields == tuple(
+        field
+        for field in ("status", "unavailable_reasons")
+        if field in expected
+    )
 
 
 def test_closed_domain_function_signatures_remain_pinned() -> None:

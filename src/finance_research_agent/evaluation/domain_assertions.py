@@ -22,21 +22,37 @@ from finance_research_agent.domain.models import (
     GateResult,
     InstrumentIdentity,
     MarketSnapshot,
+    PriceObservation,
     SourceHealth,
 )
-from finance_research_agent.domain.policies import SetupPolicy, WatchlistItem
+from finance_research_agent.domain.plans import TradePlanDraft, expire_plan
+from finance_research_agent.domain.policies import RiskPolicy, SetupPolicy, WatchlistItem
 from finance_research_agent.domain.quality import DataQualityResult
-from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
-from finance_research_agent.domain.scoring import score_candidate
+from finance_research_agent.domain.regime import (
+    Regime,
+    RegimePolicy,
+    RegimeResult,
+    calculate_regime,
+)
+from finance_research_agent.domain.scoring import (
+    CorrelationEvidence,
+    SetupCandidate,
+    rank_candidates,
+    score_candidate,
+)
 from finance_research_agent.domain.setups import RawSetup, detect_setups
+from finance_research_agent.domain.sizing import calculate_position_sizing
 from finance_research_agent.domain.types import UtcDatetime
 from finance_research_agent.evaluation.models import (
+    CandidateRankingAssertion,
     CandidateScoreAssertion,
     DomainAssertion,
     DomainAssertionOutcome,
     EventRiskAssertion,
     FixtureSetId,
     InstrumentEligibilityAssertion,
+    PlanExpiryAssertion,
+    PositionSizingAssertion,
     RegimeCalculationAssertion,
     RunWindowAssertion,
     SetupDetectionAssertion,
@@ -114,6 +130,43 @@ class CandidateScoreFixture:
     event_assessment: EventAssessment
     data_quality: DataQualityResult
     regime_policy_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateRankingFixture:
+    """Complete deterministic inputs for candidate ordering and selection."""
+
+    candidates: tuple[SetupCandidate, ...]
+    regime: RegimeResult
+    regime_policy: RegimePolicy
+    correlations: tuple[CorrelationEvidence, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PlanExpiryFixture:
+    """Complete explicit inputs for one plan-expiry decision."""
+
+    plan: TradePlanDraft
+    now_utc: UtcDatetime
+    current_price: PriceObservation | None
+    entry_trigger_satisfied: bool
+    invalidation_observed: bool
+    new_material_information: bool
+    earnings_blackout: bool
+    incompatible_regime: bool
+    stale_or_conflicting_data: bool
+    eligibility_changed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PositionSizingFixture:
+    """Complete inputs for the deterministic, non-executing sizing calculation."""
+
+    plan: TradePlanDraft
+    risk_policy: RiskPolicy
+    regime: Regime
+    current_price: PriceObservation | None
+    now_utc: UtcDatetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +309,74 @@ def execute_domain_assertion(
                 "setup_type": candidate.setup_type,
                 "total_score": candidate.total_score,
                 "plan_status": candidate.plan_status,
+            },
+        )
+    if isinstance(assertion, CandidateRankingAssertion):
+        fixture = fixtures.get(assertion.fixture_id)
+        if type(fixture) is not CandidateRankingFixture:
+            raise TypeError("CANDIDATE_RANKING requires CandidateRankingFixture")
+        ranked = rank_candidates(
+            fixture.candidates,
+            fixture.regime,
+            fixture.regime_policy,
+            correlations=fixture.correlations,
+        )
+        return _compare(
+            assertion,
+            {
+                "ranked_symbols": tuple(candidate.symbol for candidate in ranked),
+                "selection_reasons": tuple(
+                    candidate.selection_reasons for candidate in ranked
+                ),
+                "selected_for_plan": tuple(
+                    candidate.selected_for_plan for candidate in ranked
+                ),
+                "secondary_alternative": tuple(
+                    candidate.secondary_alternative for candidate in ranked
+                ),
+                "primary_symbols": tuple(candidate.primary_symbol for candidate in ranked),
+            },
+        )
+    if isinstance(assertion, PlanExpiryAssertion):
+        fixture = fixtures.get(assertion.fixture_id)
+        if type(fixture) is not PlanExpiryFixture:
+            raise TypeError("PLAN_EXPIRY requires PlanExpiryFixture")
+        expired = expire_plan(
+            fixture.plan,
+            now_utc=fixture.now_utc,
+            current_price=fixture.current_price,
+            entry_trigger_satisfied=fixture.entry_trigger_satisfied,
+            invalidation_observed=fixture.invalidation_observed,
+            new_material_information=fixture.new_material_information,
+            earnings_blackout=fixture.earnings_blackout,
+            incompatible_regime=fixture.incompatible_regime,
+            stale_or_conflicting_data=fixture.stale_or_conflicting_data,
+            eligibility_changed=fixture.eligibility_changed,
+        )
+        return _compare(
+            assertion,
+            {
+                "plan_status": expired.plan_status,
+                "expiry_reasons": expired.expiry_reasons,
+            },
+        )
+    if isinstance(assertion, PositionSizingAssertion):
+        fixture = fixtures.get(assertion.fixture_id)
+        if type(fixture) is not PositionSizingFixture:
+            raise TypeError("POSITION_SIZING requires PositionSizingFixture")
+        sizing = calculate_position_sizing(
+            fixture.plan,
+            fixture.risk_policy,
+            fixture.regime,
+            fixture.current_price,
+            fixture.now_utc,
+        )
+        return _compare(
+            assertion,
+            {
+                "status": sizing.status,
+                "unavailable_reasons": sizing.unavailable_reasons,
+                "suggested_units": sizing.suggested_units,
             },
         )
     raise NotImplementedError(

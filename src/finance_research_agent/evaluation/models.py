@@ -25,6 +25,7 @@ from finance_research_agent.domain.models import (
     Identifier,
     Sha256,
     StrictModel,
+    Symbol,
 )
 from finance_research_agent.domain.regime import Regime
 from finance_research_agent.domain.setups import SetupType
@@ -172,9 +173,11 @@ class CandidateScoreExpected(_ExpectedProjection):
 
 
 class CandidateRankingExpected(_ExpectedProjection):
-    selection_reasons: tuple[Identifier, ...] | None = None
-    selected_for_plan: bool | None = None
-    secondary_alternative: bool | None = None
+    ranked_symbols: tuple[Symbol, ...] | None = None
+    selection_reasons: tuple[tuple[Identifier, ...], ...] | None = None
+    selected_for_plan: tuple[bool, ...] | None = None
+    secondary_alternative: tuple[bool, ...] | None = None
+    primary_symbols: tuple[Symbol | None, ...] | None = None
 
 
 class EventRiskExpected(_ExpectedProjection):

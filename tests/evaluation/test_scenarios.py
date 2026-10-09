@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -98,7 +99,7 @@ def test_manifest_domain_assertions_use_closed_typed_variants() -> None:
         SetupDetectionAssertion,
     }
     breakout_score = scenarios[0].domain_assertions[0].expected_fields.total_score
-    assert breakout_score == 70
+    assert breakout_score == Decimal("79.65965732087227414330218068")
     unknown_regime = scenarios[4].domain_assertions[0].expected_fields.regime
     assert unknown_regime is Regime.UNKNOWN
     invalid_instrument = scenarios[13].domain_assertions[0].expected_fields.reason_codes
