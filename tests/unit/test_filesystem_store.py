@@ -1,4 +1,5 @@
 import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
@@ -478,11 +479,7 @@ def test_staged_artifact_rejects_symlinked_run_staging_directory(
     repository.publish_atomically(_bundle(published_context))
     repository.create(staging_context)
     _, published, _ = repository._paths(published_context.run_id)
-    staging_link = (
-        tmp_path
-        / "runs/2026/2026-08-19/.staging"
-        / staging_context.run_id
-    )
+    staging_link = tmp_path / "runs/2026/2026-08-19/.staging" / staging_context.run_id
     (staging_link / "run.json").unlink()
     staging_link.rmdir()
     staging_link.symlink_to(published, target_is_directory=True)
@@ -969,12 +966,12 @@ def test_publication_hashes_and_visibility_are_atomic(tmp_path: Path) -> None:
     final = tmp_path / "runs/2026/2026-08-19/premarket-2026-08-19-r1"
 
     assert artifact.run_id == context.run_id
-    assert artifact.markdown_sha256 == hashlib.sha256(
-        (final / "report.md").read_bytes()
-    ).hexdigest()
-    assert artifact.bundle_sha256 == hashlib.sha256(
-        (final / "bundle.json").read_bytes()
-    ).hexdigest()
+    assert (
+        artifact.markdown_sha256 == hashlib.sha256((final / "report.md").read_bytes()).hexdigest()
+    )
+    assert (
+        artifact.bundle_sha256 == hashlib.sha256((final / "bundle.json").read_bytes()).hexdigest()
+    )
     assert repository.get_latest(context.market_date) == context.run_id
     assert repository.get_report(context.run_id) == "# Synthetic report\n"
     assert final.is_dir()
@@ -1059,6 +1056,421 @@ def test_latest_remains_highest_published_revision_when_publication_order_differ
     repository.publish_atomically(_bundle(first, "# r1\n"))
 
     assert repository.get_latest(first.market_date) == second.run_id
+
+
+def _publish_prior_research(
+    repository: FileSystemRunRepository,
+    market_date: date,
+    revision: int = 1,
+    *,
+    research: bool = True,
+) -> str:
+    context = _context(revision).model_copy(
+        update={
+            "run_id": f"premarket-{market_date.isoformat()}-r{revision}",
+            "market_date": market_date,
+            "execution_status": ExecutionStatus.PUBLISHED,
+            "data_quality_status": DataQualityStatus.PASS if research else DataQualityStatus.FAIL,
+        }
+    )
+    repository.create(context)
+    bundle = _bundle(context).model_copy(
+        update={
+            "bundle": FrozenMap({"research_packet": {"synthetic": True}})
+            if research
+            else FrozenMap({"brief_origin": "OPERATIONAL", "failure_code": "INTERNAL_ERROR"}),
+        }
+    )
+    repository.publish_atomically(bundle)
+    return context.run_id
+
+
+def test_previous_research_chooses_latest_indexed_revision_strictly_before_date(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    _publish_prior_research(repository, date(2025, 12, 31))
+    latest = _publish_prior_research(repository, date(2026, 8, 19), 2)
+    _publish_prior_research(repository, date(2026, 8, 19), 1)
+    _publish_prior_research(repository, date(2026, 8, 20))
+    _publish_prior_research(repository, date(2026, 8, 21))
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    assert repository.get_previous_research_run(date(2026, 8, 20)) == latest
+    assert repository.get_previous_research_run(date(2025, 12, 31)) is None
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+def test_previous_research_skips_operational_latest_revision_without_older_revision_fallback(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    earlier = _publish_prior_research(repository, date(2026, 8, 18))
+    _publish_prior_research(repository, date(2026, 8, 19), 1)
+    _publish_prior_research(repository, date(2026, 8, 19), 2, research=False)
+
+    assert repository.get_previous_research_run(date(2026, 8, 20)) == earlier
+
+
+def test_previous_research_missing_storage_is_read_only(tmp_path: Path) -> None:
+    root = tmp_path / "absent"
+    repository = FileSystemRunRepository(root, create_layout=False)
+
+    assert repository.get_previous_research_run(date(2026, 8, 20)) is None
+    assert not root.exists()
+
+
+def _publish_operational_with_telemetry(repository: FileSystemRunRepository) -> str:
+    from finance_research_agent.application.publication_service import publish_operational_report
+    from finance_research_agent.domain.errors import ErrorCode
+
+    context = _context().model_copy(update={
+        "evidence_cutoff_at": None, "data_quality_status": DataQualityStatus.FAIL,
+    })
+    repository.create(context)
+    repository.checkpoint(context.run_id, RunCheckpoint(
+        run_id=context.run_id, stage="CONFIG_FROZEN",
+        execution_status=context.execution_status, data_quality_status=DataQualityStatus.FAIL,
+        delivery_status=context.delivery_status, written_at=NOW, evidence_cutoff_at=None,
+        artifact_hashes=FrozenMap({}), resumable=True,
+    ))
+    publish_operational_report(repository, context, ErrorCode.INTERNAL_ERROR, NOW)
+    return context.run_id
+
+
+def test_previous_research_accepts_checkpoint_bound_operational_telemetry(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    earlier = _publish_prior_research(repository, date(2026, 8, 18))
+    _publish_operational_with_telemetry(repository)
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+
+    assert repository.get_previous_research_run(date(2026, 8, 20)) == earlier
+    assert {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()} == before
+
+
+@pytest.mark.parametrize("corruption", ["missing_run", "wrong_identity", "wrong_version"])
+def test_previous_research_rejects_corrupt_legacy_operational_stored_identity(
+    tmp_path: Path, corruption: str,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    _publish_prior_research(repository, date(2026, 8, 18))
+    run_id = _publish_prior_research(repository, date(2026, 8, 19), research=False)
+    path = tmp_path / "runs/2026/2026-08-19" / run_id / "run.json"
+    if corruption == "missing_run":
+        path.unlink()
+    else:
+        context = json.loads(path.read_bytes())
+        if corruption == "wrong_identity":
+            context.update(run_id="premarket-2026-08-19-r2", revision=2)
+        else:
+            context["skill_version"] = "changed"
+        path.write_text(json.dumps(context), encoding="utf-8")
+
+    with pytest.raises(PublicationError):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+@pytest.mark.parametrize("corruption", ["corrupt", "missing", "symlink_inside", "symlink_outside"])
+def test_previous_research_verifies_final_operational_telemetry_artifact_bytes(
+    tmp_path: Path, corruption: str,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path / "data")
+    _publish_prior_research(repository, date(2026, 8, 18))
+    run_id = _publish_operational_with_telemetry(repository)
+    final = tmp_path / "data/runs/2026/2026-08-19" / run_id
+    artifact = next((final / "artifacts").glob("performance_telemetry_*.bin"))
+    if corruption == "corrupt":
+        artifact.write_bytes(b"corrupt")
+    elif corruption == "missing":
+        artifact.unlink()
+    else:
+        alias = (tmp_path / "data" if corruption == "symlink_inside" else tmp_path) / "alias"
+        alias.write_bytes(artifact.read_bytes())
+        artifact.unlink()
+        artifact.symlink_to(alias)
+
+    with pytest.raises((PublicationError, PathNotAllowedError)):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+@pytest.mark.parametrize("corruption", [
+    "missing_value", "missing_digest", "missing_pair", "null_pair", "malformed_value",
+    "wrong_digest", "noncanonical_value", "missing_checkpoint", "wrong_checkpoint_hash",
+    "wrong_checkpoint_name", "wrong_checkpoint_identity", "wrong_checkpoint_stage",
+    "wrong_run_identity", "missing_all_checkpoints",
+])
+def test_previous_research_rejects_invalid_operational_telemetry_binding(
+    tmp_path: Path, corruption: str,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    _publish_prior_research(repository, date(2026, 8, 18))
+    run_id = _publish_operational_with_telemetry(repository)
+    final = tmp_path / "runs/2026/2026-08-19" / run_id
+    bundle_path = final / "bundle.json"
+    payload = json.loads(bundle_path.read_bytes())
+    contents = payload["bundle"]
+    if corruption == "missing_value":
+        del contents["performance_telemetry"]
+    elif corruption == "missing_digest":
+        del contents["performance_telemetry_sha256"]
+    elif corruption == "missing_pair":
+        del contents["performance_telemetry"]
+        del contents["performance_telemetry_sha256"]
+    elif corruption == "null_pair":
+        contents.update(performance_telemetry=None, performance_telemetry_sha256=None)
+    elif corruption == "malformed_value":
+        contents["performance_telemetry"] = "private-secret"
+    elif corruption == "wrong_digest":
+        contents["performance_telemetry_sha256"] = "a" * 64
+    elif corruption == "noncanonical_value":
+        del contents["performance_telemetry"]["schema_version"]
+    elif corruption == "wrong_run_identity":
+        path = final / "run.json"
+        context = json.loads(path.read_bytes())
+        context.update(run_id="premarket-2026-08-19-r2", revision=2)
+        path.write_text(json.dumps(context), encoding="utf-8")
+    elif corruption == "missing_all_checkpoints":
+        for path in (final / "checkpoints").glob("*.json"):
+            path.unlink()
+        (final / "run.json").write_text(json.dumps(payload["run"]), encoding="utf-8")
+    else:
+        checkpoint_path = sorted((final / "checkpoints").glob("*.json"))[-1]
+        checkpoint = json.loads(checkpoint_path.read_bytes())
+        name = next(key for key in checkpoint["artifact_hashes"]
+                    if key.startswith("performance_telemetry_"))
+        if corruption == "missing_checkpoint":
+            checkpoint_path.unlink()
+        else:
+            if corruption == "wrong_checkpoint_hash":
+                checkpoint["artifact_hashes"][name] = "a" * 64
+            elif corruption == "wrong_checkpoint_name":
+                digest = checkpoint["artifact_hashes"].pop(name)
+                checkpoint["artifact_hashes"]["performance_telemetry_" + "a" * 64] = digest
+            elif corruption == "wrong_checkpoint_identity":
+                checkpoint["run_id"] = "premarket-2026-08-19-r2"
+            else:
+                checkpoint["stage"] = "CONFIG_FROZEN"
+            checkpoint_path.write_text(json.dumps(checkpoint), encoding="utf-8")
+    bundle_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                           encoding="utf-8")
+    index_path = tmp_path / "reports/2026/2026-08-19/index.json"
+    index = json.loads(index_path.read_bytes())
+    index[run_id]["bundle_sha256"] = hashlib.sha256(bundle_path.read_bytes()).hexdigest()
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+
+    with pytest.raises(PublicationError):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+@pytest.mark.parametrize(
+    "contents,quality",
+    [
+        ({"operational_reason": "INTERNAL_ERROR"}, DataQualityStatus.FAIL),
+        ({"brief_origin": "OTHER", "failure_code": "INTERNAL_ERROR"}, DataQualityStatus.FAIL),
+        ({"brief_origin": "OPERATIONAL", "failure_code": "UNKNOWN"}, DataQualityStatus.FAIL),
+        ({"brief_origin": "OPERATIONAL", "failure_code": "INTERNAL_ERROR"}, DataQualityStatus.PASS),
+    ],
+)
+def test_previous_research_rejects_unrecognized_packetless_publication(tmp_path, contents, quality):
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context().model_copy(
+        update={
+            "execution_status": ExecutionStatus.PUBLISHED,
+            "data_quality_status": quality,
+        }
+    )
+    repository.create(context)
+    repository.publish_atomically(
+        _bundle(context).model_copy(update={"bundle": FrozenMap(contents)})
+    )
+    with pytest.raises(PublicationError):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+@pytest.mark.parametrize("filename", ["report.md", "bundle.json"])
+def test_previous_research_corrupt_latest_publication_does_not_fall_back(
+    tmp_path: Path,
+    filename: str,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    _publish_prior_research(repository, date(2026, 8, 18))
+    latest = _publish_prior_research(repository, date(2026, 8, 19))
+    target = tmp_path / "runs/2026/2026-08-19" / latest / filename
+    target.write_bytes(b"corrupt")
+
+    with pytest.raises(PublicationError):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"corrupt",
+        b"[]",
+        b"{}",
+        b'{"../escape":{}}',
+        b'{"premarket-2026-08-18-r1":{}}',
+    ],
+)
+def test_previous_research_rejects_corrupt_publication_index(
+    tmp_path: Path,
+    payload: bytes,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    _publish_prior_research(repository, date(2026, 8, 19))
+    (tmp_path / "reports/2026/2026-08-19/index.json").write_bytes(payload)
+
+    with pytest.raises((PublicationError, PathNotAllowedError)):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "reports",
+        "reports/2026",
+        "reports/2026/2026-08-19",
+        "reports/2026/2026-08-19/index.json",
+        "runs",
+        "runs/2026",
+        "runs/2026/2026-08-19",
+        "runs/2026/2026-08-19/premarket-2026-08-19-r1",
+        "runs/2026/2026-08-19/premarket-2026-08-19-r1/bundle.json",
+        "runs/2026/2026-08-19/premarket-2026-08-19-r1/report.md",
+    ],
+)
+def test_previous_research_rejects_symlink_aliases_even_within_root(
+    tmp_path: Path,
+    relative: str,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    _publish_prior_research(repository, date(2026, 8, 19))
+    target = tmp_path / relative
+    alias = tmp_path / "alias"
+    target.rename(alias)
+    target.symlink_to(alias, target_is_directory=alias.is_dir())
+
+    with pytest.raises(PathNotAllowedError):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+def test_previous_research_rejects_indexed_bundle_identity_mismatch(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    latest = _publish_prior_research(repository, date(2026, 8, 19))
+    target = tmp_path / "runs/2026/2026-08-19" / latest / "bundle.json"
+    payload = json.loads(target.read_bytes())
+    payload["run"]["run_id"] = "premarket-2026-08-19-r2"
+    payload["run"]["revision"] = 2
+    target.write_text(json.dumps(payload), encoding="utf-8")
+    index = tmp_path / "reports/2026/2026-08-19/index.json"
+    index_payload = json.loads(index.read_bytes())
+    index_payload[latest]["bundle_sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    index.write_text(json.dumps(index_payload), encoding="utf-8")
+
+    with pytest.raises(PublicationError):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+@pytest.mark.parametrize("change", ["status", "embedded_report", "embedded_hash"])
+def test_previous_research_verifies_published_state_and_embedded_report(
+    tmp_path: Path,
+    change: str,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    latest = _publish_prior_research(repository, date(2026, 8, 19))
+    target = tmp_path / "runs/2026/2026-08-19" / latest / "bundle.json"
+    payload = json.loads(target.read_bytes())
+    if change == "status":
+        payload["run"]["execution_status"] = "CREATED"
+    elif change == "embedded_report":
+        payload["report_markdown"] = "# Other report\n"
+    else:
+        payload["markdown_sha256"] = "f" * 64
+    target.write_text(json.dumps(payload), encoding="utf-8")
+    index = tmp_path / "reports/2026/2026-08-19/index.json"
+    index_payload = json.loads(index.read_bytes())
+    index_payload[latest]["bundle_sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    index.write_text(json.dumps(index_payload), encoding="utf-8")
+
+    with pytest.raises(PublicationError):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+def test_previous_research_returns_reduced_packet_for_caller_plan_status_checks(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    context = _context().model_copy(update={"execution_status": ExecutionStatus.PUBLISHED})
+    repository.create(context)
+    bundle = _bundle(context).model_copy(
+        update={
+            "bundle": FrozenMap(
+                {
+                    "research_packet": {"synthetic": True},
+                    "reduced_reason": "INTERNAL_ERROR",
+                }
+            )
+        }
+    )
+    repository.publish_atomically(bundle)
+
+    assert repository.get_previous_research_run(date(2026, 8, 20)) == context.run_id
+
+
+def test_previous_research_ignores_unindexed_final_directory(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    earlier = _publish_prior_research(repository, date(2026, 8, 18))
+    _publish_prior_research(repository, date(2026, 8, 19))
+    (tmp_path / "reports/2026/2026-08-19/index.json").unlink()
+
+    assert repository.get_previous_research_run(date(2026, 8, 20)) == earlier
+
+
+def test_previous_research_missing_latest_indexed_bundle_does_not_fall_back(
+    tmp_path: Path,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    _publish_prior_research(repository, date(2026, 8, 19), 1)
+    latest = _publish_prior_research(repository, date(2026, 8, 19), 2)
+    (tmp_path / "runs/2026/2026-08-19" / latest / "bundle.json").unlink()
+
+    with pytest.raises(PublicationError):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+@pytest.mark.parametrize("relative", ["reports", "reports/2026", "reports/2026/2026-08-19"])
+def test_previous_research_rejects_file_in_publication_directory_position(
+    tmp_path: Path,
+    relative: str,
+) -> None:
+    repository = FileSystemRunRepository(tmp_path, create_layout=False)
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("invalid directory", encoding="utf-8")
+
+    with pytest.raises(PublicationError):
+        repository.get_previous_research_run(date(2026, 8, 20))
+
+
+def test_previous_research_ignores_unrelated_names_and_noncanonical_dates(tmp_path: Path) -> None:
+    repository = FileSystemRunRepository(tmp_path)
+    for relative in (
+        "reports/.temporary",
+        "reports/2026/.temporary",
+        "reports/2026/20260819",
+        "reports/2026/2025-08-19",
+    ):
+        (tmp_path / relative).mkdir(parents=True)
+
+    assert repository.get_previous_research_run(date(2026, 8, 20)) is None
+
+
+@pytest.mark.parametrize("value", [NOW, "2026-08-20", None])
+def test_previous_research_rejects_non_date_inputs(tmp_path: Path, value: object) -> None:
+    repository = FileSystemRunRepository(tmp_path, create_layout=False)
+
+    with pytest.raises(ValueError, match="must be a date"):
+        repository.get_previous_research_run(value)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -1190,9 +1602,14 @@ def test_publication_index_read_rejects_symlink_escape(
 
 def test_storage_layout_has_only_the_allowlisted_top_level_directories(tmp_path: Path) -> None:
     FileSystemRunRepository(tmp_path)
-    assert {
-        path.name for path in tmp_path.iterdir()
-    } == {"config", "runs", "reports", "cache", "diagnostics", "logs"}
+    assert {path.name for path in tmp_path.iterdir()} == {
+        "config",
+        "runs",
+        "reports",
+        "cache",
+        "diagnostics",
+        "logs",
+    }
 
 
 def test_minimal_frozen_run_fixture_is_a_strict_bundle() -> None:
