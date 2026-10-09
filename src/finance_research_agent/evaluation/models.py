@@ -402,6 +402,8 @@ class CurrentScopeServiceObservation(StrictModel):
     replay_markdown_matches: bool
     source_limitations_adjacent: bool
     watchlist_exclusions_visible: bool
+    provider_call_count: Annotated[int, Field(ge=0)]
+    missed_run_record_durable: bool
 
 
 class DomainAssertionOutcome(StrictModel):

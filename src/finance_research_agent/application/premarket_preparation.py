@@ -69,6 +69,7 @@ from finance_research_agent.domain.models import (
     StrictModel,
 )
 from finance_research_agent.domain.packets import PacketBudgetExceeded, ResearchPacket
+from finance_research_agent.domain.quality import DataQualityResult
 from finance_research_agent.domain.regime import Regime, RegimeResult, calculate_regime
 from finance_research_agent.domain.setups import CandidateExclusion, assess_setups, setup_gate
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes, utc_datetime
@@ -171,6 +172,7 @@ class PreparedPremarketRunResult(StrictModel):
     research_packet: ResearchPacket | None = None
     publication: PublishedArtifact | None = None
     failure_code: ErrorCode | None = None
+    data_quality: DataQualityResult | None = None
 
     @model_validator(mode="after")
     def coherent_handoff(self) -> Self:
@@ -178,7 +180,14 @@ class PreparedPremarketRunResult(StrictModel):
         packet = self.research_packet
         if self.outcome == "SKIPPED":
             if self.window_decision.should_run or any(
-                value is not None for value in (stored, packet, self.publication, self.failure_code)
+                value is not None
+                for value in (
+                    stored,
+                    packet,
+                    self.publication,
+                    self.failure_code,
+                    self.data_quality,
+                )
             ):
                 raise ValueError("skipped preparation cannot carry run artifacts")
             return self
@@ -197,12 +206,18 @@ class PreparedPremarketRunResult(StrictModel):
                 or self.publication.run_id != stored.run_id
             ):
                 raise ValueError("published preparation requires the matching publication only")
+            if self.data_quality is not None and (
+                self.data_quality.status is not DataQualityStatus.FAIL
+                or self.failure_code not in self.data_quality.global_reason_codes
+            ):
+                raise ValueError("operational quality must explain its publication failure")
             return self
         if (
             stored.published
             or packet is None
             or self.publication is not None
             or self.failure_code is not None
+            or self.data_quality is not None
             or not stored.checkpoints
         ):
             raise ValueError("packet handoff requires an unpublished frozen packet only")
@@ -259,6 +274,8 @@ def _operational_failure(
     decision: RunWindowDecision,
     reason: ErrorCode,
     checkpointed_at: datetime,
+    *,
+    data_quality: DataQualityResult | None = None,
 ) -> PreparedPremarketRunResult:
     latest = stored.checkpoints[-1]
     if latest.data_quality_status is not DataQualityStatus.FAIL:
@@ -283,7 +300,15 @@ def _operational_failure(
         stored = _load_required(repository, stored.run_id)
     run = compose_publication_context(stored.run, stored.checkpoints[-1])
     publish_operational_report(repository, run, reason, checkpointed_at)
-    return _published_result(repository, _load_required(repository, stored.run_id), decision)
+    result = _published_result(repository, _load_required(repository, stored.run_id), decision)
+    return PreparedPremarketRunResult(
+        outcome=result.outcome,
+        window_decision=result.window_decision,
+        stored_run=result.stored_run,
+        publication=result.publication,
+        failure_code=result.failure_code,
+        data_quality=data_quality,
+    )
 
 
 def _load_required(repository: PublicationRepository, run_id: str) -> StoredRun:
@@ -390,12 +415,29 @@ def prepare_research_packet(
             sha256(reason_bytes).hexdigest() != latest.artifact_hashes["operational_reason"]
         ):
             raise ValueError("operational reason differs from its checkpoint hash")
+        reason = ErrorCode(reason_bytes.decode("ascii"))
+        quality_bytes = repository.read_staged_artifact(stored.run_id, "data_quality")
+        if quality_bytes is not None and (
+            latest.artifact_hashes.get("data_quality") != sha256(quality_bytes).hexdigest()
+        ):
+            raise ValueError("staged data quality differs from checkpoint hash")
+        quality = (
+            DataQualityResult.model_validate_json(quality_bytes, strict=True)
+            if quality_bytes is not None
+            else None
+        )
+        if quality is not None and (
+            quality.status is not DataQualityStatus.FAIL
+            or reason not in quality.global_reason_codes
+        ):
+            quality = None
         return _operational_failure(
             repository,
             stored,
             decision,
-            ErrorCode(reason_bytes.decode("ascii")),
+            reason,
             dependencies.clock.now_utc(),
+            data_quality=quality,
         )
 
     try:
@@ -457,6 +499,7 @@ def prepare_research_packet(
                 decision,
                 quality.global_reason_codes[0],
                 dependencies.clock.now_utc(),
+                data_quality=quality,
             )
         check_deadline()
         configuration = configuration_from_snapshot(stored.run.configuration_snapshot)

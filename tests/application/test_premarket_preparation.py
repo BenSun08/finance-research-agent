@@ -557,6 +557,45 @@ def test_staged_operational_reason_recovers_after_checkpoint_crash_even_after_de
     assert result.failure_code is ErrorCode.INTERNAL_ERROR
 
 
+def test_staged_operational_quality_recovery_rejects_changed_quality_artifact(
+    tmp_path,
+    monkeypatch,
+):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    deps = dependencies(tmp_path)
+    original = deps.run_repository.checkpoint_if_current
+
+    def interrupted(run_id, checkpoint, expected_count):
+        if checkpoint.stage == "PREPARATION_FAILED":
+            raise OSError("checkpoint interruption")
+        return original(run_id, checkpoint, expected_count)
+
+    monkeypatch.setattr(deps.run_repository, "checkpoint_if_current", interrupted)
+    with pytest.raises(OSError):
+        prepare_research_packet(request(), deps, max_packet_bytes=1)
+    monkeypatch.setattr(deps.run_repository, "checkpoint_if_current", original)
+
+    from finance_research_agent.domain.market_calendar import format_run_id
+
+    run_id = format_run_id(date(2026, 9, 28), 1)
+    assert deps.run_repository.load(run_id) is not None
+    quality_path = (
+        tmp_path
+        / "runs"
+        / "2026"
+        / "2026-09-28"
+        / ".staging"
+        / run_id
+        / "artifacts"
+        / "data_quality.bin"
+    )
+    quality_path.write_bytes(b"tampered quality bytes")
+
+    with pytest.raises(ValueError, match="staged data quality differs from checkpoint hash"):
+        prepare_research_packet(request(1), deps)
+
+
 def test_known_historical_calendar_failure_publishes_closed_operational_report(tmp_path):
     from finance_research_agent.application.premarket_preparation import prepare_research_packet
 

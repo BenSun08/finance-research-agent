@@ -589,52 +589,51 @@ scenarios:
         available: false
         reason_codes:
         - PROVIDER_UNAVAILABLE
-        evidence_ids:
-        - S05:PROVIDER_OUTAGE:market_summary_available
+        evidence_ids: []
       - capability: REGIME_CLASSIFICATION_AVAILABLE
         available: false
         reason_codes:
         - PROVIDER_UNAVAILABLE
-        evidence_ids:
-        - S05:PROVIDER_OUTAGE:regime_classification_available
+        evidence_ids: []
       - capability: WATCHLIST_METRICS_AVAILABLE
         available: false
         reason_codes:
         - PROVIDER_UNAVAILABLE
-        evidence_ids:
-        - S05:PROVIDER_OUTAGE:watchlist_metrics_available
+        evidence_ids: []
       - capability: EVENT_RISK_CHECK_AVAILABLE
         available: false
         reason_codes:
         - PROVIDER_UNAVAILABLE
-        evidence_ids:
-        - S05:PROVIDER_OUTAGE:event_risk_check_available
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
       - capability: SETUP_DETECTION_AVAILABLE
         available: false
         reason_codes:
         - PROVIDER_UNAVAILABLE
-        evidence_ids:
-        - S05:PROVIDER_OUTAGE:setup_detection_available
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
       - capability: PLAN_DRAFT_AVAILABLE
         available: false
         reason_codes:
         - PROVIDER_UNAVAILABLE
-        evidence_ids:
-        - S05:PROVIDER_OUTAGE:plan_draft_available
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
       - capability: POSITION_SIZING_AVAILABLE
         available: false
         reason_codes:
+        - SIZING_UNAVAILABLE
         - PROVIDER_UNAVAILABLE
-        evidence_ids:
-        - S05:PROVIDER_OUTAGE:position_sizing_available
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
       - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
         available: false
         reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
         - PROVIDER_UNAVAILABLE
-        evidence_ids:
-        - S05:PROVIDER_OUTAGE:portfolio_heat_check_available
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
       plan_states: []
-      report_banner: Required Alpaca market data failed; no market claims or plans are emitted.
+      report_banner: 'Brief origin: OPERATIONAL'
       error_codes:
       - PROVIDER_UNAVAILABLE
       recoverability: true

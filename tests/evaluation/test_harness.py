@@ -149,6 +149,85 @@ def test_s05_unknown_regime_current_scope_projection_uses_missing_broad_evidence
     assert "PROVIDER_NO_DATA" in report
 
 
+def test_s05_global_outage_current_scope_observes_operational_publication(
+    tmp_path: Path,
+) -> None:
+    from finance_research_agent.domain.enums import (
+        DataQualityStatus,
+        DeliveryStatus,
+        ExecutionStatus,
+    )
+    from finance_research_agent.domain.errors import ErrorCode
+    from finance_research_agent.domain.models import ProviderFailure
+
+    class GlobalOutage(MarketData):
+        def __init__(self) -> None:
+            super().__init__(available=False)
+
+        def fetch_instruments(self, symbols, **kwargs):
+            self.calls.append("instruments")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+        def fetch_daily_bars(self, symbols, start, end, **kwargs):
+            self.calls.append("bars")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+        def fetch_premarket_observations(self, symbols, as_of, **kwargs):
+            self.calls.append("prices")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+    scenario = load_evaluation_scenarios()[4]
+    expectation = scenario.current_scope_expectation.subcases[0]
+    deps = dependencies(tmp_path, market=GlobalOutage())
+    harness = EvaluationHarness(
+        dependencies_factory=lambda current_scenario, selected: deps,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+    )
+
+    observation = execute_current_scope_scenario(scenario, harness, expectation)
+
+    assert observation.current_scope.execution_status is ExecutionStatus.PUBLISHED
+    assert observation.current_scope.data_quality_status is DataQualityStatus.FAIL
+    assert observation.current_scope.delivery_status is DeliveryStatus.ON_TIME
+    assert observation.current_scope.report_banner == "Brief origin: OPERATIONAL"
+    assert observation.current_scope.error_codes == (ErrorCode.PROVIDER_UNAVAILABLE,)
+    assert observation.current_scope == expectation
+    assert all(not capability.available for capability in observation.current_scope.capabilities)
+    assert all(
+        ErrorCode.PROVIDER_UNAVAILABLE in capability.reason_codes
+        for capability in observation.current_scope.capabilities
+    )
+    assert observation.replay_json_matches is True
+    assert observation.replay_markdown_matches is True
+    assert observation.provider_call_count > 0
+    assert observation.watchlist_exclusions_visible is True
+
+
 @pytest.mark.parametrize(
     ("scenario_index", "assertion", "evidence_field"),
     [
@@ -175,6 +254,8 @@ def test_evaluation_runner_fails_report_assertion_without_observed_report_eviden
         replay_markdown_matches=True,
         source_limitations_adjacent=evidence_field != "source_limitations_adjacent",
         watchlist_exclusions_visible=evidence_field != "watchlist_exclusions_visible",
+        provider_call_count=0,
+        missed_run_record_durable=False,
     )
 
     monkeypatch.setattr(
@@ -261,6 +342,8 @@ def test_evaluation_runner_executes_every_declared_case_independently(
             replay_markdown_matches=True,
             source_limitations_adjacent=True,
             watchlist_exclusions_visible=True,
+            provider_call_count=0,
+            missed_run_record_durable=False,
         )
 
     monkeypatch.setattr(

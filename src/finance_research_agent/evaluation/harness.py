@@ -26,12 +26,14 @@ from finance_research_agent.application.run_service import (
 )
 from finance_research_agent.domain.enums import (
     Capability,
+    DataQualityStatus,
     InvocationType,
     ReducedReportReason,
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import CapabilityState
 from finance_research_agent.domain.packets import ResearchPacket
+from finance_research_agent.domain.quality import DataQualityResult
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.evaluation.domain_assertions import (
     DomainFixtureBank,
@@ -86,23 +88,56 @@ def execute_current_scope_scenario(
         ),
         dependencies,
     )
-    packet = _require_packet(prepared)
     repository = cast(PublicationRepository, dependencies.run_repository)
-    receipt = publish_reduced_report(
+    packet: ResearchPacket | None
+    if prepared.outcome == "PACKET_READY":
+        packet = _require_packet(prepared)
+        publish_reduced_report(
+            repository,
+            packet,
+            harness.reduced_report_reason,
+            dependencies.clock.now_utc(),
+        )
+        run_id = packet.run.run_id
+    elif prepared.outcome == "PUBLISHED" and prepared.stored_run is not None:
+        packet = None
+        run_id = prepared.stored_run.run_id
+    else:
+        raise RuntimeError("current-scope scenario requires a publishable or skipped outcome")
+    return _observe_published_scenario(
+        scenario,
+        selected_expectation,
+        dependencies,
         repository,
+        run_id,
         packet,
-        harness.reduced_report_reason,
-        dependencies.clock.now_utc(),
+        harness.market_date,
+        prepared.data_quality,
     )
-    if receipt.run_id != packet.run.run_id:
-        raise ValueError("publication receipt differs from the prepared scenario run")
-    bundle = repository.load_published_bundle(packet.run.run_id)
-    report = repository.get_report(packet.run.run_id)
+
+
+def _observe_published_scenario(
+    scenario: EvaluationScenario,
+    selected_expectation: ScenarioOutcomeExpectation,
+    dependencies: RunDependencies,
+    repository: PublicationRepository,
+    run_id: str,
+    packet: ResearchPacket | None,
+    market_date: date,
+    data_quality: DataQualityResult | None,
+) -> CurrentScopeServiceObservation:
+    receipt = repository.get_published_artifact(run_id)
+    if receipt is None:
+        raise ValueError("published scenario run is missing its verified receipt")
+    if receipt.run_id != run_id:
+        raise ValueError("publication receipt differs from the scenario run")
+    bundle = repository.load_published_bundle(run_id)
+    report = repository.get_report(run_id)
     if bundle is None or report is None or report != bundle.report_markdown:
         raise ValueError("published scenario artifacts could not be read consistently")
     replay = replay_published_artifact(
         repository,
-        packet.run.run_id,
+        run_id,
         _recorded_versions(bundle),
     )
     banner_lines = tuple(
@@ -110,7 +145,15 @@ def execute_current_scope_scenario(
     )
     if len(banner_lines) != 1:
         raise ValueError("published scenario report requires one explicit brief-origin banner")
-    capabilities = _ordered_capabilities(packet)
+    capabilities = (
+        _ordered_capabilities(packet)
+        if packet is not None
+        else _operational_capabilities(
+            bundle.run.data_quality_status,
+            bundle.bundle.get("failure_code"),
+            data_quality,
+        )
+    )
     failure_code = bundle.bundle.get("failure_code")
     if failure_code is None:
         error_codes: tuple[ErrorCode, ...] = ()
@@ -124,7 +167,11 @@ def execute_current_scope_scenario(
         data_quality_status=bundle.run.data_quality_status,
         delivery_status=bundle.run.delivery_status,
         capabilities=capabilities,
-        plan_states=tuple(plan.plan_status for plan in packet.deterministic_plan_inputs),
+        plan_states=(
+            tuple(plan.plan_status for plan in packet.deterministic_plan_inputs)
+            if packet is not None
+            else ()
+        ),
         report_banner=banner_lines[0],
         error_codes=error_codes,
         recoverability=replay.json_matches and replay.markdown_matches,
@@ -134,11 +181,12 @@ def execute_current_scope_scenario(
     if receipt.markdown_sha256 != replay.stored_markdown_sha256:
         raise ValueError("publication receipt report hash differs from replay evidence")
     artifact_hashes = {
-        "research_packet": packet.canonical_sha256,
         "published_bundle": receipt.bundle_sha256,
         "report_markdown": receipt.markdown_sha256,
         "replayed_bundle": replay.replayed_json_sha256,
     }
+    if packet is not None:
+        artifact_hashes["research_packet"] = packet.canonical_sha256
     if replay.replayed_markdown_sha256 is not None:
         artifact_hashes["replayed_markdown"] = replay.replayed_markdown_sha256
     return CurrentScopeServiceObservation(
@@ -147,8 +195,16 @@ def execute_current_scope_scenario(
         artifact_hashes=FrozenMap(artifact_hashes),
         replay_json_matches=replay.json_matches,
         replay_markdown_matches=replay.markdown_matches,
-        source_limitations_adjacent=_source_limitations_adjacent(packet, report),
-        watchlist_exclusions_visible=_watchlist_exclusions_visible(packet, report),
+        source_limitations_adjacent=(
+            _source_limitations_adjacent(packet, report) if packet is not None else False
+        ),
+        watchlist_exclusions_visible=(
+            _watchlist_exclusions_visible(packet, report)
+            if packet is not None
+            else "No market conclusion or trade plan is available." in report
+        ),
+        provider_call_count=_provider_call_count(dependencies),
+        missed_run_record_durable=repository.get_missed_run(market_date) is not None,
     )
 
 
@@ -239,6 +295,35 @@ def _ordered_capabilities(packet: ResearchPacket) -> tuple[CapabilityState, ...]
     if set(states) != set(Capability):
         raise ValueError("prepared packet does not contain the exact capability set")
     return tuple(states[capability] for capability in Capability)
+
+
+def _operational_capabilities(
+    data_quality_status: DataQualityStatus,
+    failure_code: object,
+    data_quality: DataQualityResult | None,
+) -> tuple[CapabilityState, ...]:
+    if data_quality is not None:
+        if data_quality.status is not data_quality_status:
+            raise ValueError("staged operational quality differs from published run")
+        return data_quality.capabilities
+    if failure_code == ErrorCode.MISSED_WINDOW.value:
+        return tuple(
+            CapabilityState(
+                capability=capability,
+                available=False,
+                reason_codes=(ErrorCode.MISSED_WINDOW,),
+                evidence_ids=(),
+            )
+            for capability in Capability
+        )
+    raise ValueError("operational scenario is missing its frozen quality result")
+
+
+def _provider_call_count(dependencies: RunDependencies) -> int:
+    calls = getattr(dependencies.market_data, "calls", None)
+    if not isinstance(calls, (list, tuple)):
+        raise TypeError("offline market-data fixtures must expose a call log")
+    return len(calls)
 
 
 def _report_section_bullets(report: str, title: str) -> tuple[str, ...] | None:
