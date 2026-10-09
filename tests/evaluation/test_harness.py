@@ -228,6 +228,113 @@ def test_s05_global_outage_current_scope_observes_operational_publication(
     assert observation.watchlist_exclusions_visible is True
 
 
+def test_s05_full_evaluation_classifies_reduced_and_operational_cases(
+    tmp_path: Path,
+) -> None:
+    from datetime import UTC, datetime
+
+    from finance_research_agent.domain.errors import ErrorCode
+    from finance_research_agent.domain.models import ProviderFailure
+    from finance_research_agent.domain.regime import RegimePolicy
+    from finance_research_agent.evaluation.domain_assertions import RegimeCalculationFixture
+    from finance_research_agent.evaluation.models import FixtureSetId
+
+    class MissingBroadData(MarketData):
+        def fetch_daily_bars(self, symbols, start, end, **kwargs):
+            outcomes = dict(super().fetch_daily_bars(symbols, start, end, **kwargs))
+            outcomes["SPY"] = ProviderFailure(
+                provider="alpaca",
+                symbol="SPY",
+                error_code=ErrorCode.PROVIDER_NO_DATA,
+                retryable=False,
+            )
+            return outcomes
+
+    class GlobalOutage(MarketData):
+        def __init__(self) -> None:
+            super().__init__(available=False)
+
+        def fetch_instruments(self, symbols, **kwargs):
+            self.calls.append("instruments")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+        def fetch_daily_bars(self, symbols, start, end, **kwargs):
+            self.calls.append("bars")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+        def fetch_premarket_observations(self, symbols, as_of, **kwargs):
+            self.calls.append("prices")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+    scenario = load_evaluation_scenarios()[4]
+
+    def create_dependencies(current_scenario, expectation):
+        market = (
+            MissingBroadData()
+            if expectation.case_id == "REDUCED_RESEARCH"
+            else GlobalOutage()
+        )
+        return dependencies(tmp_path / expectation.case_id, market=market)
+
+    harness = EvaluationHarness(
+        dependencies_factory=create_dependencies,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        domain_fixtures=DomainFixtureBank(
+            {
+                FixtureSetId.S05_UNKNOWN_REGIME: RegimeCalculationFixture(
+                    snapshots={},
+                    policy=RegimePolicy(),
+                    cutoff_at=datetime(2026, 9, 28, 12, 45, tzinfo=UTC),
+                )
+            }
+        ),
+    )
+
+    outcome = execute_evaluation_scenario(scenario, harness)
+
+    assert outcome.current_scope_outcomes[0].current_scope == (
+        scenario.current_scope_expectation.primary
+    )
+    assert outcome.current_scope_outcomes[1].current_scope == (
+        scenario.current_scope_expectation.subcases[0]
+    )
+    assert outcome.current_scope_outcomes[0].source_limitations_adjacent is True
+    assert outcome.current_scope_outcomes[1].watchlist_exclusions_visible is True
+    assert outcome.domain_assertion_outcomes[0].status == "PASS"
+    assert outcome.assertions_failed == ()
+    assert outcome.assertions_pending == ()
+    assert outcome.assertions_passed == (
+        ScenarioAssertionId.CURRENT_SCOPE_MATCHES,
+        ScenarioAssertionId.DOMAIN_ASSERTIONS_PASS,
+        ScenarioAssertionId.ALL_WATCHLIST_EXCLUSIONS_VISIBLE,
+    )
+
+
 def test_s25_before_close_missed_window_observes_operational_publication(
     tmp_path: Path,
 ) -> None:
