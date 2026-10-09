@@ -731,13 +731,15 @@ Adapters and surfaces: constrained HTTP, official evidence adapters, broader Alp
 
 **Goal:** Prove end-to-end conformance and remove only migration scaffolding that has no remaining consumer.
 
+**Focused source-scope and quality-contract amendment:** see [R11 evaluation and release-readiness design](../specs/2026-10-10-product-a-r11-evaluation-release-readiness-design.md). This delta preserves the original full-source outcomes as reference domain assertions, defines the exact current-scope service outcomes, and defers full-source conformance until a separately approved source-scope change. The current source scope remains Alpaca market data and the local trading calendar.
+
 **Relevant spec requirements:** sections 35-41 and acceptance criteria.
 
 **Relevant master-plan tasks:** Task 18 plus the 2026-08-31 verification/documentation delta.
 
 **Files:** Product A evaluation/scenario/scorecard modules, manifests/rubrics, CI and checking scripts, release/security/operations documentation, compatibility consumer tests.
 
-**Public contracts:** evaluation scenario/outcome, recorded feedback, shadow scorecard, citation-entailment sample, release-gate outputs.
+**Public contracts:** `load_evaluation_scenarios`/`execute_evaluation_scenario`, `select_citation_entailment_sample`, compatible feedback and citation reviews, append-only shadow-day and operator-attestation writers, `load_shadow_evaluation_evidence`, `build_shadow_scorecard`, `build_migration_readiness`, and release-evidence receipts. Exact signatures and gate states are in the focused R11 design and the Task 18 interface registry.
 
 **Tests first:** exact 25 scenarios; failure injection; append-only feedback; 20-day gates; no P&L/execution fields; tracked-data/secret/plugin boundaries; schemas/docs/skills drift; fresh-environment rehearsal.
 

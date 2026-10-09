@@ -4211,13 +4211,51 @@ Expected: the local plugin loads from its repo marketplace, invokes only the con
         clock: Clock,
     ) -> RecordedFeedback
 
+    def select_citation_entailment_sample(
+        bundle: PublishedRunBundle,
+        maximum_claims: int = 5,
+    ) -> tuple[str, ...]
+
+    def record_shadow_day_observation(
+        request: RecordShadowDayObservation,
+        repository: ShadowObservationRepository,
+        calendar: TradingCalendar,
+        clock: Clock,
+    ) -> ShadowObservationReceipt
+
+    def record_operator_release_attestation(
+        request: RecordOperatorReleaseAttestation,
+        repository: OperatorReleaseAttestationRepository,
+        clock: Clock,
+    ) -> OperatorReleaseAttestationReceipt
+
+    def load_shadow_evaluation_evidence(
+        period: ShadowPeriod,
+        runs: RunRepository,
+        artifacts: PublishedArtifactReader,
+        feedback: FeedbackRepository,
+        observations: ShadowObservationRepository,
+        operator_attestations: OperatorReleaseAttestationRepository,
+        release_evidence: ReleaseEvidenceReader,
+    ) -> ShadowEvaluationEvidence
+
     def build_shadow_scorecard(
         published_runs: Sequence[PublishedRunBundle],
         feedback: Sequence[RecordedFeedback],
         calendar: TradingCalendar,
+        *,
+        evidence: ShadowEvaluationEvidence | None = None,
     ) -> ShadowScorecard
 
-EvaluationScenario requires id, title, fixture_set, injected_failures, expected_execution_status, expected_data_quality_status, expected_delivery_status, expected_capabilities, expected_plan_states, expected_report_banner, expected_error_codes, expected_recoverability, and assertions. ShadowScorecard contains period_start/end, valid_trading_days, eligible_online_days, published_in_target_window, duration observations, review-time observations, usefulness observations, plan-observation counts, block-reason counts, setup/regime distributions, and each pass/fail graduation gate. It has no realized P&L, return, win-rate, fill, fee, slippage, or execution field.
+    def build_migration_readiness(
+        scenario_outcomes: Sequence[EvaluationOutcome],
+        evidence: ShadowEvaluationEvidence,
+        scorecard: ShadowScorecard,
+    ) -> MigrationReadiness
+
+The focused R11 evaluation/release-readiness delta (`docs/superpowers/specs/2026-10-10-product-a-r11-evaluation-release-readiness-design.md`) scopes the original scenario expectations to the approved current sources, keeps separate domain assertions, adds the optional keyword-only verified evidence input, and defines three-state gate output. Original full-source operational behavior remains deferred.
+
+EvaluationScenario requires id, title, fixture_set, injected_failures, expected_execution_status, expected_data_quality_status, expected_delivery_status, expected_capabilities, expected_plan_states, expected_report_banner, expected_error_codes, expected_recoverability, and assertions. ShadowScorecard contains period_start/end, valid_trading_days, eligible_online_days, published_in_target_window, duration observations, review-time observations, usefulness observations, plan-observation counts, block-reason counts, setup/regime distributions, and ordered PASS/FAIL/PENDING graduation-gate results with separate failed and pending gate ids. It has no realized P&L, return, win-rate, fill, fee, slippage, or execution field.
 
 - [ ] **Step 1: Write failing scenario-manifest completeness and outcome tests**
 
@@ -4336,7 +4374,8 @@ Create tests/evaluation/test_shadow_scorecard.py:
         )
         assert scorecard.valid_trading_days == 19
         assert scorecard.graduation_ready is False
-        assert "AT_LEAST_TWENTY_TRADING_DAYS" in scorecard.failed_gates
+        assert "AT_LEAST_TWENTY_TRADING_DAYS" in scorecard.pending_gate_ids
+        assert "AT_LEAST_TWENTY_TRADING_DAYS" not in scorecard.failed_gate_ids
 
 
     def test_scorecard_has_no_execution_or_profit_fields() -> None:
@@ -4356,15 +4395,23 @@ Create tests/evaluation/test_shadow_scorecard.py:
     def test_human_entailment_sample_is_required_for_each_published_day(
         twenty_day_run_bundles,
         feedback_missing_one_daily_sample,
+        verified_shadow_evidence_missing_one_daily_sample,
         calendar,
     ) -> None:
         scorecard = build_shadow_scorecard(
             twenty_day_run_bundles,
             feedback_missing_one_daily_sample,
             calendar,
+            evidence=verified_shadow_evidence_missing_one_daily_sample,
         )
         assert scorecard.graduation_ready is False
-        assert "CITATION_ENTAILMENT_SAMPLE_INCOMPLETE" in scorecard.failed_gates
+        evidence_gate = next(
+            gate for gate in scorecard.gate_results if gate.id == "EVIDENCE"
+        )
+        assert evidence_gate.status == "PENDING"
+        assert "CITATION_ENTAILMENT_SAMPLE_INCOMPLETE" in evidence_gate.reason_codes
+        assert "EVIDENCE" in scorecard.pending_gate_ids
+        assert "EVIDENCE" not in scorecard.failed_gate_ids
 
 Run:
 
