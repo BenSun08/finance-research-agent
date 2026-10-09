@@ -179,6 +179,32 @@ def test_regime_projection_identity_includes_frozen_cutoff() -> None:
     assert first.completed_daily_bars == later.completed_daily_bars
 
 
+def test_full_history_uses_bounded_evidence_chunks_without_losing_bar_provenance() -> None:
+    from finance_research_agent.application.collection_bridge import collection_to_packet_inputs
+
+    bars = tuple(_bar().model_copy(update={
+        "session_date": date(2025, 1, 1) + timedelta(days=index),
+        "evidence_id": f"original-{index}",
+    }) for index in range(252))
+    result = collection_to_packet_inputs(
+        MarketDataCollection(
+            (SymbolMarketCollection("AAPL", _instrument(), bars, _price()),), _RETRIEVED,
+        ), authority_tier=2,
+    )
+    history_evidence = tuple(item for item in result.evidence
+                             if item.structured_fields.get("outcome") == "DAILY_BARS")
+    assert len(history_evidence) == 2
+    ordered = sorted(history_evidence, key=lambda item: item.structured_fields["chunk_index"])
+    assert tuple(len(item.structured_fields["bars"]) for item in ordered) == (128, 124)
+    assert tuple(source_id for item in ordered
+                 for source_id in item.structured_fields["source_evidence_ids"]) == (
+        tuple(f"original-{index}" for index in range(252))
+    )
+    projected = result.market["AAPL"].completed_daily_bars
+    assert len(projected) == 252
+    assert {bar.evidence_id for bar in projected} == {item.evidence_id for item in history_evidence}
+
+
 def test_collection_bridge_builds_linked_canonical_market_and_evidence() -> None:
     from finance_research_agent.application.collection_bridge import (
         collection_to_packet_inputs,

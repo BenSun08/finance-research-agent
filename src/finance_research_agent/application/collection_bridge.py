@@ -244,36 +244,44 @@ def _project_symbol(
             providers = {bar.provider for bar in ordered_bars}
             if len(providers) != 1:
                 raise ValueError("collection daily bars contain multiple providers")
-            payload: dict[str, JsonValue] = {
-                "outcome": "DAILY_BARS",
-                "symbol": item.symbol,
-                "source_evidence_ids": tuple(bar.evidence_id for bar in ordered_bars),
-                "bars": tuple(
-                    _json_value(bar.model_dump(mode="json", exclude={"evidence_id"}))
-                    for bar in ordered_bars
-                ),
-            }
-            observed_at = max(bar.source_timestamp for bar in ordered_bars)
-            retrieved_at = max(bar.retrieved_at for bar in ordered_bars)
-            flags = _quality_flags(*(bar.quality_flags for bar in ordered_bars))
-            source, bars_evidence = _source_and_evidence(
-                payload=payload,
-                provider=ordered_bars[0].provider,
-                observed_at=observed_at,
-                retrieved_at=retrieved_at,
-                content_type="application/vnd.finance-research-agent.daily-bars+json",
-                quality_flags=flags,
-                authority_tier=authority_tier,
-                instrument_id=ordered_bars[0].instrument_id,
-                event_time=observed_at,
-                citation_label=f"{item.symbol} completed daily bars",
-            )
-            sources.append(source)
-            evidence.append(bars_evidence)
-            bars = tuple(
-                bar.model_copy(update={"evidence_id": bars_evidence.evidence_id})
-                for bar in ordered_bars
-            )
+            projected_bars: list[CompletedDailyBar] = []
+            chunk_count = (len(ordered_bars) + 127) // 128
+            for chunk_index in range(chunk_count):
+                chunk = ordered_bars[chunk_index * 128 : (chunk_index + 1) * 128]
+                payload: dict[str, JsonValue] = {
+                    "outcome": "DAILY_BARS",
+                    "symbol": item.symbol,
+                    "source_evidence_ids": tuple(bar.evidence_id for bar in chunk),
+                    "bars": tuple(
+                        _json_value(bar.model_dump(mode="json", exclude={"evidence_id"}))
+                        for bar in chunk
+                    ),
+                }
+                # Retain short-history identities and bound every evidence array.
+                if chunk_count > 1:
+                    payload.update(chunk_index=chunk_index, chunk_count=chunk_count)
+                observed_at = max(bar.source_timestamp for bar in chunk)
+                retrieved_at = max(bar.retrieved_at for bar in chunk)
+                flags = _quality_flags(*(bar.quality_flags for bar in chunk))
+                source, bars_evidence = _source_and_evidence(
+                    payload=payload,
+                    provider=chunk[0].provider,
+                    observed_at=observed_at,
+                    retrieved_at=retrieved_at,
+                    content_type="application/vnd.finance-research-agent.daily-bars+json",
+                    quality_flags=flags,
+                    authority_tier=authority_tier,
+                    instrument_id=chunk[0].instrument_id,
+                    event_time=observed_at,
+                    citation_label=f"{item.symbol} completed daily bars",
+                )
+                sources.append(source)
+                evidence.append(bars_evidence)
+                projected_bars.extend(
+                    bar.model_copy(update={"evidence_id": bars_evidence.evidence_id})
+                    for bar in chunk
+                )
+            bars = tuple(projected_bars)
         else:
             bars = ()
 
