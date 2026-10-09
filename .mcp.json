@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ai-market-research": {
+      "command": "ai-market-research-mcp",
+      "args": []
+    }
+  }
+}

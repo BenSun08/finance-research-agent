@@ -36,7 +36,7 @@ include = ["finance_research_agent*"]
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers -m 'not live'"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 markers = [
   "live: opt-in provider smoke tests; never run in default or CI test suites",
 ]

@@ -1,0 +1,22 @@
+{
+  "name": "ai-market-research-agent",
+  "version": "0.1.0",
+  "description": "Local evidence-linked U.S. premarket research with deterministic safety gates and no execution capability.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "AI Market Research Agent",
+    "shortDescription": "Research-only premarket briefs",
+    "longDescription": "Prepare evidence-linked U.S. premarket research with deterministic risk gates, immutable artifacts, and no brokerage execution.",
+    "developerName": "Personal",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Prepare today's premarket research brief.",
+      "Show my research watchlist."
+    ]
+  }
+}
