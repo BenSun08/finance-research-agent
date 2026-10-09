@@ -108,12 +108,18 @@ class FileSystemRunRepository:
         return candidate
 
     def _missed_run_path(self, market_date: date) -> Path:
-        return self._safe_path(
+        parts = (
             "diagnostics",
             "missed-runs",
             f"{market_date.year:04d}",
             f"{market_date.isoformat()}.json",
         )
+        candidate = self.root
+        for part in parts:
+            candidate = candidate / part
+            if candidate.is_symlink():
+                raise _path_error()
+        return self._safe_path(*parts)
 
     def record_missed_run(self, record: MissedRunRecord) -> MissedRunRecord:
         """Persist the first missed-run diagnostic for a market date unchanged."""
@@ -134,7 +140,10 @@ class FileSystemRunRepository:
             payload = path.read_bytes()
         except FileNotFoundError:
             return None
-        return MissedRunRecord.model_validate_json(payload, strict=True)
+        record = MissedRunRecord.model_validate_json(payload, strict=True)
+        if record.market_date != market_date:
+            raise _path_error()
+        return record
 
     @staticmethod
     def _validated_run_id(run_id: str) -> tuple[date, int]:

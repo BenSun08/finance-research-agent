@@ -142,6 +142,58 @@ def test_missed_run_record_is_durable_and_idempotent_by_market_date(tmp_path: Pa
         repository.get_missed_run("2026-08-19")
 
 
+def test_missed_run_read_and_write_reject_in_root_symlink_aliases(tmp_path: Path) -> None:
+    from finance_research_agent.domain.models import MissedRunRecord
+
+    repository = FileSystemRunRepository(tmp_path)
+    requested_date = date(2026, 8, 19)
+    target_date = date(2026, 8, 20)
+    target = MissedRunRecord(
+        market_date=target_date,
+        detected_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+        regular_close_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+        reason_code="MISSED_WINDOW",
+    )
+    requested = target.model_copy(
+        update={
+            "market_date": requested_date,
+            "detected_at": datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+            "regular_close_at": datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+        }
+    )
+    repository.record_missed_run(target)
+    requested_path = (
+        tmp_path / "diagnostics/missed-runs/2026/2026-08-19.json"
+    )
+    requested_path.parent.mkdir(parents=True, exist_ok=True)
+    requested_path.symlink_to(tmp_path / "diagnostics/missed-runs/2026/2026-08-20.json")
+
+    with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+        repository.get_missed_run(requested_date)
+    with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+        repository.record_missed_run(requested)
+
+
+def test_missed_run_reader_rejects_record_for_a_different_market_date(tmp_path: Path) -> None:
+    from finance_research_agent.domain.models import MissedRunRecord
+
+    repository = FileSystemRunRepository(tmp_path)
+    requested_date = date(2026, 8, 19)
+    other_date = date(2026, 8, 20)
+    record = MissedRunRecord(
+        market_date=other_date,
+        detected_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+        regular_close_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+        reason_code="MISSED_WINDOW",
+    )
+    record_path = tmp_path / "diagnostics/missed-runs/2026/2026-08-19.json"
+    record_path.parent.mkdir(parents=True)
+    record_path.write_text(record.model_dump_json(), encoding="utf-8")
+
+    with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+        repository.get_missed_run(requested_date)
+
+
 def test_missed_run_record_rejects_detection_before_regular_close() -> None:
     from finance_research_agent.domain import models
 
