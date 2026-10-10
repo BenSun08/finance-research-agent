@@ -93,8 +93,7 @@ def test_legacy_feedback_bytes_remain_canonical_and_are_not_rewritten(tmp_path) 
         b'"citation_reviews":[],"clarity_score":3,"evidence_score":4,'
         b'"feedback_id":"feedback-legacy","notes":null,'
         b'"recorded_at":"2026-09-29T13:00:00Z",'
-        b'"run_id":"premarket-2026-09-29-r1","schema_version":"0.1",'
-        b'"usefulness_score":5}'
+        b'"run_id":"premarket-2026-09-29-r1","usefulness_score":5}'
     )
     path = root / "feedback-legacy.json"
     path.write_bytes(legacy_bytes)
@@ -102,5 +101,6 @@ def test_legacy_feedback_bytes_remain_canonical_and_are_not_rewritten(tmp_path) 
 
     [record] = repository.list_feedback()
 
+    assert record.schema_version == "0.1"
     assert canonical_bytes(record) == legacy_bytes
     assert path.read_bytes() == legacy_bytes

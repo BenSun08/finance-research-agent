@@ -32,7 +32,9 @@ from finance_research_agent.evaluation.citation_sampling import select_citation_
 class RecordedFeedback(StrictModel):
     """Immutable snapshot of bounded rubric feedback for one published bundle."""
 
-    schema_version: Literal["0.1", "0.2"] = "0.1"  # type: ignore[assignment]
+    schema_version: Literal["0.1", "0.2"] = Field(
+        default="0.1", exclude_if=lambda value: value == "0.1"
+    )  # type: ignore[assignment]
     feedback_id: Identifier
     run_id: RunId
     bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")

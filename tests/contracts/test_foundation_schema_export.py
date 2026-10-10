@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
+from pydantic import TypeAdapter
 
 from finance_research_agent.schema_export import SCHEMA_MODELS, check_schemas, export_schemas
 
@@ -188,6 +190,71 @@ def test_operation_schemas_are_strict_bounded_and_exclude_caller_authority() -> 
         "0.1",
         "0.2",
     ]
+
+
+def test_feedback_json_schemas_enforce_versioned_runtime_requirements() -> None:
+    review_schema = TypeAdapter(
+        SCHEMA_MODELS["product-a-citation-entailment-review.schema.json"]
+    ).json_schema()
+    review_validator = Draft202012Validator(review_schema)
+    legacy_review = {
+        "citation_id": "evidence-1",
+        "claim_id": "claim-1",
+        "entails_claim": True,
+    }
+    full_review = {
+        **legacy_review,
+        "schema_version": "0.2",
+        "verdict": "SUPPORTED",
+        "rationale": "The cited source supports this selected claim.",
+        "reviewed_at": "2026-10-10T13:00:00Z",
+    }
+
+    assert review_validator.is_valid(legacy_review)
+    assert review_validator.is_valid(
+        {
+            **legacy_review,
+            "verdict": None,
+            "rationale": None,
+            "reviewed_at": None,
+        }
+    )
+    assert review_validator.is_valid(full_review)
+    assert not review_validator.is_valid(
+        {**full_review, "schema_version": "0.1"}
+    )
+    assert not review_validator.is_valid(
+        {**legacy_review, "schema_version": "0.2", "verdict": "SUPPORTED"}
+    )
+    assert not review_validator.is_valid({**full_review, "entails_claim": False})
+    assert not review_validator.is_valid({**full_review, "rationale": "   "})
+    assert not review_validator.is_valid({**full_review, "rationale": "café support"})
+
+    request_schema = TypeAdapter(
+        SCHEMA_MODELS["product-a-operation-record-run-feedback-request.schema.json"]
+    ).json_schema()
+    request_validator = Draft202012Validator(request_schema)
+    legacy_request = {
+        "run_id": "premarket-2026-10-10-r1",
+        "clarity_score": 3,
+        "evidence_score": 4,
+        "usefulness_score": 5,
+    }
+    assert request_validator.is_valid(legacy_request)
+    assert not request_validator.is_valid(
+        {**legacy_request, "executive_review_duration_seconds": 30}
+    )
+    assert not request_validator.is_valid(
+        {**legacy_request, "citation_reviews": [full_review]}
+    )
+    assert request_validator.is_valid(
+        {
+            **legacy_request,
+            "schema_version": "0.2",
+            "executive_review_duration_seconds": 30,
+            "citation_reviews": [full_review],
+        }
+    )
 
 
 def test_schema_command_checks_without_rewriting_and_fails_on_drift(tmp_path: Path) -> None:

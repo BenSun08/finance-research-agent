@@ -133,7 +133,132 @@ class ExecutiveEventState(StrEnum):
     MATERIAL_EVENTS = "MATERIAL_EVENTS"
 
 
+def _citation_review_json_schema(schema: dict[str, Any]) -> None:
+    schema["allOf"] = [
+        {
+            "if": {
+                "anyOf": [
+                    {"not": {"required": ["schema_version"]}},
+                    {
+                        "properties": {"schema_version": {"const": "0.1"}},
+                        "required": ["schema_version"],
+                    },
+                ]
+            },
+            "then": {
+                "not": {
+                    "anyOf": [
+                        {
+                            "required": ["verdict"],
+                            "properties": {"verdict": {"type": "string"}},
+                        },
+                        {
+                            "required": ["rationale"],
+                            "properties": {"rationale": {"type": "string"}},
+                        },
+                        {
+                            "required": ["reviewed_at"],
+                            "properties": {"reviewed_at": {"type": "string"}},
+                        },
+                    ]
+                }
+            },
+        },
+        {
+            "if": {
+                "properties": {"schema_version": {"const": "0.2"}},
+                "required": ["schema_version"],
+            },
+            "then": {
+                "required": ["verdict", "rationale", "reviewed_at"],
+                "properties": {
+                    "verdict": {
+                        "enum": [verdict.value for verdict in CitationVerdict],
+                        "type": "string",
+                    },
+                    "rationale": {
+                        "pattern": r"^(?=.*[!-~])[ -~]+$",
+                        "type": "string",
+                    },
+                    "reviewed_at": {"type": "string"},
+                },
+                "allOf": [
+                    {
+                        "if": {
+                            "properties": {"verdict": {"const": "SUPPORTED"}},
+                            "required": ["verdict"],
+                        },
+                        "then": {"properties": {"entails_claim": {"const": True}}},
+                    },
+                    {
+                        "if": {
+                            "properties": {
+                                "verdict": {"enum": ["PARTIAL", "UNSUPPORTED"]}
+                            },
+                            "required": ["verdict"],
+                        },
+                        "then": {"properties": {"entails_claim": {"const": False}}},
+                    },
+                ],
+            },
+        },
+    ]
+
+
+def _feedback_request_json_schema(schema: dict[str, Any]) -> None:
+    schema["allOf"] = [
+        {
+            "if": {
+                "anyOf": [
+                    {"not": {"required": ["schema_version"]}},
+                    {
+                        "properties": {"schema_version": {"const": "0.1"}},
+                        "required": ["schema_version"],
+                    },
+                ]
+            },
+            "then": {
+                "not": {
+                    "anyOf": [
+                        {
+                            "required": ["executive_review_duration_seconds"],
+                            "properties": {
+                                "executive_review_duration_seconds": {"type": "integer"}
+                            },
+                        },
+                        {
+                            "required": ["detailed_review_duration_seconds"],
+                            "properties": {
+                                "detailed_review_duration_seconds": {"type": "integer"}
+                            },
+                        },
+                        {
+                            "required": ["executive_identification"],
+                            "properties": {"executive_identification": {"type": "object"}},
+                        },
+                        {
+                            "required": ["citation_reviews"],
+                            "properties": {
+                                "citation_reviews": {
+                                    "contains": {
+                                        "properties": {
+                                            "schema_version": {"const": "0.2"}
+                                        },
+                                        "required": ["schema_version"],
+                                    }
+                                }
+                            },
+                        },
+                    ]
+                }
+            },
+        }
+    ]
+
+
 class CitationEntailmentReview(OperationModel):
+    model_config = ConfigDict(json_schema_extra=_citation_review_json_schema)
+
     schema_version: Literal["0.1", "0.2"] = "0.1"  # type: ignore[assignment]
     citation_id: Identifier
     claim_id: Identifier
@@ -199,6 +324,8 @@ class ExecutiveIdentification(_OperationPayloadModel):
 
 
 class RecordRunFeedbackRequest(OperationModel):
+    model_config = ConfigDict(json_schema_extra=_feedback_request_json_schema)
+
     schema_version: Literal["0.1", "0.2"] = "0.1"  # type: ignore[assignment]
     run_id: RunId
     clarity_score: Annotated[int, Field(ge=1, le=5)]

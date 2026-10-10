@@ -16,6 +16,146 @@
     },
     "CitationEntailmentReview": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "not": {
+                  "required": [
+                    "schema_version"
+                  ]
+                }
+              },
+              {
+                "properties": {
+                  "schema_version": {
+                    "const": "0.1"
+                  }
+                },
+                "required": [
+                  "schema_version"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "verdict": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "verdict"
+                  ]
+                },
+                {
+                  "properties": {
+                    "rationale": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "rationale"
+                  ]
+                },
+                {
+                  "properties": {
+                    "reviewed_at": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "reviewed_at"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "schema_version": {
+                "const": "0.2"
+              }
+            },
+            "required": [
+              "schema_version"
+            ]
+          },
+          "then": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "verdict": {
+                      "const": "SUPPORTED"
+                    }
+                  },
+                  "required": [
+                    "verdict"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "entails_claim": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "verdict": {
+                      "enum": [
+                        "PARTIAL",
+                        "UNSUPPORTED"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "verdict"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "entails_claim": {
+                      "const": false
+                    }
+                  }
+                }
+              }
+            ],
+            "properties": {
+              "rationale": {
+                "pattern": "^(?=.*[!-~])[ -~]+$",
+                "type": "string"
+              },
+              "reviewed_at": {
+                "type": "string"
+              },
+              "verdict": {
+                "enum": [
+                  "SUPPORTED",
+                  "PARTIAL",
+                  "UNSUPPORTED"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "rationale",
+              "reviewed_at"
+            ]
+          }
+        }
+      ],
       "properties": {
         "citation_id": {
           "maxLength": 128,
@@ -179,6 +319,86 @@
     }
   },
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {
+            "not": {
+              "required": [
+                "schema_version"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "schema_version": {
+                "const": "0.1"
+              }
+            },
+            "required": [
+              "schema_version"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "properties": {
+                "executive_review_duration_seconds": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "executive_review_duration_seconds"
+              ]
+            },
+            {
+              "properties": {
+                "detailed_review_duration_seconds": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "detailed_review_duration_seconds"
+              ]
+            },
+            {
+              "properties": {
+                "executive_identification": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "executive_identification"
+              ]
+            },
+            {
+              "properties": {
+                "citation_reviews": {
+                  "contains": {
+                    "properties": {
+                      "schema_version": {
+                        "const": "0.2"
+                      }
+                    },
+                    "required": [
+                      "schema_version"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "citation_reviews"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
   "properties": {
     "citation_reviews": {
       "default": [],
