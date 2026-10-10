@@ -90,7 +90,9 @@ def test_legacy_feedback_bytes_remain_canonical_and_are_not_rewritten(tmp_path) 
     root.mkdir()
     legacy_bytes = (
         b'{"bundle_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
-        b'"citation_reviews":[],"clarity_score":3,"evidence_score":4,'
+        b'"citation_reviews":[{"citation_id":"evidence-legacy",'
+        b'"claim_id":"claim-legacy","entails_claim":true,"schema_version":"0.1"}],'
+        b'"clarity_score":3,"evidence_score":4,'
         b'"feedback_id":"feedback-legacy","notes":null,'
         b'"recorded_at":"2026-09-29T13:00:00Z",'
         b'"run_id":"premarket-2026-09-29-r1","usefulness_score":5}'
