@@ -8,7 +8,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from finance_research_agent.application.premarket_preparation import PreparedPremarketRunResult
 from finance_research_agent.application.watchlist_service import WatchlistChange
@@ -70,6 +70,21 @@ Ticker = Annotated[
         max_length=16,
         pattern=r"^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
     ),
+]
+
+
+def _validate_english_feedback_notes(value: str) -> str:
+    if not value.strip():
+        raise ValueError("feedback notes must not be blank")
+    if any(not 32 <= ord(character) <= 126 for character in value):
+        raise ValueError("feedback notes must be printable English text")
+    return value
+
+
+FeedbackNotes = Annotated[
+    str,
+    Field(min_length=1, max_length=1000, pattern=r"^[\x20-\x7E]+$"),
+    AfterValidator(_validate_english_feedback_notes),
 ]
 
 
@@ -354,7 +369,7 @@ class RecordRunFeedbackRequest(OperationModel):
     clarity_score: Annotated[int, Field(ge=1, le=5)]
     evidence_score: Annotated[int, Field(ge=1, le=5)]
     usefulness_score: Annotated[int, Field(ge=1, le=5)]
-    notes: Annotated[str, Field(max_length=1000)] | None = None
+    notes: FeedbackNotes | None = None
     citation_reviews: tuple[CitationEntailmentReview, ...] = Field(default=(), max_length=5)
     executive_review_duration_seconds: Annotated[int, Field(ge=0, le=86400)] | None = Field(
         default=None, exclude_if=lambda value: value is None

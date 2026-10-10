@@ -507,6 +507,8 @@
       "anyOf": [
         {
           "maxLength": 1000,
+          "minLength": 1,
+          "pattern": "^[\\x20-\\x7E]+$",
           "type": "string"
         },
         {

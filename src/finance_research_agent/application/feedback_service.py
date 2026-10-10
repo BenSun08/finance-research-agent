@@ -13,6 +13,7 @@ from pydantic import Field, model_validator
 from finance_research_agent.application.operations import (
     CitationEntailmentReview,
     ExecutiveIdentification,
+    FeedbackNotes,
     FeedbackReceipt,
     RecordRunFeedbackRequest,
     RunId,
@@ -42,7 +43,7 @@ class RecordedFeedback(StrictModel):
     clarity_score: int = Field(ge=1, le=5)
     evidence_score: int = Field(ge=1, le=5)
     usefulness_score: int = Field(ge=1, le=5)
-    notes: str | None = Field(default=None, max_length=1000)
+    notes: FeedbackNotes | None = None
     citation_reviews: tuple[CitationEntailmentReview, ...] = Field(max_length=5)
     executive_review_duration_seconds: int | None = Field(
         default=None, ge=0, le=86400, exclude_if=lambda value: value is None

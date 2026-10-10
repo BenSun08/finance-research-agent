@@ -188,6 +188,35 @@ def test_feedback_accepts_bounded_scores_and_notes() -> None:
         _request(notes="x" * 1001)
 
 
+@pytest.mark.parametrize("notes", ("中文反馈", "line one\nline two", "   "))
+def test_feedback_notes_must_be_nonblank_printable_english(notes: str) -> None:
+    with pytest.raises(ValidationError):
+        _request(notes=notes)
+
+    with pytest.raises(ValidationError):
+        RecordedFeedback(
+            schema_version="0.2",
+            feedback_id="feedback-invalid-notes",
+            run_id=RUN_ID,
+            bundle_sha256="a" * 64,
+            recorded_at=RECORDED_AT,
+            clarity_score=3,
+            evidence_score=4,
+            usefulness_score=5,
+            notes=notes,
+            citation_reviews=(),
+        )
+
+
+def test_record_feedback_persists_printable_english_notes() -> None:
+    service, _, store = _service()
+
+    service.record(_request(notes="Reviewed the filing and source freshness."))
+
+    assert len(store.records) == 1
+    assert store.records[0].notes == "Reviewed the filing and source freshness."
+
+
 def test_record_feedback_persists_v02_durations_and_identification() -> None:
     service, _, store = _service()
     request = _request(
