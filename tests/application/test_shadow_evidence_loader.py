@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 
+from finance_research_agent.application.feedback_service import RecordedFeedback
 from finance_research_agent.application.reduced_report import (
     render_reduced_report,
     render_reduced_report_base,
@@ -18,6 +19,10 @@ from finance_research_agent.domain.models import (
     StoredRun,
 )
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
+from finance_research_agent.evaluation.shadow_records import (
+    ShadowDayAvailability,
+    ShadowDayObservation,
+)
 from finance_research_agent.evaluation.shadow_scorecard import ShadowPeriod
 
 
@@ -29,6 +34,9 @@ class _Runs:
     def list_runs(self, market_date_start: date, market_date_end: date) -> tuple[StoredRun, ...]:
         self.requested_period = (market_date_start, market_date_end)
         return self.records
+
+    def load(self, run_id: str) -> StoredRun | None:
+        return next((item for item in self.records if item.run.run_id == run_id), None)
 
 
 class _Artifacts:
@@ -48,13 +56,19 @@ class _Artifacts:
 
 
 class _Feedback:
-    def list_feedback(self) -> tuple[()]:
-        return ()
+    def __init__(self, records: tuple[RecordedFeedback, ...] = ()) -> None:
+        self.records = records
+
+    def list_feedback(self) -> tuple[RecordedFeedback, ...]:
+        return self.records
 
 
 class _Observations:
-    def list_observations(self) -> tuple[()]:
-        return ()
+    def __init__(self, records: tuple[ShadowDayObservation, ...] = ()) -> None:
+        self.records = records
+
+    def list_observations(self) -> tuple[ShadowDayObservation, ...]:
+        return self.records
 
 
 class _Attestations:
@@ -179,3 +193,57 @@ def test_loader_verifies_and_replays_every_published_run(valid_packet, monkeypat
     assert evidence.verified_runs[0].replay_result.component_version_mismatches == ()
     assert evidence.verified_runs[0].replay_result.markdown_matches is True
     assert evidence.evidence_hashes
+
+
+def test_loader_rejects_feedback_for_an_unknown_run() -> None:
+    import pytest
+
+    from finance_research_agent.application import shadow_evidence_loader
+
+    feedback = RecordedFeedback(
+        feedback_id="feedback-orphan",
+        run_id="premarket-2026-10-05-r1",
+        bundle_sha256="a" * 64,
+        recorded_at=datetime(2026, 10, 5, 12, tzinfo=UTC),
+        clarity_score=3,
+        evidence_score=3,
+        usefulness_score=3,
+        citation_reviews=(),
+    )
+
+    with pytest.raises(ValueError, match="feedback references an unknown run"):
+        shadow_evidence_loader.load_shadow_evaluation_evidence(
+            ShadowPeriod(start_date=date(2026, 10, 5), end_date=date(2026, 10, 9)),
+            _Runs(),  # type: ignore[arg-type]
+            _Artifacts(),  # type: ignore[arg-type]
+            _Feedback((feedback,)),  # type: ignore[arg-type]
+            _Observations(),  # type: ignore[arg-type]
+            _Attestations(),  # type: ignore[arg-type]
+            _ReleaseEvidence(),  # type: ignore[arg-type]
+        )
+
+
+def test_loader_rejects_day_observations_with_unknown_run_references() -> None:
+    import pytest
+
+    from finance_research_agent.application import shadow_evidence_loader
+
+    observation = ShadowDayObservation(
+        id="shadow-day-orphan",
+        market_date=date(2026, 10, 5),
+        recorded_at=datetime(2026, 10, 5, 16, tzinfo=UTC),
+        session_id="session-2026-10-05",
+        availability=ShadowDayAvailability.ONLINE,
+        observed_run_ids=("premarket-2026-10-05-r1",),
+    )
+
+    with pytest.raises(ValueError, match="observation references an unknown run"):
+        shadow_evidence_loader.load_shadow_evaluation_evidence(
+            ShadowPeriod(start_date=date(2026, 10, 5), end_date=date(2026, 10, 5)),
+            _Runs(),  # type: ignore[arg-type]
+            _Artifacts(),  # type: ignore[arg-type]
+            _Feedback(),  # type: ignore[arg-type]
+            _Observations((observation,)),  # type: ignore[arg-type]
+            _Attestations(),  # type: ignore[arg-type]
+            _ReleaseEvidence(),  # type: ignore[arg-type]
+        )

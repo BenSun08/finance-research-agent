@@ -43,6 +43,26 @@ def _content_hashes(records: Iterable[BaseModel]) -> tuple[str, ...]:
     return tuple(sorted({sha256(canonical_bytes(record)).hexdigest() for record in records}))
 
 
+def _validate_observation_corrections(
+    observations: tuple[ShadowDayObservation, ...],
+) -> None:
+    by_id = {item.id: item for item in observations}
+    for correction in observations:
+        target_id = correction.corrects_observation_id
+        if target_id is None:
+            continue
+        previous = by_id.get(target_id)
+        if previous is None:
+            raise ValueError("observation correction references an unknown prior record")
+        expected_digest = sha256(canonical_bytes(previous)).hexdigest()
+        if correction.corrects_observation_sha256 != expected_digest:
+            raise ValueError("observation correction digest does not match the prior record")
+        if correction.market_date != previous.market_date:
+            raise ValueError("observation correction changed the market date")
+        if correction.recorded_at <= previous.recorded_at:
+            raise ValueError("observation correction must follow its prior record")
+
+
 def load_shadow_evaluation_evidence(
     period: ShadowPeriod,
     runs: RunRepository,
@@ -112,6 +132,25 @@ def load_shadow_evaluation_evidence(
         identifier_field = "feedback_id" if record_type is RecordedFeedback else "id"
         _require_unique_ids(records, identifier_field, record_kind)
 
+    verified_by_run_id = {item.stored_run.run_id: item for item in verified_runs}
+    period_feedback: list[RecordedFeedback] = []
+    for feedback_record in feedback_records:
+        verified_run = verified_by_run_id.get(feedback_record.run_id)
+        if verified_run is None:
+            referenced_run = runs.load(feedback_record.run_id)
+            if referenced_run is None:
+                raise ValueError("feedback references an unknown run")
+            if period.start_date <= referenced_run.run.market_date <= period.end_date:
+                raise ValueError("run repository omitted a feedback-referenced period run")
+            continue
+        if verified_run.published_artifact is None:
+            raise ValueError("feedback references an unpublished run")
+        if feedback_record.bundle_sha256 != verified_run.published_artifact.bundle_sha256:
+            raise ValueError("feedback bundle digest differs from its verified publication")
+        if feedback_record.recorded_at < verified_run.published_artifact.published_at:
+            raise ValueError("feedback predates its verified publication")
+        period_feedback.append(feedback_record)
+
     period_observations = tuple(
         sorted(
             (
@@ -122,6 +161,38 @@ def load_shadow_evaluation_evidence(
             key=lambda item: (item.market_date, item.recorded_at, item.id),
         )
     )
+    _validate_observation_corrections(day_observations)
+    feedback_by_id = {item.feedback_id: item for item in feedback_records}
+    for observation in period_observations:
+        for run_id in observation.observed_run_ids:
+            observed_run_evidence = verified_by_run_id.get(run_id)
+            stored_observed_run = (
+                observed_run_evidence.stored_run
+                if observed_run_evidence is not None
+                else runs.load(run_id)
+            )
+            if stored_observed_run is None:
+                raise ValueError("observation references an unknown run")
+            if stored_observed_run.run.market_date != observation.market_date:
+                raise ValueError("observation run reference has a different market date")
+            if observed_run_evidence is None:
+                raise ValueError("run repository omitted an observation-referenced period run")
+        for feedback_id in observation.observed_feedback_ids:
+            observed_feedback = feedback_by_id.get(feedback_id)
+            if observed_feedback is None:
+                raise ValueError("observation references unknown feedback")
+            feedback_run_evidence = verified_by_run_id.get(observed_feedback.run_id)
+            stored_feedback_run = (
+                feedback_run_evidence.stored_run
+                if feedback_run_evidence is not None
+                else runs.load(observed_feedback.run_id)
+            )
+            if stored_feedback_run is None:
+                raise ValueError("observation feedback references an unknown run")
+            if stored_feedback_run.run.market_date != observation.market_date:
+                raise ValueError("observation feedback reference has a different market date")
+            if feedback_run_evidence is None:
+                raise ValueError("run repository omitted an observation-feedback period run")
     source_identities = {
         (item.source_commit_sha256, item.source_tree_sha256) for item in release_receipts
     }
@@ -130,7 +201,7 @@ def load_shadow_evaluation_evidence(
     source_commit, source_tree = next(iter(source_identities), (None, None))
     content_records = (
         *run_hash_records,
-        *feedback_records,
+        *period_feedback,
         *period_observations,
         *attestations,
         *release_receipts,
@@ -140,7 +211,7 @@ def load_shadow_evaluation_evidence(
         origin=None,
         verified_runs=verified_runs,
         feedback_records=tuple(
-            sorted(feedback_records, key=lambda item: (item.recorded_at, item.feedback_id))
+            sorted(period_feedback, key=lambda item: (item.recorded_at, item.feedback_id))
         ),
         observations=period_observations,
         operator_attestations=tuple(
