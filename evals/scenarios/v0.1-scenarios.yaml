@@ -474,6 +474,12 @@ scenarios:
     fixture_id: S04_DEFENSIVE_REGIME
     expected_fields:
       regime: defensive
+  - kind: PLAN_BUILD
+    fixture_id: S04_DEFENSIVE_REGIME
+    expected_fields:
+      plan_status: BLOCKED
+      candidate_score_at_least_70: true
+      position_sizing_regime_multiplier: "0"
 - id: S05
   title: Unknown regime from critical missing data
   fixture_set: S05_UNKNOWN_REGIME
@@ -888,6 +894,8 @@ scenarios:
       plan_status: BLOCKED
       gate_reason_codes:
       - UNSUPPORTED_INSTRUMENT
+      alternate_plan_status: DRAFT
+      alternate_gate_reason_codes: []
 - id: S08
   title: Material filing after prior report
   fixture_set: S08_MATERIAL_REVISION
@@ -1842,7 +1850,13 @@ scenarios:
   - kind: INSTRUMENT_ELIGIBILITY
     fixture_id: S15_HALTED_OR_UNCERTAIN_IDENTITY
     expected_fields:
+      gate_statuses:
+      - BLOCK
       reason_codes:
+      - UNSUPPORTED_INSTRUMENT
+      alternate_gate_statuses:
+      - BLOCK
+      alternate_reason_codes:
       - UNSUPPORTED_INSTRUMENT
 - id: S16
   title: Entry zone already exceeded

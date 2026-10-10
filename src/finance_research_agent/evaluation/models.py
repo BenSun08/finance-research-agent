@@ -161,6 +161,8 @@ class RegimeCalculationExpected(_ExpectedProjection):
 class InstrumentEligibilityExpected(_ExpectedProjection):
     gate_statuses: tuple[GateStatus, ...] | None = None
     reason_codes: tuple[Identifier, ...] | None = None
+    alternate_gate_statuses: tuple[GateStatus, ...] | None = None
+    alternate_reason_codes: tuple[Identifier, ...] | None = None
 
 
 class SetupDetectionExpected(_ExpectedProjection):
@@ -190,11 +192,17 @@ class EventRiskExpected(_ExpectedProjection):
     plan_status: PlanStatus | None = None
     gate_reason_codes: tuple[ErrorCode, ...] | None = None
     quality_flags: tuple[Identifier, ...] | None = None
+    alternate_plan_status: PlanStatus | None = None
+    alternate_gate_reason_codes: tuple[ErrorCode, ...] | None = None
 
 
 class PlanBuildExpected(_ExpectedProjection):
     plan_status: PlanStatus | None = None
     data_quality_flags: tuple[Identifier, ...] | None = None
+    candidate_score_at_least_70: bool | None = None
+    position_sizing_regime_multiplier: Annotated[
+        Decimal, Field(ge=0, allow_inf_nan=False)
+    ] | None = None
 
 
 class PlanExpiryExpected(_ExpectedProjection):
@@ -275,7 +283,10 @@ class EventRiskAssertion(StrictModel):
 
 class PlanBuildAssertion(StrictModel):
     kind: Literal[DomainAssertionKind.PLAN_BUILD]
-    fixture_id: Literal[FixtureSetId.S19_MISSING_PORTFOLIO_HEAT]
+    fixture_id: Literal[
+        FixtureSetId.S04_DEFENSIVE_REGIME,
+        FixtureSetId.S19_MISSING_PORTFOLIO_HEAT,
+    ]
     expected_fields: PlanBuildExpected
 
 
@@ -418,37 +429,76 @@ class EvaluationScenario(StrictModel):
             raise ValueError("scenario assertion ids must be unique")
         required_domain_fields = {
             FixtureSetId.S01_BREAKOUT: (
-                CandidateScoreAssertion,
-                {
-                    "setup_type",
-                    "total_score",
-                    "plan_status",
-                    "score_at_least_70",
-                    "numeric_citation_bindings_match",
-                },
+                (
+                    CandidateScoreAssertion,
+                    {
+                        "setup_type",
+                        "total_score",
+                        "plan_status",
+                        "score_at_least_70",
+                        "numeric_citation_bindings_match",
+                    },
+                ),
             ),
             FixtureSetId.S02_PULLBACK: (
-                SetupDetectionAssertion,
-                {
-                    "setup_types",
-                    "policy_gates_passed",
-                    "restrengthening_conditions_satisfied",
-                    "scored_plan_statuses",
-                },
+                (
+                    SetupDetectionAssertion,
+                    {
+                        "setup_types",
+                        "policy_gates_passed",
+                        "restrengthening_conditions_satisfied",
+                        "scored_plan_statuses",
+                    },
+                ),
+            ),
+            FixtureSetId.S04_DEFENSIVE_REGIME: (
+                (RegimeCalculationAssertion, {"regime"}),
+                (
+                    PlanBuildAssertion,
+                    {
+                        "plan_status",
+                        "candidate_score_at_least_70",
+                        "position_sizing_regime_multiplier",
+                    },
+                ),
+            ),
+            FixtureSetId.S07_EARNINGS_WINDOW: (
+                (
+                    EventRiskAssertion,
+                    {
+                        "plan_status",
+                        "gate_reason_codes",
+                        "alternate_plan_status",
+                        "alternate_gate_reason_codes",
+                    },
+                ),
+            ),
+            FixtureSetId.S15_HALTED_OR_UNCERTAIN_IDENTITY: (
+                (
+                    InstrumentEligibilityAssertion,
+                    {
+                        "gate_statuses",
+                        "reason_codes",
+                        "alternate_gate_statuses",
+                        "alternate_reason_codes",
+                    },
+                ),
             ),
         }
         requirement = required_domain_fields.get(self.fixture_set)
         if requirement is not None:
-            assertion_type, required_fields = requirement
-            matching = tuple(
-                assertion
-                for assertion in self.domain_assertions
-                if isinstance(assertion, assertion_type)
-            )
-            if len(matching) != 1 or not required_fields <= matching[
-                0
-            ].expected_fields.model_fields_set:
-                raise ValueError(f"{self.id.value} is missing its required domain assertion fields")
+            for assertion_type, required_fields in requirement:
+                matching = tuple(
+                    assertion
+                    for assertion in self.domain_assertions
+                    if isinstance(assertion, assertion_type)
+                )
+                if len(matching) != 1 or not required_fields <= matching[
+                    0
+                ].expected_fields.model_fields_set:
+                    raise ValueError(
+                        f"{self.id.value} is missing its required domain assertion fields"
+                    )
         return self
 
 

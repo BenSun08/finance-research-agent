@@ -15,6 +15,8 @@ from finance_research_agent.evaluation.models import (
     DomainAssertion,
     EvaluationScenario,
     EventRiskAssertion,
+    FailureInjectionId,
+    FixtureSetId,
     InstrumentEligibilityAssertion,
     PlanBuildAssertion,
     PlanExpiryAssertion,
@@ -22,6 +24,7 @@ from finance_research_agent.evaluation.models import (
     PriorObservationAssertion,
     RegimeCalculationAssertion,
     RunWindowAssertion,
+    ScenarioAssertionId,
     SetupDetectionAssertion,
 )
 from finance_research_agent.evaluation.scenarios import (
@@ -160,23 +163,54 @@ def test_s02_manifest_requires_restrengthening_and_draft_scoring() -> None:
 
 
 @pytest.mark.parametrize(
-    ("scenario_index", "field"),
+    ("scenario_index", "assertion_index", "field"),
     (
-        (0, "score_at_least_70"),
-        (0, "numeric_citation_bindings_match"),
-        (1, "policy_gates_passed"),
-        (1, "restrengthening_conditions_satisfied"),
-        (1, "scored_plan_statuses"),
+        (0, 0, "score_at_least_70"),
+        (0, 0, "numeric_citation_bindings_match"),
+        (1, 0, "policy_gates_passed"),
+        (1, 0, "restrengthening_conditions_satisfied"),
+        (1, 0, "scored_plan_statuses"),
+        (3, 1, "candidate_score_at_least_70"),
+        (3, 1, "position_sizing_regime_multiplier"),
+        (6, 0, "alternate_plan_status"),
+        (14, 0, "alternate_reason_codes"),
     ),
 )
 def test_manifest_rejects_missing_release_critical_projection_fields(
-    scenario_index: int, field: str
+    scenario_index: int, assertion_index: int, field: str
 ) -> None:
     scenario = load_evaluation_scenarios()[scenario_index]
     payload = scenario.model_dump(mode="python")
-    payload["domain_assertions"][0]["expected_fields"].pop(field)
+    payload["domain_assertions"][assertion_index]["expected_fields"].pop(field)
 
     with pytest.raises(ValidationError, match="required domain assertion fields"):
+        EvaluationScenario.model_validate(payload, strict=True)
+
+
+def test_scenario_rejects_domain_assertion_for_another_fixture_set() -> None:
+    payload = load_evaluation_scenarios()[1].model_dump(mode="python")
+    payload["domain_assertions"][0]["fixture_id"] = FixtureSetId.S11_IEX_LIMITATION
+
+    with pytest.raises(ValidationError, match="domain assertion fixture_id must match"):
+        EvaluationScenario.model_validate(payload, strict=True)
+
+
+def test_scenario_rejects_duplicate_failure_injection_ids() -> None:
+    payload = load_evaluation_scenarios()[0].model_dump(mode="python")
+    payload["injected_failures"] = (FailureInjectionId.F01, FailureInjectionId.F01)
+
+    with pytest.raises(ValidationError, match="injected failure ids must be unique"):
+        EvaluationScenario.model_validate(payload, strict=True)
+
+
+def test_scenario_rejects_duplicate_assertion_ids() -> None:
+    payload = load_evaluation_scenarios()[0].model_dump(mode="python")
+    payload["assertions"] = (
+        ScenarioAssertionId.CURRENT_SCOPE_MATCHES,
+        ScenarioAssertionId.CURRENT_SCOPE_MATCHES,
+    )
+
+    with pytest.raises(ValidationError, match="scenario assertion ids must be unique"):
         EvaluationScenario.model_validate(payload, strict=True)
 
 

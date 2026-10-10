@@ -74,6 +74,7 @@ class RegimeCalculationFixture:
     snapshots: Mapping[str, RegimeMarketSnapshot]
     policy: RegimePolicy
     cutoff_at: datetime
+    plan_fixture: PlanBuildFixture | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "snapshots", MappingProxyType(dict(self.snapshots)))
@@ -90,6 +91,7 @@ class EventRiskFixture:
     source_health: tuple[SourceHealth, ...]
     event_evidence: tuple[EventEvidenceProjection, ...]
     unverified_material_status: PlanStatus
+    alternate_plan_expires_at: UtcDatetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +114,13 @@ class InstrumentEligibilityFixture:
     setup_policy: SetupPolicy
     direction: str
     halted: bool
+    alternate_instrument: InstrumentIdentity | None = None
+    alternate_snapshot: MarketSnapshot | None = None
+    alternate_halted: bool = False
+
+    def __post_init__(self) -> None:
+        if (self.alternate_instrument is None) != (self.alternate_snapshot is None):
+            raise ValueError("alternate identity fixture requires its matching market snapshot")
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +265,21 @@ def execute_domain_assertion(
             event_evidence=fixture.event_evidence,
             unverified_material_status=fixture.unverified_material_status,
         )
+        alternate_event_result = None
+        if "alternate_plan_status" in assertion.expected_fields.model_fields_set or (
+            "alternate_gate_reason_codes" in assertion.expected_fields.model_fields_set
+        ):
+            if fixture.alternate_plan_expires_at is None:
+                raise TypeError("alternate event-risk assertion requires an alternate expiry")
+            alternate_event_result = assess_event_risk(
+                instrument=fixture.instrument,
+                events=fixture.events,
+                plan_expires_at=fixture.alternate_plan_expires_at,
+                evidence_cutoff_at=fixture.evidence_cutoff_at,
+                source_health=fixture.source_health,
+                event_evidence=fixture.event_evidence,
+                unverified_material_status=fixture.unverified_material_status,
+            )
         return _compare(
             assertion,
             {
@@ -264,6 +288,19 @@ def execute_domain_assertion(
                     ErrorCode(gate.reason_code) for gate in event_result.gates
                 ),
                 "quality_flags": event_result.quality_flags,
+                "alternate_plan_status": (
+                    alternate_event_result.plan_status
+                    if alternate_event_result is not None
+                    else None
+                ),
+                "alternate_gate_reason_codes": (
+                    tuple(
+                        ErrorCode(gate.reason_code)
+                        for gate in alternate_event_result.gates
+                    )
+                    if alternate_event_result is not None
+                    else None
+                ),
             },
         )
     if isinstance(assertion, RunWindowAssertion):
@@ -300,11 +337,29 @@ def execute_domain_assertion(
             direction=fixture.direction,
             halted=fixture.halted,
         )
+        alternate_gates: tuple[GateResult, ...] = ()
+        if "alternate_gate_statuses" in assertion.expected_fields.model_fields_set or (
+            "alternate_reason_codes" in assertion.expected_fields.model_fields_set
+        ):
+            if fixture.alternate_instrument is None or fixture.alternate_snapshot is None:
+                raise TypeError("alternate eligibility assertion requires its identity fixture")
+            alternate_gates = evaluate_instrument_eligibility(
+                instrument=fixture.alternate_instrument,
+                watchlist_item=fixture.watchlist_item,
+                snapshot=fixture.alternate_snapshot,
+                setup_policy=fixture.setup_policy,
+                direction=fixture.direction,
+                halted=fixture.alternate_halted,
+            )
         return _compare(
             assertion,
             {
                 "gate_statuses": tuple(gate.status for gate in gates),
                 "reason_codes": tuple(gate.reason_code for gate in gates),
+                "alternate_gate_statuses": tuple(gate.status for gate in alternate_gates),
+                "alternate_reason_codes": tuple(
+                    gate.reason_code for gate in alternate_gates
+                ),
             },
         )
     if isinstance(assertion, SetupDetectionAssertion):
@@ -434,26 +489,37 @@ def execute_domain_assertion(
         )
     if isinstance(assertion, PlanBuildAssertion):
         fixture = fixtures.get(assertion.fixture_id)
-        if type(fixture) is not PlanBuildFixture:
+        if type(fixture) is PlanBuildFixture:
+            plan_fixture = fixture
+        elif (
+            type(fixture) is RegimeCalculationFixture
+            and type(fixture.plan_fixture) is PlanBuildFixture
+        ):
+            plan_fixture = fixture.plan_fixture
+        else:
             raise TypeError("PLAN_BUILD requires PlanBuildFixture")
         plan = build_trade_plan(
-            candidate=fixture.candidate,
-            run=fixture.run,
-            watchlist_item=fixture.watchlist_item,
-            regime=fixture.regime,
-            event_assessment=fixture.event_assessment,
-            gates=fixture.gates,
-            current_price=fixture.current_price,
-            capability_states=fixture.capability_states,
-            setup_policy=fixture.setup_policy,
-            risk_policy=fixture.risk_policy,
-            generated_at=fixture.generated_at,
+            candidate=plan_fixture.candidate,
+            run=plan_fixture.run,
+            watchlist_item=plan_fixture.watchlist_item,
+            regime=plan_fixture.regime,
+            event_assessment=plan_fixture.event_assessment,
+            gates=plan_fixture.gates,
+            current_price=plan_fixture.current_price,
+            capability_states=plan_fixture.capability_states,
+            setup_policy=plan_fixture.setup_policy,
+            risk_policy=plan_fixture.risk_policy,
+            generated_at=plan_fixture.generated_at,
         )
         return _compare(
             assertion,
             {
                 "plan_status": plan.plan_status,
                 "data_quality_flags": plan.data_quality_flags,
+                "candidate_score_at_least_70": plan.candidate_score >= Decimal("70"),
+                "position_sizing_regime_multiplier": (
+                    plan.position_sizing.regime_risk_multiplier
+                ),
             },
         )
     if isinstance(assertion, PositionSizingAssertion):

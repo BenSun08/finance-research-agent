@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from inspect import signature
@@ -649,7 +650,7 @@ def test_every_manifest_domain_assertion_runs_against_its_named_real_fixture() -
         for assertion in scenario.domain_assertions
     )
 
-    assert len(outcomes) == 22
+    assert len(outcomes) == 23
     assert all(
         outcome.status == "PASS"
         for scenario_id, assertion, outcome in outcomes
@@ -748,6 +749,109 @@ def test_s02_pullback_manifest_asserts_restrengthening_gates_and_draft_score() -
     assert outcome.status == "PASS"
     assert "restrengthening_conditions_satisfied" in outcome.matched_fields
     assert "scored_plan_statuses" in outcome.matched_fields
+
+
+def test_s04_defensive_plan_stays_blocked_with_zero_regime_multiplier() -> None:
+    scenario = load_evaluation_scenarios()[3]
+    assertion = next(
+        assertion
+        for assertion in scenario.domain_assertions
+        if assertion.kind.value == "PLAN_BUILD"
+    )
+
+    outcome = execute_domain_assertion(assertion, build_domain_fixture_bank())
+
+    assert assertion.expected_fields.plan_status is PlanStatus.BLOCKED
+    assert assertion.expected_fields.candidate_score_at_least_70 is True
+    assert assertion.expected_fields.position_sizing_regime_multiplier == Decimal(0)
+    assert outcome.status == "PASS"
+
+
+def test_s04_plan_assertion_requires_its_defensive_plan_fixture() -> None:
+    scenario = load_evaluation_scenarios()[3]
+    assertion = scenario.domain_assertions[1]
+    fixture_bank = build_domain_fixture_bank()
+    fixture = fixture_bank.get(assertion.fixture_id)
+    assert isinstance(fixture, RegimeCalculationFixture)
+    incomplete = replace(fixture, plan_fixture=None)
+    records = dict(fixture_bank.records)
+    records[assertion.fixture_id] = incomplete
+
+    with pytest.raises(TypeError, match="PLAN_BUILD requires PlanBuildFixture"):
+        execute_domain_assertion(assertion, DomainFixtureBank(records))
+
+
+def test_s07_event_after_expiry_does_not_block_the_plan() -> None:
+    scenario = load_evaluation_scenarios()[6]
+    assertion = scenario.domain_assertions[0]
+
+    outcome = execute_domain_assertion(assertion, build_domain_fixture_bank())
+
+    assert assertion.expected_fields.plan_status is PlanStatus.BLOCKED
+    assert assertion.expected_fields.alternate_plan_status is PlanStatus.DRAFT
+    assert outcome.status == "PASS"
+    assert "alternate_plan_status" in outcome.matched_fields
+
+
+def test_s07_alternate_case_requires_its_expiry_fixture() -> None:
+    scenario = load_evaluation_scenarios()[6]
+    assertion = scenario.domain_assertions[0]
+    fixture_bank = build_domain_fixture_bank()
+    fixture = fixture_bank.get(assertion.fixture_id)
+    assert isinstance(fixture, EventRiskFixture)
+    incomplete = replace(fixture, alternate_plan_expires_at=None)
+    records = dict(fixture_bank.records)
+    records[assertion.fixture_id] = incomplete
+
+    with pytest.raises(TypeError, match="alternate event-risk assertion requires"):
+        execute_domain_assertion(assertion, DomainFixtureBank(records))
+
+
+def test_s15_uncertain_identity_is_also_excluded_before_scoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = load_evaluation_scenarios()[14]
+    assertion = scenario.domain_assertions[0]
+    fixtures = build_domain_fixture_bank()
+    fixture = fixtures.get(assertion.fixture_id)
+
+    assert isinstance(fixture, InstrumentEligibilityFixture)
+    assert fixture.instrument.is_active is True
+    assert fixture.halted is True
+    assert fixture.alternate_instrument is not None
+    assert fixture.alternate_instrument.is_active is None
+    assert fixture.alternate_halted is False
+    monkeypatch.setattr(
+        domain_assertions_module,
+        "score_candidate",
+        lambda *args, **kwargs: pytest.fail("eligibility must run before scoring"),
+    )
+
+    outcome = execute_domain_assertion(assertion, fixtures)
+
+    assert assertion.expected_fields.gate_statuses
+    assert assertion.expected_fields.alternate_gate_statuses
+    assert assertion.expected_fields.alternate_reason_codes == ("UNSUPPORTED_INSTRUMENT",)
+    assert outcome.status == "PASS"
+    assert "alternate_reason_codes" in outcome.matched_fields
+
+
+def test_s15_alternate_case_requires_identity_and_snapshot() -> None:
+    scenario = load_evaluation_scenarios()[14]
+    assertion = scenario.domain_assertions[0]
+    fixture_bank = build_domain_fixture_bank()
+    fixture = fixture_bank.get(assertion.fixture_id)
+    assert isinstance(fixture, InstrumentEligibilityFixture)
+    incomplete = replace(
+        fixture,
+        alternate_instrument=None,
+        alternate_snapshot=None,
+    )
+    records = dict(fixture_bank.records)
+    records[assertion.fixture_id] = incomplete
+
+    with pytest.raises(TypeError, match="alternate eligibility assertion requires"):
+        execute_domain_assertion(assertion, DomainFixtureBank(records))
 
 
 def test_every_domain_operation_rejects_an_untyped_fixture_record() -> None:

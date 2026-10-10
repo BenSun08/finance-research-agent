@@ -10,6 +10,7 @@ from finance_research_agent.domain.models import EventRecord
 from finance_research_agent.domain.plans import build_trade_plan
 from finance_research_agent.domain.regime import Regime, RegimePolicy
 from finance_research_agent.domain.scoring import CorrelationEvidence
+from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.evaluation.domain_assertions import (
     CandidateRankingFixture,
     CandidateScoreFixture,
@@ -54,6 +55,14 @@ def build_domain_fixture_bank() -> DomainFixtureBank:
     breakout_setup = setups.detect_setups(**breakout)[0]
     plan_inputs = trade_plans.inputs.__wrapped__()
     plan = build_trade_plan(**plan_inputs)
+    defensive_plan_inputs = dict(plan_inputs)
+    defensive_plan_inputs["regime"] = scoring._regime(Regime.DEFENSIVE)
+    defensive_multipliers = dict(plan_inputs["risk_policy"].regime_risk_multipliers)
+    defensive_multipliers[Regime.DEFENSIVE.name] = Decimal("0")
+    defensive_plan_inputs["risk_policy"] = plan_inputs["risk_policy"].model_copy(
+        update={"regime_risk_multipliers": FrozenMap(defensive_multipliers)}
+    )
+    defensive_plan_fixture = PlanBuildFixture(**defensive_plan_inputs)
 
     supported = events.INSTRUMENT
     future = events.NOW + timedelta(days=1)
@@ -76,6 +85,7 @@ def build_domain_fixture_bank() -> DomainFixtureBank:
         source_health=events._healthy_macro_source_health(),
         event_evidence=(events._projection("earnings"),),
         unverified_material_status=PlanStatus.REVIEW_REQUIRED,
+        alternate_plan_expires_at=events.NOW + timedelta(hours=12),
     )
     conflict_event = EventRecord(
         event_id="conflict",
@@ -117,6 +127,7 @@ def build_domain_fixture_bank() -> DomainFixtureBank:
             snapshots=make_regime_case("risk-off").snapshots,
             policy=policy,
             cutoff_at=CUTOFF,
+            plan_fixture=defensive_plan_fixture,
         ),
         FixtureSetId.S05_UNKNOWN_REGIME: RegimeCalculationFixture(
             snapshots={},
@@ -212,6 +223,12 @@ def build_domain_fixture_bank() -> DomainFixtureBank:
             setup_policy=eligibility._setup_policy(),
             direction="LONG",
             halted=True,
+            alternate_instrument=eligibility._eligible_instrument().model_copy(
+                update={"is_active": None}
+            ),
+            alternate_snapshot=eligibility._snapshot(
+                eligibility._eligible_instrument().model_copy(update={"is_active": None})
+            ),
         ),
         FixtureSetId.S16_EXCEEDED_ENTRY_ZONE: PlanExpiryFixture(
             plan=plan,
