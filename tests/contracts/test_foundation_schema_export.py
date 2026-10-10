@@ -6,9 +6,10 @@ import sys
 from pathlib import Path
 
 import pytest
-from jsonschema import Draft202012Validator
-from pydantic import TypeAdapter
+from jsonschema import Draft202012Validator, FormatChecker
+from pydantic import TypeAdapter, ValidationError
 
+from finance_research_agent.domain.types import UtcDatetime
 from finance_research_agent.schema_export import SCHEMA_MODELS, check_schemas, export_schemas
 
 SCHEMA_NAMES = {
@@ -53,6 +54,21 @@ SCHEMA_NAMES = {
     "product-a-operation-list-watchlist-result.schema.json",
 }
 ROOT = Path(__file__).resolve().parents[2]
+_UTC_DATETIME_ADAPTER = TypeAdapter(UtcDatetime)
+
+
+def _application_format_checker() -> FormatChecker:
+    checker = FormatChecker()
+
+    def is_utc_datetime(value: object) -> bool:
+        try:
+            _UTC_DATETIME_ADAPTER.validate_python(value)
+        except ValidationError:
+            return False
+        return True
+
+    checker.checks("date-time")(is_utc_datetime)
+    return checker
 
 
 def test_registry_is_immutable_and_contains_only_implemented_contracts() -> None:
@@ -196,7 +212,9 @@ def test_feedback_json_schemas_enforce_versioned_runtime_requirements() -> None:
     review_schema = TypeAdapter(
         SCHEMA_MODELS["product-a-citation-entailment-review.schema.json"]
     ).json_schema()
-    review_validator = Draft202012Validator(review_schema)
+    review_validator = Draft202012Validator(
+        review_schema, format_checker=_application_format_checker()
+    )
     legacy_review = {
         "citation_id": "evidence-1",
         "claim_id": "claim-1",
@@ -229,11 +247,16 @@ def test_feedback_json_schemas_enforce_versioned_runtime_requirements() -> None:
     assert not review_validator.is_valid({**full_review, "entails_claim": False})
     assert not review_validator.is_valid({**full_review, "rationale": "   "})
     assert not review_validator.is_valid({**full_review, "rationale": "café support"})
+    assert not review_validator.is_valid(
+        {**full_review, "reviewed_at": "not-a-dateZ"}
+    )
 
     request_schema = TypeAdapter(
         SCHEMA_MODELS["product-a-operation-record-run-feedback-request.schema.json"]
     ).json_schema()
-    request_validator = Draft202012Validator(request_schema)
+    request_validator = Draft202012Validator(
+        request_schema, format_checker=_application_format_checker()
+    )
     legacy_request = {
         "run_id": "premarket-2026-10-10-r1",
         "clarity_score": 3,
