@@ -1,5 +1,8 @@
 """Product A scenario evaluation contracts."""
 
+from finance_research_agent.evaluation.citation_sampling import (
+    select_citation_entailment_sample,
+)
 from finance_research_agent.evaluation.harness import (
     EvaluationHarness,
     execute_evaluation_scenario,
@@ -31,6 +34,7 @@ __all__ = [
     "ScenarioAssertionId",
     "ScenarioId",
     "ScenarioOutcomeExpectation",
+    "select_citation_entailment_sample",
     "load_evaluation_scenarios",
     "execute_evaluation_scenario",
 ]

@@ -1,0 +1,38 @@
+schema_version: "0.2"
+name: citation-entailment-review
+purpose: Human review of a bounded, deterministic sample of material claims in one published run.
+selection:
+  maximum_claims: 5
+  deterministic: true
+  reachable_claims_only: true
+  include_each_available_claim_type_before_repeats: true
+  cover_two_authority_tiers_when_possible: true
+  prioritize_structured_plan_regime_and_event_conclusions_after_coverage: true
+  tie_break: sha256_of_canonical_bundle_hash_and_claim_id
+  empty_sample_allowed_only_when_no_material_claim_is_reachable: true
+review_context:
+  required:
+    - claim_id
+    - exact_claim_text
+    - claim_type
+    - subject_symbol
+    - field
+    - observation_and_publication_times
+    - evidence_cutoff
+    - cited_evidence_with_bounded_excerpts_and_structured_fields
+    - counter_evidence_with_bounded_excerpts_and_structured_fields
+    - authority_tiers
+    - metric_bindings_and_input_evidence_ids
+  calculation_claims:
+    rule: Inspect the deterministic MetricResult and its input_evidence_ids; do not require a fabricated direct citation.
+verdicts:
+  SUPPORTED: The cited or metric-bound evidence fully supports the material claim within its subject, field, time, and authority scope.
+  PARTIAL: The evidence supports only part of the material claim, or leaves a material limitation unresolved.
+  UNSUPPORTED: The evidence is missing, irrelevant, contradictory, or too weak to support the material claim.
+review_requirements:
+  rationale: Bounded English explanation of how the evidence supports or fails to support the claim.
+  no_automatic_verdict: true
+  citation_presence_is_not_entailment: true
+  material_partial_or_unsupported_is_adverse_evidence: true
+  corrective_work_required_before_a_new_qualifying_review: true
+  usefulness_cannot_override_evidence_or_safety_failure: true
