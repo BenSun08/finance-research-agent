@@ -17,9 +17,11 @@ from finance_research_agent.domain.enums import (
     GateStatus,
     PlanStatus,
     ReducedReportReason,
+    SourceRole,
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import ProviderFailure
+from finance_research_agent.domain.policies import SourcePolicy
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 from tests.application.test_premarket_preparation import (
     Calendar,
@@ -27,6 +29,29 @@ from tests.application.test_premarket_preparation import (
     dependencies,
     request,
 )
+
+
+def _offline_alpaca_source_policy() -> SourcePolicy:
+    """Allow only the Alpaca market-data hosts for HTTP-mocked adapter tests."""
+    return SourcePolicy(
+        version="1",
+        quality_source_roles=(SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR),
+        allowed_adapters=("alpaca",),
+        allowed_https_domains=("api.alpaca.markets", "data.alpaca.markets"),
+        allowed_hosts_by_adapter=FrozenMap(
+            {"alpaca": ("api.alpaca.markets", "data.alpaca.markets")}
+        ),
+        freshness_by_data_type=FrozenMap({"market_data": 60}),
+        cache_retention_seconds=60,
+        request_deadline_seconds=Decimal("10"),
+        retry_attempts=0,
+        retry_backoff_seconds=Decimal("0.1"),
+        retry_jitter_seconds=Decimal("0.1"),
+        per_run_request_budgets=FrozenMap({"market_data": 20}),
+        maximum_response_bytes=1_000_000,
+        allowed_content_types=("application/json",),
+        excerpt_limits=FrozenMap({"application/json": 4096}),
+    )
 
 
 def test_f01_global_alpaca_outage_publishes_only_a_hashed_operational_failure(
@@ -1337,9 +1362,6 @@ def test_m02_alpaca_credential_failures_are_secret_free_operational_results(
     from finance_research_agent.adapters.alpaca import AlpacaMarketDataProvider
     from finance_research_agent.adapters.http_client import SafeHttpClient
     from finance_research_agent.application.premarket_preparation import prepare_research_packet
-    from finance_research_agent.domain.enums import SourceRole
-    from finance_research_agent.domain.policies import SourcePolicy
-    from finance_research_agent.domain.types import FrozenMap
     from finance_research_agent.settings import Settings
 
     fake_key = "offline-invalid-key"
@@ -1357,28 +1379,9 @@ def test_m02_alpaca_credential_failures_are_secret_free_operational_results(
             json={"message": "synthetic credential rejection"},
         )
 
-    source_policy = SourcePolicy(
-        version="1",
-        quality_source_roles=(SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR),
-        allowed_adapters=("alpaca",),
-        allowed_https_domains=("api.alpaca.markets", "data.alpaca.markets"),
-        allowed_hosts_by_adapter=FrozenMap(
-            {"alpaca": ("api.alpaca.markets", "data.alpaca.markets")}
-        ),
-        freshness_by_data_type=FrozenMap({"market_data": 60}),
-        cache_retention_seconds=60,
-        request_deadline_seconds=Decimal("10"),
-        retry_attempts=0,
-        retry_backoff_seconds=Decimal("0.1"),
-        retry_jitter_seconds=Decimal("0.1"),
-        per_run_request_budgets=FrozenMap({"market_data": 20}),
-        maximum_response_bytes=1_000_000,
-        allowed_content_types=("application/json",),
-        excerpt_limits=FrozenMap({"application/json": 4096}),
-    )
     transport = httpx.MockTransport(respond)
     http_client = SafeHttpClient(
-        source_policy,
+        _offline_alpaca_source_policy(),
         transport=transport,
         resolver=lambda host, port: ("93.184.216.34",),
         clock=lambda: now,
@@ -1516,3 +1519,111 @@ def test_m04_missing_current_quote_preserves_history_and_disables_sizing(
     )
     assert replay.json_matches is True
     assert replay.markdown_matches is True
+
+
+def test_m10_alpaca_latest_schema_drift_fails_exactly_without_guessing_fields(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from finance_research_agent.adapters.alpaca import AlpacaMarketDataProvider
+    from finance_research_agent.adapters.http_client import SafeHttpClient
+    from finance_research_agent.application import premarket_preparation
+    from finance_research_agent.application.market_collection import SymbolMarketCollection
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.settings import Settings
+
+    fake_key = "offline-schema-key"
+    fake_secret = "offline-schema-secret"
+    now = datetime(2026, 9, 28, 12, 45, tzinfo=UTC)
+    http_requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        http_requests.append(request)
+        symbols = request.url.params["symbols"].split(",")
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "trades": {
+                    symbol: {
+                        "p": 101.25,
+                        "s": 100,
+                        "t": "2026-09-28T12:44:00Z",
+                        "x": "V",
+                        "future_price_field": "must not be guessed",
+                    }
+                    for symbol in symbols
+                }
+            },
+        )
+
+    settings = Settings(
+        data_dir=tmp_path,
+        alpaca_api_key=fake_key,
+        alpaca_api_secret=fake_secret,
+    )
+    alpaca = AlpacaMarketDataProvider(
+        settings,
+        SafeHttpClient(
+            _offline_alpaca_source_policy(),
+            transport=httpx.MockTransport(respond),
+            resolver=lambda host, port: ("93.184.216.34",),
+            clock=lambda: now,
+        ),
+        clock=lambda: now,
+    )
+
+    class SchemaDriftWithValidHistory(MarketData):
+        def fetch_premarket_observations(self, symbols, as_of, **kwargs):
+            self.calls.append("prices")
+            return alpaca.fetch_premarket_observations(symbols, as_of, **kwargs)
+
+    provider = SchemaDriftWithValidHistory()
+    deps = replace(dependencies(tmp_path / "service"), market_data=provider)
+    captured_collections = []
+    checkpoint_quality = premarket_preparation.checkpoint_collected_market_data_quality
+
+    def capture_collection(repository, collected, *args, **kwargs):
+        captured_collections.append(collected.collection)
+        return checkpoint_quality(repository, collected, *args, **kwargs)
+
+    monkeypatch.setattr(
+        premarket_preparation,
+        "checkpoint_collected_market_data_quality",
+        capture_collection,
+    )
+    prepared = prepare_research_packet(request(), deps)
+
+    assert prepared.outcome == "PUBLISHED"
+    assert prepared.failure_code is ErrorCode.PROVIDER_SCHEMA_DRIFT
+    assert prepared.research_packet is None
+    assert prepared.data_quality is not None
+    assert prepared.data_quality.status is DataQualityStatus.FAIL
+    assert ErrorCode.PROVIDER_SCHEMA_DRIFT in prepared.data_quality.global_reason_codes
+    assert prepared.stored_run is not None and prepared.stored_run.published
+    assert provider.calls == ["instruments", "bars", "prices", "readiness"]
+    assert len(http_requests) == 1
+    assert http_requests[0].url.path == "/v2/stocks/trades/latest"
+    assert http_requests[0].headers["APCA-API-KEY-ID"] == fake_key
+    assert http_requests[0].headers["APCA-API-SECRET-KEY"] == fake_secret
+
+    assert len(captured_collections) == 1
+    collection = captured_collections[0]
+    assert "AAPL" in {item.symbol for item in collection.symbols}
+    for item in collection.symbols:
+        assert isinstance(item, SymbolMarketCollection)
+        assert item.daily_bars
+        assert isinstance(item.premarket_observation, ProviderFailure)
+        assert item.premarket_observation.error_code is ErrorCode.PROVIDER_SCHEMA_DRIFT
+        assert item.premarket_observation.symbol is None
+        assert item.premarket_observation.message == "premarket response schema drift"
+
+    report = deps.run_repository.get_report(prepared.stored_run.run_id)
+    assert report is not None
+    assert ErrorCode.PROVIDER_SCHEMA_DRIFT.value in report
+    assert fake_key not in report and fake_secret not in report
+    assert "future_price_field" not in report
