@@ -4,7 +4,6 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
-from pydantic import TypeAdapter
 
 from finance_research_agent.domain.enums import ReducedReportReason, ValidationCode
 from finance_research_agent.domain.errors import ErrorCode
@@ -25,7 +24,6 @@ from finance_research_agent.evaluation.models import (
     SCENARIO_IDS,
     CurrentScopeExpectation,
     CurrentScopeServiceObservation,
-    DomainAssertion,
     ScenarioAssertionId,
 )
 from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
@@ -562,7 +560,7 @@ def test_s25_full_evaluation_runs_both_missed_window_service_outcomes(
 @pytest.mark.parametrize(
     ("scenario_index", "assertion", "evidence_field"),
     [
-        (0, ScenarioAssertionId.SOURCE_LIMITATIONS_ADJACENT, "source_limitations_adjacent"),
+        (5, ScenarioAssertionId.SOURCE_LIMITATIONS_ADJACENT, "source_limitations_adjacent"),
         (2, ScenarioAssertionId.ALL_WATCHLIST_EXCLUSIONS_VISIBLE, "watchlist_exclusions_visible"),
     ],
 )
@@ -610,9 +608,12 @@ def test_evaluation_runner_fails_report_assertion_without_observed_report_eviden
 def test_evaluation_runner_records_mismatched_domain_assertion(tmp_path: Path) -> None:
     scenario = load_evaluation_scenarios()[0]
     original = scenario.domain_assertions[0]
-    mismatched = TypeAdapter(DomainAssertion).validate_python(
-        original.model_dump()
-        | {"expected_fields": {"total_score": Decimal(70)}}
+    mismatched = original.model_copy(
+        update={
+            "expected_fields": original.expected_fields.model_copy(
+                update={"total_score": Decimal(70)}
+            )
+        }
     )
     scenario = scenario.model_copy(update={"domain_assertions": (mismatched,)})
 
@@ -627,7 +628,7 @@ def test_evaluation_runner_records_mismatched_domain_assertion(tmp_path: Path) -
 def test_evaluation_runner_requires_domain_fixtures_before_running_services(
     tmp_path: Path,
 ) -> None:
-    scenario = load_evaluation_scenarios()[0]
+    scenario = load_evaluation_scenarios()[5]
     harness = EvaluationHarness(
         dependencies_factory=lambda current_scenario, expectation: pytest.fail(
             "missing domain fixtures must fail before service execution"
@@ -643,7 +644,7 @@ def test_evaluation_runner_requires_domain_fixtures_before_running_services(
 def test_evaluation_runner_executes_every_declared_case_independently(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    scenario = load_evaluation_scenarios()[0]
+    scenario = load_evaluation_scenarios()[5]
     primary = scenario.current_scope_expectation.primary
     subcase = primary.model_copy(update={"case_id": "SECOND_CASE"})
     scenario = scenario.model_copy(

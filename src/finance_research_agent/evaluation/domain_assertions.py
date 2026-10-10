@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from types import MappingProxyType
 
 from finance_research_agent.domain.eligibility import evaluate_instrument_eligibility
@@ -41,10 +42,11 @@ from finance_research_agent.domain.regime import (
 from finance_research_agent.domain.scoring import (
     CorrelationEvidence,
     SetupCandidate,
+    evaluate_components,
     rank_candidates,
     score_candidate,
 )
-from finance_research_agent.domain.setups import RawSetup, detect_setups
+from finance_research_agent.domain.setups import RawSetup, detect_setups, required_gate_failures
 from finance_research_agent.domain.sizing import calculate_position_sizing
 from finance_research_agent.domain.types import UtcDatetime
 from finance_research_agent.evaluation.models import (
@@ -319,9 +321,43 @@ def execute_domain_assertion(
             event_assessment=fixture.event_assessment,
             data_quality=fixture.data_quality,
         )
+        policy_gates_passed = tuple(
+            not required_gate_failures(
+                setup.symbol,
+                tuple(dict.fromkeys((*setup.eligibility_gates, *fixture.eligibility_gates))),
+                setup.event_assessment,
+                setup.data_quality,
+            )
+            for setup in setups
+        )
+        restrengthening_conditions_satisfied = tuple(
+            all(
+                condition in setup.entry_condition
+                for condition in fixture.setup_policy.restrengthening_conditions
+            )
+            for setup in setups
+        )
+        scored_plan_statuses: tuple[PlanStatus, ...] = ()
+        if "scored_plan_statuses" in assertion.expected_fields.model_fields_set:
+            scored_plan_statuses = tuple(
+                score_candidate(
+                    setup,
+                    setup_policy=fixture.setup_policy,
+                    eligibility_gates=fixture.eligibility_gates,
+                    event_assessment=fixture.event_assessment,
+                    data_quality=fixture.data_quality,
+                    regime_policy_version="evaluation-fixture-v1",
+                ).plan_status
+                for setup in setups
+            )
         return _compare(
             assertion,
-            {"setup_types": tuple(setup.setup_type for setup in setups)},
+            {
+                "setup_types": tuple(setup.setup_type for setup in setups),
+                "policy_gates_passed": policy_gates_passed,
+                "restrengthening_conditions_satisfied": restrengthening_conditions_satisfied,
+                "scored_plan_statuses": scored_plan_statuses,
+            },
         )
     if isinstance(assertion, CandidateScoreAssertion):
         fixture = fixtures.get(assertion.fixture_id)
@@ -341,6 +377,10 @@ def execute_domain_assertion(
                 "setup_type": candidate.setup_type,
                 "total_score": candidate.total_score,
                 "plan_status": candidate.plan_status,
+                "score_at_least_70": candidate.total_score >= Decimal("70"),
+                "numeric_citation_bindings_match": _numeric_citation_bindings_match(
+                    candidate, fixture.setup
+                ),
             },
         )
     if isinstance(assertion, CandidateRankingAssertion):
@@ -476,3 +516,24 @@ def _compare(
         matched_fields=tuple(matched),
         mismatched_fields=tuple(mismatched),
     )
+
+
+def _numeric_citation_bindings_match(
+    candidate: SetupCandidate, setup: RawSetup
+) -> bool:
+    """Check that scored numeric components use the fixture's exact metrics and citations."""
+
+    expected = evaluate_components(setup, candidate.event_assessment, candidate.data_quality)
+    for actual_component, expected_component, expected_weight in zip(
+        candidate.components, expected, setup.policy.score_weights, strict=True
+    ):
+        if (
+            actual_component.name != expected_component.name
+            or actual_component.quality != expected_component.quality
+            or actual_component.weight != expected_weight
+            or actual_component.points != expected_component.quality * expected_weight
+            or actual_component.metric_ids != expected_component.metric_ids
+            or actual_component.evidence_ids != expected_component.evidence_ids
+        ):
+            return False
+    return True

@@ -13,6 +13,7 @@ from finance_research_agent.evaluation.models import (
     CandidateRankingAssertion,
     CandidateScoreAssertion,
     DomainAssertion,
+    EvaluationScenario,
     EventRiskAssertion,
     InstrumentEligibilityAssertion,
     PlanBuildAssertion,
@@ -138,6 +139,45 @@ def test_manifest_domain_assertions_use_closed_typed_variants() -> None:
         "ENTRY_ZONE_OBSERVED",
         "AMBIGUOUS_SEQUENCE",
     )
+
+
+def test_s01_manifest_requires_score_floor_and_numeric_citation_binding() -> None:
+    scenario = load_evaluation_scenarios()[0]
+    payload = scenario.model_dump(mode="python")
+    payload["domain_assertions"] = ()
+
+    with pytest.raises(ValidationError, match="S01.*required domain assertion"):
+        EvaluationScenario.model_validate(payload, strict=True)
+
+
+def test_s02_manifest_requires_restrengthening_and_draft_scoring() -> None:
+    scenario = load_evaluation_scenarios()[1]
+    payload = scenario.model_dump(mode="python")
+    payload["domain_assertions"] = ()
+
+    with pytest.raises(ValidationError, match="S02.*required domain assertion"):
+        EvaluationScenario.model_validate(payload, strict=True)
+
+
+@pytest.mark.parametrize(
+    ("scenario_index", "field"),
+    (
+        (0, "score_at_least_70"),
+        (0, "numeric_citation_bindings_match"),
+        (1, "policy_gates_passed"),
+        (1, "restrengthening_conditions_satisfied"),
+        (1, "scored_plan_statuses"),
+    ),
+)
+def test_manifest_rejects_missing_release_critical_projection_fields(
+    scenario_index: int, field: str
+) -> None:
+    scenario = load_evaluation_scenarios()[scenario_index]
+    payload = scenario.model_dump(mode="python")
+    payload["domain_assertions"][0]["expected_fields"].pop(field)
+
+    with pytest.raises(ValidationError, match="required domain assertion fields"):
+        EvaluationScenario.model_validate(payload, strict=True)
 
 
 def test_domain_assertion_rejects_fixture_from_another_operation() -> None:

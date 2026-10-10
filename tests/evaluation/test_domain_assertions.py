@@ -22,6 +22,7 @@ from finance_research_agent.domain.events import EventEvidenceProjection
 from finance_research_agent.domain.models import EventRecord, InstrumentIdentity, SourceHealth
 from finance_research_agent.domain.regime import RegimePolicy
 from finance_research_agent.domain.scoring import CorrelationEvidence
+from finance_research_agent.evaluation import domain_assertions as domain_assertions_module
 from finance_research_agent.evaluation.domain_assertions import (
     CandidateRankingFixture,
     CandidateScoreFixture,
@@ -657,6 +658,96 @@ def test_every_manifest_domain_assertion_runs_against_its_named_real_fixture() -
         for scenario_id, assertion, outcome in outcomes
         if outcome.status != "PASS"
     )
+
+
+def test_s01_manifest_asserts_score_floor_and_metric_evidence_bindings() -> None:
+    scenario = load_evaluation_scenarios()[0]
+    assertion = scenario.domain_assertions[0]
+    fixture_bank = build_domain_fixture_bank()
+
+    outcome = execute_domain_assertion(assertion, fixture_bank)
+
+    assert assertion.expected_fields.score_at_least_70 is True
+    assert assertion.expected_fields.numeric_citation_bindings_match is True
+    assert outcome.status == "PASS"
+    assert "score_at_least_70" in outcome.matched_fields
+    assert "numeric_citation_bindings_match" in outcome.matched_fields
+
+
+def test_s01_metric_evidence_binding_mismatch_fails_the_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = load_evaluation_scenarios()[0]
+    assertion = scenario.domain_assertions[0]
+    original_score_candidate = domain_assertions_module.score_candidate
+
+    def misbound_candidate(*args, **kwargs):
+        candidate = original_score_candidate(*args, **kwargs)
+        first = candidate.components[0].model_copy(update={"evidence_ids": ("unbound",)})
+        return candidate.model_copy(
+            update={"components": (first, *candidate.components[1:])}
+        )
+
+    monkeypatch.setattr(domain_assertions_module, "score_candidate", misbound_candidate)
+    outcome = execute_domain_assertion(assertion, build_domain_fixture_bank())
+
+    assert outcome.status == "FAIL"
+    assert outcome.mismatched_fields == ("numeric_citation_bindings_match",)
+
+
+def test_s01_numeric_component_mismatch_fails_the_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = load_evaluation_scenarios()[0]
+    assertion = scenario.domain_assertions[0]
+    original_score_candidate = domain_assertions_module.score_candidate
+
+    def miscalculated_candidate(*args, **kwargs):
+        candidate = original_score_candidate(*args, **kwargs)
+        first = candidate.components[0]
+        changed_first = first.model_copy(update={"points": first.points + Decimal("1")})
+        return candidate.model_copy(
+            update={
+                "components": (changed_first, *candidate.components[1:]),
+                "positive_score": candidate.positive_score + Decimal("1"),
+                "total_score": candidate.total_score + Decimal("1"),
+            }
+        )
+
+    monkeypatch.setattr(domain_assertions_module, "score_candidate", miscalculated_candidate)
+    outcome = execute_domain_assertion(assertion, build_domain_fixture_bank())
+
+    assert outcome.status == "FAIL"
+    assert "numeric_citation_bindings_match" in outcome.mismatched_fields
+
+
+def test_s01_score_below_floor_fails_the_assertion(monkeypatch: pytest.MonkeyPatch) -> None:
+    scenario = load_evaluation_scenarios()[0]
+    assertion = scenario.domain_assertions[0]
+    original_score_candidate = domain_assertions_module.score_candidate
+
+    def under_threshold_candidate(*args, **kwargs):
+        candidate = original_score_candidate(*args, **kwargs)
+        return candidate.model_copy(update={"total_score": Decimal("69")})
+
+    monkeypatch.setattr(domain_assertions_module, "score_candidate", under_threshold_candidate)
+    outcome = execute_domain_assertion(assertion, build_domain_fixture_bank())
+
+    assert outcome.status == "FAIL"
+    assert "score_at_least_70" in outcome.mismatched_fields
+
+
+def test_s02_pullback_manifest_asserts_restrengthening_gates_and_draft_score() -> None:
+    scenario = load_evaluation_scenarios()[1]
+    assertion = scenario.domain_assertions[0]
+
+    outcome = execute_domain_assertion(assertion, build_domain_fixture_bank())
+
+    assert assertion.expected_fields.restrengthening_conditions_satisfied == (True,)
+    assert assertion.expected_fields.scored_plan_statuses == (PlanStatus.DRAFT,)
+    assert outcome.status == "PASS"
+    assert "restrengthening_conditions_satisfied" in outcome.matched_fields
+    assert "scored_plan_statuses" in outcome.matched_fields
 
 
 def test_every_domain_operation_rejects_an_untyped_fixture_record() -> None:

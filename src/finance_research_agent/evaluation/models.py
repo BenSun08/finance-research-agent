@@ -165,12 +165,17 @@ class InstrumentEligibilityExpected(_ExpectedProjection):
 
 class SetupDetectionExpected(_ExpectedProjection):
     setup_types: tuple[SetupType, ...] | None = None
+    policy_gates_passed: tuple[bool, ...] | None = None
+    restrengthening_conditions_satisfied: tuple[bool, ...] | None = None
+    scored_plan_statuses: tuple[PlanStatus, ...] | None = None
 
 
 class CandidateScoreExpected(_ExpectedProjection):
     setup_type: SetupType | None = None
     total_score: Annotated[Decimal, Field(ge=0, allow_inf_nan=False)] | None = None
     plan_status: PlanStatus | None = None
+    score_at_least_70: bool | None = None
+    numeric_citation_bindings_match: bool | None = None
 
 
 class CandidateRankingExpected(_ExpectedProjection):
@@ -411,6 +416,39 @@ class EvaluationScenario(StrictModel):
             raise ValueError("injected failure ids must be unique")
         if len(set(self.assertions)) != len(self.assertions):
             raise ValueError("scenario assertion ids must be unique")
+        required_domain_fields = {
+            FixtureSetId.S01_BREAKOUT: (
+                CandidateScoreAssertion,
+                {
+                    "setup_type",
+                    "total_score",
+                    "plan_status",
+                    "score_at_least_70",
+                    "numeric_citation_bindings_match",
+                },
+            ),
+            FixtureSetId.S02_PULLBACK: (
+                SetupDetectionAssertion,
+                {
+                    "setup_types",
+                    "policy_gates_passed",
+                    "restrengthening_conditions_satisfied",
+                    "scored_plan_statuses",
+                },
+            ),
+        }
+        requirement = required_domain_fields.get(self.fixture_set)
+        if requirement is not None:
+            assertion_type, required_fields = requirement
+            matching = tuple(
+                assertion
+                for assertion in self.domain_assertions
+                if isinstance(assertion, assertion_type)
+            )
+            if len(matching) != 1 or not required_fields <= matching[
+                0
+            ].expected_fields.model_fields_set:
+                raise ValueError(f"{self.id.value} is missing its required domain assertion fields")
         return self
 
 

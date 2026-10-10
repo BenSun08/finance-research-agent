@@ -117,6 +117,8 @@ scenarios:
       setup_type: BREAKOUT_CONTINUATION
       total_score: "79.65965732087227414330218068"
       plan_status: DRAFT
+      score_at_least_70: true
+      numeric_citation_bindings_match: true
 - id: S02
   title: Permissive valid pullback
   fixture_set: S02_PULLBACK
@@ -233,6 +235,12 @@ scenarios:
     expected_fields:
       setup_types:
       - TREND_PULLBACK
+      policy_gates_passed:
+      - true
+      restrengthening_conditions_satisfied:
+      - true
+      scored_plan_statuses:
+      - DRAFT
 - id: S03
   title: Neutral candidate below threshold
   fixture_set: S03_NEUTRAL_THRESHOLD
