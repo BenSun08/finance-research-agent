@@ -131,6 +131,9 @@ def load_shadow_evaluation_evidence(
             raise TypeError(f"{record_kind} repository must return an immutable typed tuple")
         identifier_field = "feedback_id" if record_type is RecordedFeedback else "id"
         _require_unique_ids(records, identifier_field, record_kind)
+    release_matrix_keys = tuple((item.check_id, item.python_version) for item in release_receipts)
+    if len(release_matrix_keys) != len(set(release_matrix_keys)):
+        raise ValueError("duplicate release check matrix evidence")
 
     verified_by_run_id = {item.stored_run.run_id: item for item in verified_runs}
     period_feedback: list[RecordedFeedback] = []

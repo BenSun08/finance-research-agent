@@ -20,6 +20,9 @@ from finance_research_agent.domain.models import (
 )
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
+    ReleaseCheckConclusion,
+    ReleaseCheckId,
+    ReleaseCheckReceipt,
     ShadowDayAvailability,
     ShadowDayObservation,
 )
@@ -77,12 +80,13 @@ class _Attestations:
 
 
 class _ReleaseEvidence:
-    def __init__(self) -> None:
+    def __init__(self, receipts: tuple[ReleaseCheckReceipt, ...] = ()) -> None:
         self.read_count = 0
+        self.receipts = receipts
 
-    def list_receipts(self) -> tuple[()]:
+    def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]:
         self.read_count += 1
-        return ()
+        return self.receipts
 
 
 def test_loader_returns_empty_snapshot_for_exact_inclusive_period() -> None:
@@ -246,4 +250,55 @@ def test_loader_rejects_day_observations_with_unknown_run_references() -> None:
             _Observations((observation,)),  # type: ignore[arg-type]
             _Attestations(),  # type: ignore[arg-type]
             _ReleaseEvidence(),  # type: ignore[arg-type]
+        )
+
+
+def test_loader_rejects_duplicate_release_check_matrix_evidence() -> None:
+    import pytest
+
+    from finance_research_agent.application import shadow_evidence_loader
+
+    common = {
+        "check_id": ReleaseCheckId.LINT,
+        "source_commit_sha256": "a" * 64,
+        "source_tree_sha256": "b" * 64,
+        "repository_id": "12345",
+        "workflow_id": "67890",
+        "python_version": "3.13",
+        "completed_at": datetime(2026, 10, 11, 1, tzinfo=UTC),
+        "conclusion": ReleaseCheckConclusion.SUCCESS,
+        "response_sha256": "c" * 64,
+    }
+    first = ReleaseCheckReceipt(
+        **(
+            common
+            | {
+                "id": "receipt-lint-one",
+                "actions_run_id": "run-1",
+                "actions_job_id": "job-1",
+                "actions_step_id": "step-1",
+            }
+        )
+    )
+    second = ReleaseCheckReceipt(
+        **(
+            common
+            | {
+                "id": "receipt-lint-two",
+                "actions_run_id": "run-2",
+                "actions_job_id": "job-2",
+                "actions_step_id": "step-2",
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="duplicate release check matrix evidence"):
+        shadow_evidence_loader.load_shadow_evaluation_evidence(
+            ShadowPeriod(start_date=date(2026, 10, 5), end_date=date(2026, 10, 9)),
+            _Runs(),  # type: ignore[arg-type]
+            _Artifacts(),  # type: ignore[arg-type]
+            _Feedback(),  # type: ignore[arg-type]
+            _Observations(),  # type: ignore[arg-type]
+            _Attestations(),  # type: ignore[arg-type]
+            _ReleaseEvidence((first, second)),  # type: ignore[arg-type]
         )
