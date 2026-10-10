@@ -45,10 +45,15 @@ class _Calendar:
 
 
 class _EmptyRuns:
-    def __init__(self, records: tuple[StoredRun, ...] = ()) -> None:
+    def __init__(
+        self,
+        records: tuple[StoredRun, ...] = (),
+        staged_artifacts: dict[tuple[str, str], bytes] | None = None,
+    ) -> None:
         self.records = records
+        self.staged_artifacts = staged_artifacts or {}
 
-    def list_runs(self, market_date_start: date, market_date_end: date) -> tuple[()]:
+    def list_runs(self, market_date_start: date, market_date_end: date) -> tuple[StoredRun, ...]:
         return tuple(
             item
             for item in self.records
@@ -59,7 +64,7 @@ class _EmptyRuns:
         return next((item for item in self.records if item.run.run_id == run_id), None)
 
     def read_staged_artifact(self, run_id: str, artifact_name: str) -> bytes | None:
-        return None
+        return self.staged_artifacts.get((run_id, artifact_name))
 
 
 class _EmptyArtifacts:
@@ -119,6 +124,90 @@ def _scorecard(**changes: object) -> ShadowScorecard:
     values: dict[str, object] = {"gate_results": _gates()}
     values.update(changes)
     return ShadowScorecard(**values)
+
+
+def _failed_normal_provider_evidence(valid_packet, tmp_path, durations: tuple[int, ...] | None):
+    import json
+
+    from finance_research_agent.application.performance_telemetry import RunTelemetryRecorder
+    from finance_research_agent.application.shadow_evidence_loader import (
+        load_shadow_evaluation_evidence,
+    )
+    from finance_research_agent.domain.enums import DataQualityStatus, ExecutionStatus
+    from finance_research_agent.domain.models import RunCheckpoint
+    from finance_research_agent.domain.types import FrozenMap
+
+    base_bundle, _ = personal_reduced_publication(valid_packet, tmp_path)
+    recorder = RunTelemetryRecorder(monotonic_ns=lambda: 0)
+    recorder.record_http_exchange("alpaca", 1, 256)
+    telemetry = recorder.snapshot()
+    payload = json.dumps(
+        telemetry.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    digest = sha256(payload).hexdigest()
+    artifact_name = f"performance_telemetry_{digest}"
+    market_dates: list[date] = []
+    market_date = base_bundle.run.market_date
+    required_runs = len(durations) if durations is not None else 1
+    while len(market_dates) < required_runs:
+        if market_date.weekday() < 5:
+            market_dates.append(market_date)
+        market_date = date.fromordinal(market_date.toordinal() + 1)
+
+    stored_runs: list[StoredRun] = []
+    staged_artifacts: dict[tuple[str, str], bytes] = {}
+    for index, run_date in enumerate(market_dates):
+        invoked_at = datetime.combine(run_date, time(12, 45), tzinfo=UTC)
+        run = base_bundle.run.model_copy(
+            update={
+                "run_id": f"premarket-{run_date.isoformat()}-r1",
+                "market_date": run_date,
+                "revision": 1,
+                "invoked_at": invoked_at,
+                "evidence_cutoff_at": invoked_at,
+                "execution_status": (
+                    ExecutionStatus.FAILED if durations is not None else ExecutionStatus.ANALYZING
+                ),
+                "data_quality_status": DataQualityStatus.FAIL,
+            }
+        )
+        terminal_duration = durations[index] if durations is not None else None
+        checkpoint = RunCheckpoint(
+            run_id=run.run_id,
+            stage="FAILED" if terminal_duration is not None else "ANALYZING",
+            execution_status=(
+                ExecutionStatus.FAILED
+                if terminal_duration is not None
+                else ExecutionStatus.ANALYZING
+            ),
+            data_quality_status=DataQualityStatus.FAIL,
+            delivery_status=run.delivery_status,
+            written_at=(
+                invoked_at + timedelta(seconds=terminal_duration)
+                if terminal_duration is not None
+                else invoked_at + timedelta(minutes=2)
+            ),
+            evidence_cutoff_at=run.evidence_cutoff_at,
+            artifact_hashes=FrozenMap({artifact_name: digest}),
+            resumable=terminal_duration is None,
+        )
+        stored_runs.append(StoredRun(run=run, checkpoints=(checkpoint,)))
+        staged_artifacts[(run.run_id, artifact_name)] = payload
+
+    period = ShadowPeriod(start_date=market_dates[0], end_date=market_dates[-1])
+    return load_shadow_evaluation_evidence(
+        period,
+        _EmptyRuns(tuple(stored_runs), staged_artifacts),  # type: ignore[arg-type]
+        _EmptyArtifacts(),  # type: ignore[arg-type]
+        _EmptyFeedback(),  # type: ignore[arg-type]
+        _EmptyObservations(()),  # type: ignore[arg-type]
+        _EmptyAttestations(),  # type: ignore[arg-type]
+        _EmptyReleaseEvidence(),  # type: ignore[arg-type]
+    )
 
 
 def test_shadow_period_uses_inclusive_ordered_date_bounds() -> None:
@@ -574,3 +663,59 @@ def test_verified_scorecard_rejects_feedback_not_in_loader_snapshot(valid_packet
             _Calendar(),
             evidence=evidence,
         )
+
+
+@pytest.mark.parametrize(
+    ("durations", "expected_status", "expected_p95"),
+    (
+        ((900,) * 19 + (901,), EvaluationGateStatus.PASS, 900),
+        ((900,) * 18 + (901, 901), EvaluationGateStatus.FAIL, 901),
+    ),
+)
+def test_verified_scorecard_uses_nearest_rank_normal_provider_duration_p95(
+    valid_packet,
+    tmp_path,
+    durations: tuple[int, ...],
+    expected_status: EvaluationGateStatus,
+    expected_p95: int,
+) -> None:
+    evidence = _failed_normal_provider_evidence(valid_packet, tmp_path, durations)
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    assert len(scorecard.duration_observations) == 20
+    gate = next(
+        result
+        for result in scorecard.gate_results
+        if result.id is ShadowGateId.NORMAL_PROVIDER_DURATION
+    )
+    assert gate.status is expected_status
+    assert gate.measured_value == expected_p95
+    assert gate.required_value == 900
+
+
+def test_normal_provider_duration_gate_is_pending_without_a_terminal_checkpoint(
+    valid_packet, tmp_path
+) -> None:
+    evidence = _failed_normal_provider_evidence(valid_packet, tmp_path, None)
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    assert scorecard.duration_observations == ()
+    gate = next(
+        result
+        for result in scorecard.gate_results
+        if result.id is ShadowGateId.NORMAL_PROVIDER_DURATION
+    )
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert gate.reason_codes == ("NORMAL_PROVIDER_TERMINAL_EVIDENCE_MISSING",)

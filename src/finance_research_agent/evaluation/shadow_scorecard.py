@@ -184,6 +184,64 @@ def _published_content_index(records: Sequence[object]) -> dict[str, str]:
     return content_by_id
 
 
+def _normal_provider_duration_evidence(
+    evidence: ShadowEvaluationEvidence,
+) -> tuple[tuple[RunDurationObservation, ...], EvaluationGate]:
+    normal_attempts = tuple(item for item in evidence.verified_runs if item.normal_provider is True)
+    unresolved_attempts = tuple(
+        item for item in evidence.verified_runs if item.normal_provider is None
+    )
+    observations = tuple(
+        sorted(
+            (
+                RunDurationObservation(
+                    run_id=item.stored_run.run_id,
+                    market_date=item.stored_run.run.market_date,
+                    duration_seconds=item.duration_seconds,
+                )
+                for item in normal_attempts
+                if item.duration_seconds is not None
+            ),
+            key=lambda item: (item.market_date, item.run_id),
+        )
+    )
+    evidence_ids = tuple(
+        sorted({item.stored_run.run_id for item in normal_attempts + unresolved_attempts})
+    )
+    if not normal_attempts or unresolved_attempts or len(observations) != len(normal_attempts):
+        reason_code = (
+            "NORMAL_PROVIDER_TELEMETRY_MISSING"
+            if unresolved_attempts
+            else (
+                "NORMAL_PROVIDER_TERMINAL_EVIDENCE_MISSING"
+                if normal_attempts
+                else "NO_NORMAL_PROVIDER_ATTEMPTS"
+            )
+        )
+        return observations, EvaluationGate(
+            id=ShadowGateId.NORMAL_PROVIDER_DURATION,
+            status=EvaluationGateStatus.PENDING,
+            evidence_ids=evidence_ids,
+            reason_codes=(reason_code,),
+            required_value=900,
+        )
+
+    durations = sorted(item.duration_seconds for item in observations)
+    nearest_rank_index = (95 * len(durations) + 99) // 100 - 1
+    percentile_95 = durations[nearest_rank_index]
+    status = EvaluationGateStatus.PASS if percentile_95 <= 900 else EvaluationGateStatus.FAIL
+    return observations, EvaluationGate(
+        id=ShadowGateId.NORMAL_PROVIDER_DURATION,
+        status=status,
+        evidence_ids=evidence_ids,
+        reason_codes=(
+            () if status is EvaluationGateStatus.PASS else ("P95_DURATION_EXCEEDS_900_SECONDS",)
+        ),
+        measured_value=percentile_95,
+        required_value=900,
+    )
+
+
 NonNegativeCount = Annotated[int, Field(ge=0)]
 NonNegativeSeconds = Annotated[int, Field(ge=0)]
 
@@ -456,6 +514,7 @@ def build_shadow_scorecard(
             if current_observations.get(market_date) == {"ONLINE"}
             and market_date in selected_publications
         )
+    duration_observations, duration_gate = _normal_provider_duration_evidence(evidence)
 
     if valid_trading_days >= 20 and complete_day_evidence:
         day_gate = EvaluationGate(
@@ -516,6 +575,7 @@ def build_shadow_scorecard(
 
     specific_gates = {
         ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS: day_gate,
+        ShadowGateId.NORMAL_PROVIDER_DURATION: duration_gate,
         ShadowGateId.TIMELY_PUBLICATION: timely_gate,
     }
     gates = tuple(
@@ -535,6 +595,7 @@ def build_shadow_scorecard(
         valid_trading_days=valid_trading_days,
         eligible_online_days=len(eligible_dates),
         published_in_target_window=published_in_target_window,
+        duration_observations=duration_observations,
         gate_results=gates,
         evidence_hashes=evidence.evidence_hashes,
     )
