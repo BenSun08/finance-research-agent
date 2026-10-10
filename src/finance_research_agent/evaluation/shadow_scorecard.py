@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated
@@ -13,6 +13,7 @@ from pydantic import Field, computed_field, model_validator
 
 from finance_research_agent.domain.models import (
     Identifier,
+    PerformanceTelemetry,
     PublishedArtifact,
     PublishedRunBundle,
     Sha256,
@@ -43,6 +44,10 @@ class VerifiedShadowRunEvidence:
     published_bundle: PublishedRunBundle | None = None
     published_artifact: PublishedArtifact | None = None
     replay_result: ArtifactReplayResult | None = None
+    telemetry: PerformanceTelemetry | None = None
+    normal_provider: bool | None = None
+    terminal_at: datetime | None = None
+    duration_seconds: NonNegativeSeconds | None = None
 
     def __post_init__(self) -> None:
         publication_values = (
@@ -54,6 +59,10 @@ class VerifiedShadowRunEvidence:
             raise ValueError("published run evidence requires a complete verified publication")
         if not self.stored_run.published and any(value is not None for value in publication_values):
             raise ValueError("unpublished run evidence cannot include publication values")
+        if self.duration_seconds is not None and self.terminal_at is None:
+            raise ValueError("run duration requires a verified terminal time")
+        if self.duration_seconds is not None and self.duration_seconds < 0:
+            raise ValueError("run duration must not be negative")
 
 
 @dataclass(frozen=True, slots=True, init=False)
