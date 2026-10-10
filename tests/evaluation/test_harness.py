@@ -41,6 +41,7 @@ from finance_research_agent.evaluation.models import (
     SCENARIO_IDS,
     CurrentScopeExpectation,
     CurrentScopeServiceObservation,
+    EvaluationScenario,
     ScenarioAssertionId,
 )
 from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
@@ -69,6 +70,57 @@ def test_current_scope_harness_runs_real_services_and_verifies_frozen_replay(
     assert outcome.artifact_hashes["research_packet"]
     assert outcome.artifact_hashes["published_bundle"]
     assert outcome.artifact_hashes["report_markdown"]
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    load_evaluation_scenarios(),
+    ids=lambda scenario: scenario.id.value,
+)
+def test_all_scenarios_record_coherent_service_and_assertion_outcomes(
+    tmp_path: Path, scenario: EvaluationScenario
+) -> None:
+    expected_cases = (
+        scenario.current_scope_expectation.primary,
+        *scenario.current_scope_expectation.subcases,
+    )
+    harness = EvaluationHarness(
+        dependencies_factory=lambda current_scenario, expectation: dependencies(
+            tmp_path / current_scenario.id.value / expectation.case_id
+        ),
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        domain_fixtures=build_domain_fixture_bank(),
+    )
+
+    outcome = execute_evaluation_scenario(scenario, harness)
+
+    assert len(outcome.current_scope_outcomes) == len(expected_cases)
+    for actual, expected in zip(outcome.current_scope_outcomes, expected_cases, strict=True):
+        assert actual.current_scope.case_id == expected.case_id
+        if actual.run_id is not None:
+            assert actual.replay_json_matches is True
+            assert actual.replay_markdown_matches is True
+    assert len(outcome.domain_assertion_outcomes) == len(scenario.domain_assertions)
+    assert all(item.status == "PASS" for item in outcome.domain_assertion_outcomes)
+    classified = (
+        *outcome.assertions_passed,
+        *outcome.assertions_failed,
+        *outcome.assertions_pending,
+    )
+    assert len(classified) == len(scenario.assertions)
+    assert set(classified) == set(scenario.assertions)
+    if ScenarioAssertionId.CURRENT_SCOPE_MATCHES in scenario.assertions:
+        matches = all(
+            actual.current_scope == expected
+            for actual, expected in zip(
+                outcome.current_scope_outcomes, expected_cases, strict=True
+            )
+        )
+        match_passed = ScenarioAssertionId.CURRENT_SCOPE_MATCHES in outcome.assertions_passed
+        match_failed = ScenarioAssertionId.CURRENT_SCOPE_MATCHES in outcome.assertions_failed
+        assert match_passed is matches
+        assert match_failed is not matches
 
 
 def _evaluation_harness(tmp_path: Path, assertion) -> EvaluationHarness:
