@@ -184,6 +184,163 @@ def _published_content_index(records: Sequence[object]) -> dict[str, str]:
     return content_by_id
 
 
+def _select_daily_feedback(
+    evidence: ShadowEvaluationEvidence,
+    selected_publications: dict[date, VerifiedShadowRunEvidence],
+    eligible_dates: Sequence[date],
+) -> tuple[tuple[date, ...], dict[date, RecordedFeedback]]:
+    if evidence.origin is not ShadowEvaluationOrigin.PERSONAL_SHADOW:
+        return (), {}
+    report_dates = tuple(
+        sorted(
+            market_date for market_date in selected_publications if market_date in eligible_dates
+        )
+    )
+    feedback_by_date: dict[date, RecordedFeedback] = {}
+    for market_date in report_dates:
+        verified_run = selected_publications[market_date]
+        artifact = verified_run.published_artifact
+        assert artifact is not None
+        complete_feedback = tuple(
+            item
+            for item in evidence.feedback_records
+            if item.run_id == verified_run.stored_run.run_id
+            and item.bundle_sha256 == artifact.bundle_sha256
+            and item.schema_version == "0.2"
+            and item.executive_review_duration_seconds is not None
+            and item.detailed_review_duration_seconds is not None
+            and item.executive_identification is not None
+        )
+        if complete_feedback:
+            feedback_by_date[market_date] = min(
+                complete_feedback,
+                key=lambda item: (item.recorded_at, item.feedback_id),
+            )
+    return report_dates, feedback_by_date
+
+
+def _median(values: Sequence[int]) -> Decimal:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return Decimal(ordered[middle])
+    return Decimal(ordered[middle - 1] + ordered[middle]) / Decimal(2)
+
+
+def _daily_review_time_gate(
+    report_dates: Sequence[date],
+    feedback_by_date: dict[date, RecordedFeedback],
+    all_daily_feedback_ids: Sequence[str] = (),
+) -> tuple[tuple[DailyReviewTimeObservation, ...], EvaluationGate]:
+    observations = tuple(
+        DailyReviewTimeObservation(
+            market_date=market_date,
+            feedback_id=feedback_record.feedback_id,
+            executive_review_duration_seconds=feedback_record.executive_review_duration_seconds,
+            detailed_review_duration_seconds=feedback_record.detailed_review_duration_seconds,
+        )
+        for market_date, feedback_record in sorted(feedback_by_date.items())
+    )
+    evidence_ids = tuple(
+        sorted(
+            {feedback.feedback_id for feedback in feedback_by_date.values()}
+            | set(all_daily_feedback_ids)
+            | {f"daily-report-{market_date.isoformat()}" for market_date in report_dates}
+        )
+    )
+    if not report_dates or len(feedback_by_date) != len(report_dates):
+        return observations, EvaluationGate(
+            id=ShadowGateId.REVIEW_TIME,
+            status=EvaluationGateStatus.PENDING,
+            evidence_ids=evidence_ids,
+            reason_codes=(
+                "NO_ELIGIBLE_RESEARCH_REPORTS"
+                if not report_dates
+                else "COMPLETE_DAILY_FEEDBACK_MISSING",
+            ),
+        )
+
+    executive_median = _median(
+        tuple(
+            int(item.executive_review_duration_seconds)
+            for item in observations
+            if item.executive_review_duration_seconds is not None
+        )
+    )
+    detailed_median = _median(
+        tuple(
+            int(item.detailed_review_duration_seconds)
+            for item in observations
+            if item.detailed_review_duration_seconds is not None
+        )
+    )
+    passed = executive_median <= 180 and detailed_median <= 900
+    measured = f"executive={executive_median};detailed={detailed_median}"
+    return observations, EvaluationGate(
+        id=ShadowGateId.REVIEW_TIME,
+        status=EvaluationGateStatus.PASS if passed else EvaluationGateStatus.FAIL,
+        evidence_ids=evidence_ids,
+        reason_codes=() if passed else ("REVIEW_TIME_LIMIT_EXCEEDED",),
+        measured_value=measured,
+        required_value="executive<=180;detailed<=900",
+    )
+
+
+def _daily_usefulness_gate(
+    report_dates: Sequence[date],
+    feedback_by_date: dict[date, RecordedFeedback],
+    all_daily_feedback_ids: Sequence[str] = (),
+) -> tuple[tuple[DailyUsefulnessObservation, ...], EvaluationGate]:
+    observations = tuple(
+        DailyUsefulnessObservation(
+            market_date=market_date,
+            feedback_id=feedback_record.feedback_id,
+            usefulness_score=feedback_record.usefulness_score,
+            corrective_work=feedback_record.notes,
+        )
+        for market_date, feedback_record in sorted(feedback_by_date.items())
+    )
+    evidence_ids = tuple(
+        sorted(
+            {feedback.feedback_id for feedback in feedback_by_date.values()}
+            | set(all_daily_feedback_ids)
+            | {f"daily-report-{market_date.isoformat()}" for market_date in report_dates}
+        )
+    )
+    if not report_dates or len(feedback_by_date) != len(report_dates):
+        return observations, EvaluationGate(
+            id=ShadowGateId.USEFULNESS,
+            status=EvaluationGateStatus.PENDING,
+            evidence_ids=evidence_ids,
+            reason_codes=(
+                "NO_ELIGIBLE_RESEARCH_REPORTS"
+                if not report_dates
+                else "COMPLETE_DAILY_FEEDBACK_MISSING",
+            ),
+        )
+
+    average_usefulness = Decimal(
+        sum(item.usefulness_score or 0 for item in observations)
+    ) / Decimal(len(observations))
+    if average_usefulness >= Decimal("4"):
+        status = EvaluationGateStatus.PASS
+        reason_codes: tuple[str, ...] = ()
+    elif any(item.corrective_work is not None for item in observations):
+        status = EvaluationGateStatus.PENDING
+        reason_codes = ("CORRECTIVE_WORK_REQUIRES_VALIDATION",)
+    else:
+        status = EvaluationGateStatus.FAIL
+        reason_codes = ("AVERAGE_USEFULNESS_BELOW_4",)
+    return observations, EvaluationGate(
+        id=ShadowGateId.USEFULNESS,
+        status=status,
+        evidence_ids=evidence_ids,
+        reason_codes=reason_codes,
+        measured_value=average_usefulness,
+        required_value=Decimal("4"),
+    )
+
+
 def _normal_provider_duration_evidence(
     evidence: ShadowEvaluationEvidence,
 ) -> tuple[tuple[RunDurationObservation, ...], EvaluationGate]:
@@ -317,7 +474,7 @@ class DailyUsefulnessObservation(StrictModel):
     market_date: date
     feedback_id: Identifier
     usefulness_score: Annotated[int, Field(ge=1, le=5)] | None = None
-    corrective_work: str | None = Field(default=None, min_length=1, max_length=500)
+    corrective_work: str | None = Field(default=None, min_length=1, max_length=1000)
 
     @model_validator(mode="after")
     def usefulness_has_a_recorded_measure(self) -> DailyUsefulnessObservation:
@@ -514,6 +671,25 @@ def build_shadow_scorecard(
             if current_observations.get(market_date) == {"ONLINE"}
             and market_date in selected_publications
         )
+    report_dates, daily_feedback = _select_daily_feedback(
+        evidence,
+        selected_publications,
+        eligible_dates,
+    )
+    daily_run_ids = {
+        selected_publications[market_date].stored_run.run_id for market_date in report_dates
+    }
+    all_daily_feedback_ids = tuple(
+        sorted(
+            item.feedback_id for item in evidence.feedback_records if item.run_id in daily_run_ids
+        )
+    )
+    review_time_observations, review_time_gate = _daily_review_time_gate(
+        report_dates, daily_feedback, all_daily_feedback_ids
+    )
+    usefulness_observations, usefulness_gate = _daily_usefulness_gate(
+        report_dates, daily_feedback, all_daily_feedback_ids
+    )
     duration_observations, duration_gate = _normal_provider_duration_evidence(evidence)
 
     if valid_trading_days >= 20 and complete_day_evidence:
@@ -575,8 +751,10 @@ def build_shadow_scorecard(
 
     specific_gates = {
         ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS: day_gate,
+        ShadowGateId.REVIEW_TIME: review_time_gate,
         ShadowGateId.NORMAL_PROVIDER_DURATION: duration_gate,
         ShadowGateId.TIMELY_PUBLICATION: timely_gate,
+        ShadowGateId.USEFULNESS: usefulness_gate,
     }
     gates = tuple(
         specific_gates.get(gate_id)
@@ -596,6 +774,8 @@ def build_shadow_scorecard(
         eligible_online_days=len(eligible_dates),
         published_in_target_window=published_in_target_window,
         duration_observations=duration_observations,
+        review_time_observations=review_time_observations,
+        usefulness_observations=usefulness_observations,
         gate_results=gates,
         evidence_hashes=evidence.evidence_hashes,
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from hashlib import sha256
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,7 @@ from finance_research_agent.evaluation.shadow_records import (
     ShadowDayObservation,
 )
 from finance_research_agent.evaluation.shadow_scorecard import (
+    DailyReviewTimeObservation,
     DailyUsefulnessObservation,
     EvaluationGate,
     EvaluationGateStatus,
@@ -28,6 +30,9 @@ from finance_research_agent.evaluation.shadow_scorecard import (
     ShadowGateId,
     ShadowPeriod,
     ShadowScorecard,
+    _daily_review_time_gate,
+    _daily_usefulness_gate,
+    _median,
     build_shadow_scorecard,
 )
 from tests.support.shadow_evidence import (
@@ -83,6 +88,26 @@ class _EmptyArtifacts:
         return self.artifact
 
 
+class _MultipleArtifacts:
+    def __init__(
+        self,
+        bundles: tuple[PublishedRunBundle, ...],
+        artifacts: tuple[PublishedArtifact, ...],
+    ) -> None:
+        self.bundles = {item.run.run_id: item for item in bundles}
+        self.reports = {item.run.run_id: item.report_markdown for item in bundles}
+        self.artifacts = {item.run_id: item for item in artifacts}
+
+    def load_published_bundle(self, run_id: str) -> PublishedRunBundle | None:
+        return self.bundles.get(run_id)
+
+    def get_report(self, run_id: str) -> str | None:
+        return self.reports.get(run_id)
+
+    def get_published_artifact(self, run_id: str) -> PublishedArtifact | None:
+        return self.artifacts.get(run_id)
+
+
 class _EmptyFeedback:
     def __init__(self, records: tuple[RecordedFeedback, ...] = ()) -> None:
         self.records = records
@@ -124,6 +149,30 @@ def _scorecard(**changes: object) -> ShadowScorecard:
     values: dict[str, object] = {"gate_results": _gates()}
     values.update(changes)
     return ShadowScorecard(**values)
+
+
+def _metric_feedback(
+    feedback_id: str,
+    *,
+    usefulness_score: int,
+    executive_seconds: int,
+    detailed_seconds: int,
+    notes: str | None = None,
+) -> RecordedFeedback:
+    return RecordedFeedback(
+        schema_version="0.2",
+        feedback_id=feedback_id,
+        run_id="premarket-2026-08-26-r1",
+        bundle_sha256="a" * 64,
+        recorded_at=datetime(2026, 8, 26, 16, tzinfo=UTC),
+        clarity_score=4,
+        evidence_score=4,
+        usefulness_score=usefulness_score,
+        notes=notes,
+        citation_reviews=(),
+        executive_review_duration_seconds=executive_seconds,
+        detailed_review_duration_seconds=detailed_seconds,
+    )
 
 
 def _failed_normal_provider_evidence(valid_packet, tmp_path, durations: tuple[int, ...] | None):
@@ -430,8 +479,21 @@ def test_verified_scorecard_counts_eligible_days_and_keeps_unknown_coverage_pend
     assert "UNKNOWN_OR_MISSING_DAY_OBSERVATION" in timely_reasons
 
 
-def test_personal_research_publication_counts_once_inside_new_york_target_window(
-    valid_packet, tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("minutes_after_helper_receipt", "expected_local_time", "expected_count", "gate_status"),
+    (
+        (13, time(9, 0), 1, EvaluationGateStatus.PASS),
+        (14, time(9, 1), 0, EvaluationGateStatus.FAIL),
+    ),
+)
+def test_personal_research_publication_obeys_new_york_target_window(
+    valid_packet,
+    tmp_path,
+    monkeypatch,
+    minutes_after_helper_receipt: int,
+    expected_local_time: time,
+    expected_count: int,
+    gate_status: EvaluationGateStatus,
 ) -> None:
     from finance_research_agent.application import shadow_evidence_loader
     from finance_research_agent.application.shadow_evidence_loader import (
@@ -440,7 +502,9 @@ def test_personal_research_publication_counts_once_inside_new_york_target_window
 
     bundle, artifact = personal_reduced_publication(valid_packet, tmp_path)
     artifact = artifact.model_copy(
-        update={"published_at": artifact.published_at + timedelta(minutes=13)}
+        update={
+            "published_at": artifact.published_at + timedelta(minutes=minutes_after_helper_receipt)
+        }
     )
     monkeypatch.setattr(
         shadow_evidence_loader,
@@ -487,16 +551,18 @@ def test_personal_research_publication_counts_once_inside_new_york_target_window
         evidence=evidence,
     )
 
-    assert artifact.published_at.astimezone(ZoneInfo("America/New_York")).time() == time(9, 0)
+    assert (
+        artifact.published_at.astimezone(ZoneInfo("America/New_York")).time() == expected_local_time
+    )
     assert scorecard.origin is ShadowEvaluationOrigin.PERSONAL_SHADOW
     assert scorecard.eligible_online_days == 1
     assert scorecard.valid_trading_days == 1
-    assert scorecard.published_in_target_window == 1
+    assert scorecard.published_in_target_window == expected_count
     timely_gate = next(
         gate for gate in scorecard.gate_results if gate.id is ShadowGateId.TIMELY_PUBLICATION
     )
-    assert timely_gate.status is EvaluationGateStatus.PASS
-    assert timely_gate.measured_value == 1
+    assert timely_gate.status is gate_status
+    assert timely_gate.measured_value == expected_count
     changed_bundle = bundle.model_copy(
         update={"report_markdown": bundle.report_markdown + " changed"}
     )
@@ -527,6 +593,74 @@ def test_personal_research_publication_counts_once_inside_new_york_target_window
             _Calendar(),
             evidence=evidence,
         )
+
+
+def test_multiple_revisions_count_only_earliest_daily_research_publication(
+    valid_packet, tmp_path, monkeypatch
+) -> None:
+    from finance_research_agent.application import shadow_evidence_loader
+    from finance_research_agent.application.shadow_evidence_loader import (
+        load_shadow_evaluation_evidence,
+    )
+
+    first_bundle, first_artifact = personal_reduced_publication(valid_packet, tmp_path)
+    second_run = valid_packet.run.model_copy(
+        update={
+            "run_id": "premarket-2026-08-26-r2",
+            "revision": 2,
+        }
+    )
+    second_packet = valid_packet.model_copy(update={"run": second_run})
+    second_bundle, second_artifact = personal_reduced_publication(second_packet, tmp_path)
+    second_artifact = second_artifact.model_copy(
+        update={"published_at": second_artifact.published_at + timedelta(minutes=14)}
+    )
+    monkeypatch.setattr(
+        shadow_evidence_loader,
+        "current_component_versions",
+        lambda snapshot: recorded_component_versions(first_bundle.run),
+    )
+    stored_runs = (
+        StoredRun(run=first_bundle.run, published=True),
+        StoredRun(run=second_bundle.run, published=True),
+    )
+    observation = ShadowDayObservation(
+        id="online-revision-day",
+        market_date=first_bundle.run.market_date,
+        recorded_at=datetime(2026, 8, 26, 16, tzinfo=UTC),
+        session_id="session-revision-day",
+        availability=ShadowDayAvailability.ONLINE,
+        observed_run_ids=(first_bundle.run.run_id, second_bundle.run.run_id),
+    )
+    evidence = load_shadow_evaluation_evidence(
+        ShadowPeriod(
+            start_date=first_bundle.run.market_date,
+            end_date=first_bundle.run.market_date,
+        ),
+        _EmptyRuns(stored_runs),  # type: ignore[arg-type]
+        _MultipleArtifacts(
+            (first_bundle, second_bundle),
+            (first_artifact, second_artifact),
+        ),  # type: ignore[arg-type]
+        _EmptyFeedback(),  # type: ignore[arg-type]
+        _EmptyObservations((observation,)),  # type: ignore[arg-type]
+        _EmptyAttestations(),  # type: ignore[arg-type]
+        _EmptyReleaseEvidence(),  # type: ignore[arg-type]
+    )
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    assert scorecard.valid_trading_days == 1
+    assert scorecard.published_in_target_window == 1
+    timely_gate = next(
+        gate for gate in scorecard.gate_results if gate.id is ShadowGateId.TIMELY_PUBLICATION
+    )
+    assert timely_gate.status is EvaluationGateStatus.PASS
 
 
 def test_verified_scorecard_can_end_on_last_representable_calendar_date() -> None:
@@ -719,3 +853,224 @@ def test_normal_provider_duration_gate_is_pending_without_a_terminal_checkpoint(
     )
     assert gate.status is EvaluationGateStatus.PENDING
     assert gate.reason_codes == ("NORMAL_PROVIDER_TERMINAL_EVIDENCE_MISSING",)
+
+
+def test_daily_metrics_use_earliest_complete_feedback_once_per_report(
+    valid_packet, tmp_path, monkeypatch
+) -> None:
+    from finance_research_agent.application import shadow_evidence_loader
+    from finance_research_agent.application.operations import (
+        ExecutiveEventState,
+        ExecutiveIdentification,
+    )
+    from finance_research_agent.application.shadow_evidence_loader import (
+        load_shadow_evaluation_evidence,
+    )
+    from finance_research_agent.domain.regime import Regime
+
+    bundle, artifact = personal_reduced_publication(valid_packet, tmp_path)
+    monkeypatch.setattr(
+        shadow_evidence_loader,
+        "current_component_versions",
+        lambda snapshot: recorded_component_versions(bundle.run),
+    )
+    identification = ExecutiveIdentification(
+        market_posture=Regime.NEUTRAL,
+        event_state=ExecutiveEventState.NO_MATERIAL_EVENTS,
+        event_ids=(),
+        priority_symbols=("SPY",),
+        disabled_capabilities=(),
+    )
+    common_feedback = {
+        "run_id": bundle.run.run_id,
+        "bundle_sha256": artifact.bundle_sha256,
+        "recorded_at": datetime(2026, 8, 26, 13, 30, tzinfo=UTC),
+        "clarity_score": 4,
+        "evidence_score": 4,
+        "citation_reviews": (),
+        "schema_version": "0.2",
+        "executive_identification": identification,
+    }
+    full_later_id = RecordedFeedback(
+        **(
+            common_feedback
+            | {
+                "feedback_id": "feedback-z",
+                "usefulness_score": 1,
+                "executive_review_duration_seconds": 300,
+                "detailed_review_duration_seconds": 1200,
+            }
+        )
+    )
+    selected_full_feedback = RecordedFeedback(
+        **(
+            common_feedback
+            | {
+                "feedback_id": "feedback-a",
+                "usefulness_score": 4,
+                "executive_review_duration_seconds": 120,
+                "detailed_review_duration_seconds": 900,
+            }
+        )
+    )
+    earlier_partial_feedback = RecordedFeedback(
+        **(
+            common_feedback
+            | {
+                "feedback_id": "feedback-partial",
+                "recorded_at": datetime(2026, 8, 26, 13, tzinfo=UTC),
+                "schema_version": "0.1",
+                "executive_identification": None,
+                "usefulness_score": 5,
+            }
+        )
+    )
+    observation = ShadowDayObservation(
+        id="online-review-day",
+        market_date=bundle.run.market_date,
+        recorded_at=datetime(2026, 8, 26, 16, tzinfo=UTC),
+        session_id="session-review-day",
+        availability=ShadowDayAvailability.ONLINE,
+        observed_run_ids=(bundle.run.run_id,),
+        observed_feedback_ids=(
+            earlier_partial_feedback.feedback_id,
+            full_later_id.feedback_id,
+            selected_full_feedback.feedback_id,
+        ),
+    )
+    runs = _EmptyRuns((StoredRun(run=bundle.run, published=True),))
+    artifacts = _EmptyArtifacts()
+    artifacts.bundle = bundle
+    artifacts.report = bundle.report_markdown
+    artifacts.artifact = artifact
+    evidence = load_shadow_evaluation_evidence(
+        ShadowPeriod(start_date=bundle.run.market_date, end_date=bundle.run.market_date),
+        runs,  # type: ignore[arg-type]
+        artifacts,  # type: ignore[arg-type]
+        _EmptyFeedback((full_later_id, earlier_partial_feedback, selected_full_feedback)),  # type: ignore[arg-type]
+        _EmptyObservations((observation,)),  # type: ignore[arg-type]
+        _EmptyAttestations(),  # type: ignore[arg-type]
+        _EmptyReleaseEvidence(),  # type: ignore[arg-type]
+    )
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    assert scorecard.review_time_observations == (
+        DailyReviewTimeObservation(
+            market_date=bundle.run.market_date,
+            feedback_id="feedback-a",
+            executive_review_duration_seconds=120,
+            detailed_review_duration_seconds=900,
+        ),
+    )
+    assert scorecard.usefulness_observations == (
+        DailyUsefulnessObservation(
+            market_date=bundle.run.market_date,
+            feedback_id="feedback-a",
+            usefulness_score=4,
+        ),
+    )
+    gates = {gate.id: gate for gate in scorecard.gate_results}
+    assert gates[ShadowGateId.REVIEW_TIME].status is EvaluationGateStatus.PASS
+    assert gates[ShadowGateId.USEFULNESS].status is EvaluationGateStatus.PASS
+    expected_daily_feedback_ids = {
+        earlier_partial_feedback.feedback_id,
+        full_later_id.feedback_id,
+        selected_full_feedback.feedback_id,
+    }
+    assert expected_daily_feedback_ids.issubset(gates[ShadowGateId.REVIEW_TIME].evidence_ids)
+    assert expected_daily_feedback_ids.issubset(gates[ShadowGateId.USEFULNESS].evidence_ids)
+
+
+def test_daily_review_time_uses_exact_even_count_medians_and_fails_over_limit() -> None:
+    first_day = date(2026, 8, 26)
+    second_day = date(2026, 8, 27)
+    first = _metric_feedback(
+        "feedback-day-one",
+        usefulness_score=4,
+        executive_seconds=120,
+        detailed_seconds=900,
+    )
+    second = _metric_feedback(
+        "feedback-day-two",
+        usefulness_score=4,
+        executive_seconds=181,
+        detailed_seconds=901,
+    )
+
+    observations, gate = _daily_review_time_gate(
+        (first_day, second_day),
+        {first_day: first, second_day: second},
+    )
+
+    assert _median((120, 181)) == Decimal("150.5")
+    assert _median((900, 901)) == Decimal("900.5")
+    assert len(observations) == 2
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert gate.measured_value == "executive=150.5;detailed=900.5"
+    assert gate.reason_codes == ("REVIEW_TIME_LIMIT_EXCEEDED",)
+
+
+@pytest.mark.parametrize(
+    ("feedback_record", "expected_status", "expected_reason"),
+    (
+        (
+            _metric_feedback(
+                "feedback-low-no-note",
+                usefulness_score=3,
+                executive_seconds=60,
+                detailed_seconds=300,
+            ),
+            EvaluationGateStatus.FAIL,
+            "AVERAGE_USEFULNESS_BELOW_4",
+        ),
+        (
+            _metric_feedback(
+                "feedback-low-with-notes",
+                usefulness_score=3,
+                executive_seconds=60,
+                detailed_seconds=300,
+                notes="The opening rationale is unclear and needs review.",
+            ),
+            EvaluationGateStatus.PENDING,
+            "CORRECTIVE_WORK_REQUIRES_VALIDATION",
+        ),
+    ),
+)
+def test_daily_usefulness_does_not_treat_notes_as_validated_correction(
+    feedback_record: RecordedFeedback,
+    expected_status: EvaluationGateStatus,
+    expected_reason: str,
+) -> None:
+    observations, gate = _daily_usefulness_gate(
+        (date(2026, 8, 26),),
+        {date(2026, 8, 26): feedback_record},
+    )
+
+    assert observations[0].feedback_id == feedback_record.feedback_id
+    assert gate.status is expected_status
+    assert gate.reason_codes == (expected_reason,)
+
+
+def test_daily_usefulness_preserves_full_contract_length_feedback_notes() -> None:
+    feedback_record = _metric_feedback(
+        "feedback-long-note",
+        usefulness_score=3,
+        executive_seconds=60,
+        detailed_seconds=300,
+        notes="x" * 501,
+    )
+
+    observations, gate = _daily_usefulness_gate(
+        (date(2026, 8, 26),),
+        {date(2026, 8, 26): feedback_record},
+    )
+
+    assert observations[0].corrective_work == feedback_record.notes
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert gate.reason_codes == ("CORRECTIVE_WORK_REQUIRES_VALIDATION",)
