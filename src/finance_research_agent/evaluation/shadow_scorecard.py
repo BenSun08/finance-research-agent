@@ -34,6 +34,19 @@ class ShadowEvaluationOrigin(StrEnum):
     SYNTHETIC_EVALUATION = "SYNTHETIC_EVALUATION"
 
 
+class ShadowPeriod(StrictModel):
+    """Inclusive market-date bounds selected for one shadow evaluation."""
+
+    start_date: date
+    end_date: date
+
+    @model_validator(mode="after")
+    def date_bounds_are_ordered(self) -> ShadowPeriod:
+        if self.start_date > self.end_date:
+            raise ValueError("shadow period start_date must not follow end_date")
+        return self
+
+
 class ShadowGateId(StrEnum):
     AT_LEAST_TWENTY_TRADING_DAYS = "AT_LEAST_TWENTY_TRADING_DAYS"
     SAFETY = "SAFETY"
@@ -198,6 +211,7 @@ __all__ = [
     "ShadowEvaluationOrigin",
     "ShadowEvaluationEvidence",
     "ShadowGateId",
+    "ShadowPeriod",
     "ShadowScorecard",
     "build_shadow_scorecard",
 ]

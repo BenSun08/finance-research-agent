@@ -12,6 +12,7 @@ from finance_research_agent.evaluation.shadow_scorecard import (
     EvaluationGateStatus,
     ShadowEvaluationOrigin,
     ShadowGateId,
+    ShadowPeriod,
     ShadowScorecard,
     build_shadow_scorecard,
 )
@@ -42,14 +43,31 @@ def _scorecard(**changes: object) -> ShadowScorecard:
     return ShadowScorecard(**values)
 
 
+def test_shadow_period_uses_inclusive_ordered_date_bounds() -> None:
+    period = ShadowPeriod(
+        start_date=date(2026, 8, 26),
+        end_date=date(2026, 8, 28),
+    )
+
+    assert period.start_date == date(2026, 8, 26)
+    assert period.end_date == date(2026, 8, 28)
+
+
+def test_shadow_period_rejects_reversed_date_bounds() -> None:
+    with pytest.raises(ValidationError, match="start_date must not follow end_date"):
+        ShadowPeriod(
+            start_date=date(2026, 8, 28),
+            end_date=date(2026, 8, 26),
+        )
+
+
 def test_legacy_scorecard_call_cannot_claim_unverified_gates() -> None:
     scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=None)
 
     assert tuple(gate.id for gate in scorecard.gate_results) == tuple(ShadowGateId)
     assert {gate.status for gate in scorecard.gate_results} == {"PENDING"}
     assert all(
-        "VERIFIED_SHADOW_EVIDENCE_REQUIRED" in gate.reason_codes
-        for gate in scorecard.gate_results
+        "VERIFIED_SHADOW_EVIDENCE_REQUIRED" in gate.reason_codes for gate in scorecard.gate_results
     )
     assert scorecard.failed_gate_ids == ()
     assert scorecard.pending_gate_ids == tuple(ShadowGateId)
