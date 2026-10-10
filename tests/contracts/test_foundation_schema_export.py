@@ -255,6 +255,37 @@ def test_feedback_json_schemas_enforce_versioned_runtime_requirements() -> None:
             "citation_reviews": [full_review],
         }
     )
+    base_identification = {
+        "market_posture": "unknown",
+        "event_state": "MATERIAL_EVENTS",
+        "event_ids": [],
+        "priority_symbols": [],
+        "disabled_capabilities": [],
+    }
+    v02_request = {**legacy_request, "schema_version": "0.2"}
+    assert not request_validator.is_valid(
+        {**v02_request, "executive_identification": base_identification}
+    )
+    assert request_validator.is_valid(
+        {
+            **v02_request,
+            "executive_identification": {
+                **base_identification,
+                "event_ids": ["event-1"],
+            },
+        }
+    )
+    for event_state in ("UNAVAILABLE", "NO_MATERIAL_EVENTS"):
+        assert not request_validator.is_valid(
+            {
+                **v02_request,
+                "executive_identification": {
+                    **base_identification,
+                    "event_state": event_state,
+                    "event_ids": ["event-1"],
+                },
+            }
+        )
 
 
 def test_schema_command_checks_without_rewriting_and_fails_on_drift(tmp_path: Path) -> None:

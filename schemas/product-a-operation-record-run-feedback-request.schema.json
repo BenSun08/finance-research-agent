@@ -254,6 +254,49 @@
     },
     "ExecutiveIdentification": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "event_state": {
+                "const": "MATERIAL_EVENTS"
+              }
+            },
+            "required": [
+              "event_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "event_ids": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event_state": {
+                "enum": [
+                  "UNAVAILABLE",
+                  "NO_MATERIAL_EVENTS"
+                ]
+              }
+            },
+            "required": [
+              "event_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "event_ids": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ],
       "description": "Bounded human identification of executive posture, events, and priorities.",
       "properties": {
         "disabled_capabilities": {

@@ -293,8 +293,31 @@ class _OperationPayloadModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
+def _executive_identification_json_schema(schema: dict[str, Any]) -> None:
+    schema["allOf"] = [
+        {
+            "if": {
+                "properties": {"event_state": {"const": "MATERIAL_EVENTS"}},
+                "required": ["event_state"],
+            },
+            "then": {"properties": {"event_ids": {"minItems": 1}}},
+        },
+        {
+            "if": {
+                "properties": {
+                    "event_state": {"enum": ["UNAVAILABLE", "NO_MATERIAL_EVENTS"]}
+                },
+                "required": ["event_state"],
+            },
+            "then": {"properties": {"event_ids": {"maxItems": 0}}},
+        },
+    ]
+
+
 class ExecutiveIdentification(_OperationPayloadModel):
     """Bounded human identification of executive posture, events, and priorities."""
+
+    model_config = ConfigDict(json_schema_extra=_executive_identification_json_schema)
 
     market_posture: Regime
     event_state: ExecutiveEventState
