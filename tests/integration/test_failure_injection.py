@@ -1416,3 +1416,103 @@ def test_m02_alpaca_credential_failures_are_secret_free_operational_results(
         assert statuses == [http_status] * len(calls)
     else:
         assert calls == []
+
+
+def test_m04_missing_current_quote_preserves_history_and_disables_sizing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from finance_research_agent.application import premarket_preparation
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.publication_service import publish_reduced_report
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+
+    class MissingCurrentQuote(MarketData):
+        def fetch_premarket_observations(self, symbols, as_of, **kwargs):
+            self.calls.append("prices")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+    provider = MissingCurrentQuote()
+    deps = dependencies(tmp_path, market=provider)
+    captured_quality = []
+    checkpoint_quality = premarket_preparation.checkpoint_collected_market_data_quality
+
+    def capture_quality(*args, **kwargs):
+        value = checkpoint_quality(*args, **kwargs)
+        captured_quality.append(value.quality)
+        return value
+
+    monkeypatch.setattr(
+        premarket_preparation,
+        "checkpoint_collected_market_data_quality",
+        capture_quality,
+    )
+    prepared = prepare_research_packet(request(), deps)
+
+    assert prepared.outcome == "PACKET_READY"
+    packet = prepared.research_packet
+    assert packet is not None and packet.regime_result is not None
+    assert packet.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert packet.regime_result.regime.value != "unknown"
+    assert packet.market["AAPL"].completed_daily_bars
+    assert packet.market["AAPL"].latest_price is None
+    assert packet.deterministic_plan_inputs == ()
+    assert prepared.stored_run is not None and not prepared.stored_run.published
+    assert deps.market_data.calls == ["instruments", "bars", "prices", "readiness"]
+
+    assert len(captured_quality) == 1
+    sizing = captured_quality[0].symbol_capability(
+        "AAPL", Capability.POSITION_SIZING_AVAILABLE
+    )
+    assert sizing.available is False
+    assert ErrorCode.PROVIDER_UNAVAILABLE in sizing.reason_codes
+    price_failure_evidence = tuple(
+        item.evidence_id
+        for item in packet.evidence
+        if item.structured_fields.get("outcome") == "PREMARKET_PRICE"
+        and item.structured_fields.get("requested_symbol") == "AAPL"
+        and item.structured_fields.get("error_code") == ErrorCode.PROVIDER_UNAVAILABLE.value
+    )
+    assert len(price_failure_evidence) == 1
+    unavailable_gates = tuple(
+        gate
+        for gate in packet.gates
+        if gate.reason_code == ErrorCode.PROVIDER_UNAVAILABLE.value
+        and gate.evidence_ids == price_failure_evidence
+    )
+    assert len(unavailable_gates) == 1
+    assert unavailable_gates[0].status is GateStatus.BLOCK
+    assert unavailable_gates[0].capability is Capability.POSITION_SIZING_AVAILABLE
+    assert unavailable_gates[0].evidence_ids == price_failure_evidence
+    assert "current premarket price" in unavailable_gates[0].message.lower()
+    assert "unavailable" in unavailable_gates[0].message.lower()
+
+    receipt = publish_reduced_report(
+        deps.run_repository,
+        packet,
+        ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        deps.clock.now_utc(),
+    )
+    report = deps.run_repository.get_report(receipt.run_id)
+    bundle = deps.run_repository.load_published_bundle(receipt.run_id)
+    assert report is not None and bundle is not None
+    assert bundle.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert bundle.bundle["research_packet"]["canonical_sha256"] == packet.canonical_sha256
+    assert "AAPL" in report
+    assert ErrorCode.PROVIDER_UNAVAILABLE.value.replace("_", "\\_") in report
+    assert price_failure_evidence[0] in report
+    replay = replay_published_artifact(
+        deps.run_repository, receipt.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True

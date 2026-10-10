@@ -133,27 +133,34 @@ def _unknown_regime_projection(
     return tuple(projected), disclosure
 
 
-def _stale_premarket_price_gates(evidence: tuple[EvidenceItem, ...]) -> tuple[GateResult, ...]:
-    """Disclose stale current-price failures beside the affected sizing capability."""
+def _premarket_price_failure_gates(evidence: tuple[EvidenceItem, ...]) -> tuple[GateResult, ...]:
+    """Disclose current-price failures beside the affected sizing capability."""
     gates: list[GateResult] = []
     for item in evidence:
         symbol = item.structured_fields.get("requested_symbol")
+        error_code_value = item.structured_fields.get("error_code")
         if (
             item.source.provider != "alpaca"
             or item.structured_fields.get("outcome") != "PREMARKET_PRICE"
-            or item.structured_fields.get("error_code") != ErrorCode.STALE_DATA.value
             or not isinstance(symbol, str)
+            or not isinstance(error_code_value, str)
         ):
             continue
+        error_code = ErrorCode(error_code_value)
+        detail = (
+            "is stale"
+            if error_code is ErrorCode.STALE_DATA
+            else f"is unavailable ({error_code.value})"
+        )
         gates.append(GateResult(
             gate_id=(
-                f"{symbol}-stale-current-price-"
+                f"{symbol}-current-price-"
                 f"{sha256(item.evidence_id.encode('utf-8')).hexdigest()[:24]}"
             ),
             status=GateStatus.BLOCK,
-            reason_code=ErrorCode.STALE_DATA.value,
+            reason_code=error_code.value,
             message=(
-                f"Current premarket price for {symbol} is stale; "
+                f"Current premarket price for {symbol} {detail}; "
                 "position sizing is unavailable."
             ),
             evidence_ids=(item.evidence_id,),
@@ -583,7 +590,7 @@ def prepare_research_packet(
         )
         if regime_disclosure is not None:
             gates.append(regime_disclosure)
-        gates.extend(_stale_premarket_price_gates(inputs.evidence))
+        gates.extend(_premarket_price_failure_gates(inputs.evidence))
         packet = build_research_packet(
             run=context,
             evidence=packet_evidence,
