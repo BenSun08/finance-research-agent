@@ -433,6 +433,52 @@ def test_review_context_materializes_bounded_bundle_evidence_and_provenance(
     assert context.evidence_cutoff == valid_packet.run.evidence_cutoff_at
 
 
+def test_public_review_context_and_sample_reject_mutable_or_oversized_containers(
+    valid_packet, valid_brief_draft
+) -> None:
+    import pytest
+
+    from finance_research_agent.evaluation.citation_sampling import (
+        CitationEntailmentReviewSample,
+        build_citation_entailment_review_sample,
+    )
+
+    bundle = _bundle(valid_packet, valid_brief_draft)
+    sample = build_citation_entailment_review_sample(
+        bundle,
+        publication=_publication_receipt(
+            bundle, datetime(2026, 8, 26, 13, 0, tzinfo=UTC)
+        ),
+    )
+    context = sample.contexts[0]
+
+    with pytest.raises(TypeError, match="cited_evidence must be a tuple"):
+        replace(context, cited_evidence=list(context.cited_evidence))
+    with pytest.raises(TypeError, match="claim must be a Claim"):
+        replace(context, claim=object())
+    with pytest.raises(TypeError, match="supporting_claims must contain Claim"):
+        replace(context, supporting_claims=(object(),))
+    with pytest.raises(TypeError, match="authority_tiers"):
+        replace(context, authority_tiers=(True,))
+    with pytest.raises(ValueError, match="timestamps must be UTC"):
+        replace(context, publication_time=datetime(2026, 8, 26, 13, 0))
+    with pytest.raises(TypeError, match="contexts must be a tuple"):
+        CitationEntailmentReviewSample(contexts=list(sample.contexts), empty_reason=None)
+    with pytest.raises(TypeError, match="contexts must contain"):
+        CitationEntailmentReviewSample(contexts=(object(),), empty_reason=None)
+    with pytest.raises(ValueError, match="at most five"):
+        CitationEntailmentReviewSample(
+            contexts=(context,) * 6,
+            empty_reason=None,
+        )
+    with pytest.raises(TypeError, match="empty_reason must be"):
+        CitationEntailmentReviewSample(contexts=(), empty_reason="NO_MATERIAL_CLAIMS")
+    with pytest.raises(ValueError, match="claim ids must be unique"):
+        CitationEntailmentReviewSample(contexts=(context, context), empty_reason=None)
+    with pytest.raises(ValueError, match="must contain contexts"):
+        CitationEntailmentReviewSample(contexts=(), empty_reason=None)
+
+
 def test_review_context_marks_no_reachable_claims_with_structural_reason(
     valid_packet, valid_brief_draft
 ) -> None:

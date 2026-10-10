@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import StrEnum
 from hashlib import sha256
 
@@ -51,6 +52,28 @@ class CitationReviewContext:
     publication_time: UtcDatetime
     evidence_cutoff: UtcDatetime
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.claim, Claim):
+            raise TypeError("claim must be a Claim")
+        for name, values, item_type in (
+            ("supporting_claims", self.supporting_claims, Claim),
+            ("cited_evidence", self.cited_evidence, EvidenceItem),
+            ("counter_evidence", self.counter_evidence, EvidenceItem),
+            ("metric_bindings", self.metric_bindings, MetricResult),
+            ("metric_input_evidence", self.metric_input_evidence, EvidenceItem),
+        ):
+            if not isinstance(values, tuple):
+                raise TypeError(f"{name} must be a tuple")
+            if any(not isinstance(value, item_type) for value in values):
+                raise TypeError(f"{name} must contain {item_type.__name__} values")
+        if not isinstance(self.authority_tiers, tuple) or any(
+            type(tier) is not int for tier in self.authority_tiers
+        ):
+            raise TypeError("authority_tiers must be a tuple of integers")
+        for timestamp in (self.publication_time, self.evidence_cutoff):
+            if not isinstance(timestamp, datetime) or timestamp.utcoffset() != timedelta(0):
+                raise ValueError("review context timestamps must be UTC datetimes")
+
 
 @dataclass(frozen=True, slots=True)
 class CitationEntailmentReviewSample:
@@ -60,6 +83,18 @@ class CitationEntailmentReviewSample:
     empty_reason: CitationSampleEmptyReason | None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.contexts, tuple):
+            raise TypeError("contexts must be a tuple")
+        if len(self.contexts) > _MAX_SAMPLE_SIZE:
+            raise ValueError("review sample may contain at most five contexts")
+        if any(not isinstance(context, CitationReviewContext) for context in self.contexts):
+            raise TypeError("contexts must contain CitationReviewContext values")
+        if self.empty_reason is not None and not isinstance(
+            self.empty_reason, CitationSampleEmptyReason
+        ):
+            raise TypeError("empty_reason must be a CitationSampleEmptyReason")
+        if len({context.claim.claim_id for context in self.contexts}) != len(self.contexts):
+            raise ValueError("review sample claim ids must be unique")
         if bool(self.contexts) == (self.empty_reason is not None):
             raise ValueError("review sample must contain contexts or one empty reason")
 
