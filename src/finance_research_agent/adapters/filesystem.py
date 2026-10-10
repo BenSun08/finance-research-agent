@@ -1032,7 +1032,7 @@ class FileSystemRunRepository:
                 return existing
             staging, final, _, _ = self._publication_paths(run_id)
             market_year = f"{market_date.year:04d}"
-            orphan = self._unaliased_publication_path(
+            orphan = self._unaliased_path(
                 "diagnostics", "orphans", market_year, market_date.isoformat(), run_id
             )
             if staging.exists() or final.exists() or not orphan.exists():
@@ -1236,10 +1236,11 @@ class FileSystemRunRepository:
             published_at=published_at,
         )
 
-    def get_published_artifact(self, run_id: str) -> PublishedArtifact | None:
-        """Return the indexed publication receipt only while its bytes remain valid."""
-        _, final, index_path, _ = self._publication_paths(run_id)
-        if self._published_payloads(run_id, final) is None:
+    def _read_publication_receipt(
+        self, run_id: str, artifact_path: Path
+    ) -> PublishedArtifact | None:
+        _, _, index_path, _ = self._publication_paths(run_id)
+        if self._published_payloads(run_id, artifact_path) is None:
             return None
         try:
             index = json.loads(self._read_confined(index_path.parent, index_path.name))
@@ -1256,6 +1257,11 @@ class FileSystemRunRepository:
             raise
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             return None
+
+    def get_published_artifact(self, run_id: str) -> PublishedArtifact | None:
+        """Return the indexed publication receipt only while its bytes remain valid."""
+        _, final, _, _ = self._publication_paths(run_id)
+        return self._read_publication_receipt(run_id, final)
 
     def get_latest(self, market_date: date) -> str | None:
         report_root = self._safe_path(
@@ -1296,13 +1302,161 @@ class FileSystemRunRepository:
         except UnicodeDecodeError:
             return None
 
-    def _unaliased_publication_path(self, *parts: str) -> Path:
+    def _unaliased_path(self, *parts: str) -> Path:
         candidate = self.root
         for part in parts:
             candidate = candidate / part
             if candidate.is_symlink():
                 raise _path_error()
         return self._safe_path(*parts)
+
+    def _validate_indexed_runs(
+        self,
+        market_date_start: date,
+        market_date_end: date,
+        discovered: dict[str, tuple[Path, bool]],
+    ) -> None:
+        reports = self._unaliased_path("reports")
+        if not reports.exists():
+            return
+        if not reports.is_dir():
+            raise PublicationError("publication reports directory is invalid")
+        for year_entry in reports.iterdir():
+            if not re.fullmatch(r"[0-9]{4}", year_entry.name):
+                continue
+            year = int(year_entry.name)
+            if not market_date_start.year <= year <= market_date_end.year:
+                continue
+            year_parts = ("reports", year_entry.name)
+            year_path = self._unaliased_path(*year_parts)
+            if not year_path.is_dir():
+                raise PublicationError("publication year directory is invalid")
+            for day_entry in year_path.iterdir():
+                try:
+                    market_date = date.fromisoformat(day_entry.name)
+                except ValueError:
+                    continue
+                if (
+                    day_entry.name != market_date.isoformat()
+                    or year_entry.name != f"{market_date.year:04d}"
+                    or not market_date_start <= market_date <= market_date_end
+                ):
+                    continue
+                day_parts = (*year_parts, day_entry.name)
+                day_path = self._unaliased_path(*day_parts)
+                if not day_path.is_dir():
+                    raise PublicationError("publication date directory is invalid")
+                index_path = self._unaliased_path(*day_parts, "index.json")
+                if not index_path.exists():
+                    continue
+                try:
+                    index = json.loads(self._read_confined(day_path, "index.json"))
+                except PathNotAllowedError:
+                    raise
+                except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+                    raise PublicationError("publication index is invalid") from error
+                if not isinstance(index, dict) or not index:
+                    raise PublicationError("publication index is invalid")
+                for run_id in index:
+                    try:
+                        indexed_date, _ = self._validated_run_id(run_id)
+                    except PathNotAllowedError as error:
+                        raise PublicationError("publication index is invalid") from error
+                    if indexed_date != market_date:
+                        raise PublicationError("publication index identity is invalid")
+                    discovered_run = discovered.get(run_id)
+                    if discovered_run is None:
+                        raise PublicationError("indexed publication is missing or corrupt")
+                    run_path, is_orphan = discovered_run
+                    expected_path = (
+                        self._orphan_path(run_id) if is_orphan else self._paths(run_id)[1]
+                    )
+                    if (
+                        run_path != expected_path
+                        or self._read_publication_receipt(run_id, run_path) is None
+                    ):
+                        raise PublicationError("indexed publication is missing or corrupt")
+
+    def list_runs(self, market_date_start: date, market_date_end: date) -> tuple[StoredRun, ...]:
+        """Read every valid staged or published run in an inclusive date range."""
+        if type(market_date_start) is not date or type(market_date_end) is not date:
+            raise TypeError("market date bounds must be dates")
+        if market_date_start > market_date_end:
+            raise ValueError("start date must not follow end date")
+
+        discovered: dict[str, tuple[Path, bool]] = {}
+        state_roots = (("runs",), ("diagnostics", "orphans"))
+        for root_parts in state_roots:
+            root_path = self._unaliased_path(*root_parts)
+            if not root_path.exists():
+                continue
+            if not root_path.is_dir():
+                raise PublicationError("run evidence directory is invalid")
+            is_orphan_root = root_parts == ("diagnostics", "orphans")
+            for year_entry in root_path.iterdir():
+                if not re.fullmatch(r"[0-9]{4}", year_entry.name):
+                    continue
+                year_number = int(year_entry.name)
+                if not market_date_start.year <= year_number <= market_date_end.year:
+                    continue
+                year_parts = (*root_parts, year_entry.name)
+                year_path = self._unaliased_path(*year_parts)
+                if not year_path.is_dir():
+                    raise PublicationError("run year directory is invalid")
+                for day_entry in year_path.iterdir():
+                    try:
+                        market_date = date.fromisoformat(day_entry.name)
+                    except ValueError:
+                        continue
+                    if (
+                        day_entry.name != market_date.isoformat()
+                        or year_entry.name != f"{market_date.year:04d}"
+                        or not market_date_start <= market_date <= market_date_end
+                    ):
+                        continue
+                    day_parts = (*year_parts, day_entry.name)
+                    day_path = self._unaliased_path(*day_parts)
+                    if not day_path.is_dir():
+                        raise PublicationError("run date directory is invalid")
+                    state_suffixes = ((),) if is_orphan_root else ((), (".staging",))
+                    for suffix in state_suffixes:
+                        state_parts = (*day_parts, *suffix)
+                        state_path = day_path if not suffix else self._unaliased_path(*state_parts)
+                        if suffix and not state_path.exists():
+                            continue
+                        if not state_path.is_dir():
+                            raise PublicationError("run state directory is invalid")
+                        for entry in state_path.iterdir():
+                            if not _RUN_ID.fullmatch(entry.name):
+                                continue
+                            stored_date, _ = self._validated_run_id(entry.name)
+                            if stored_date != market_date:
+                                raise PublicationError(
+                                    "run directory date does not match its identity"
+                                )
+                            run_parts = (*state_parts, entry.name)
+                            run_path = self._unaliased_path(*run_parts)
+                            if not run_path.is_dir():
+                                raise PublicationError("run directory is invalid")
+                            if entry.name in discovered:
+                                raise PublicationError(
+                                    "run revision exists in multiple storage states"
+                                )
+                            discovered[entry.name] = (run_path, is_orphan_root)
+
+        self._validate_indexed_runs(market_date_start, market_date_end, discovered)
+        stored_runs: list[StoredRun] = []
+        for run_id, (run_path, is_orphan) in discovered.items():
+            stored = (
+                self._load_from_path(run_id, run_path, False) if is_orphan else self.load(run_id)
+            )
+            if stored is None:
+                raise PublicationError("discovered run is incomplete or corrupt")
+            self._ensure_run_identity(stored.run, run_id)
+            stored_runs.append(stored)
+        return tuple(
+            sorted(stored_runs, key=lambda stored: (stored.run.market_date, stored.run.revision))
+        )
 
     def get_previous_research_run(self, market_date: date) -> str | None:
         """Read the latest prior research without falling back across revisions.
@@ -1314,7 +1468,7 @@ class FileSystemRunRepository:
         """
         if type(market_date) is not date:
             raise ValueError("market_date must be a date")
-        reports = self._unaliased_publication_path("reports")
+        reports = self._unaliased_path("reports")
         if not reports.exists():
             return None
         if not reports.is_dir():
@@ -1323,7 +1477,7 @@ class FileSystemRunRepository:
         for year in reports.iterdir():
             if not re.fullmatch(r"[0-9]{4}", year.name):
                 continue
-            year = self._unaliased_publication_path("reports", year.name)
+            year = self._unaliased_path("reports", year.name)
             if not year.is_dir():
                 raise PublicationError("publication year directory is invalid")
             for day in year.iterdir():
@@ -1337,14 +1491,14 @@ class FileSystemRunRepository:
                     or candidate_date >= market_date
                 ):
                     continue
-                day = self._unaliased_publication_path("reports", year.name, day.name)
+                day = self._unaliased_path("reports", year.name, day.name)
                 if not day.is_dir():
                     raise PublicationError("publication date directory is invalid")
                 dates.append(candidate_date)
         for candidate_date in sorted(dates, reverse=True):
             year_name = f"{candidate_date.year:04d}"
             day_name = candidate_date.isoformat()
-            index_path = self._unaliased_publication_path(
+            index_path = self._unaliased_path(
                 "reports", year_name, day_name, "index.json"
             )
             if not index_path.exists():
@@ -1362,7 +1516,7 @@ class FileSystemRunRepository:
                 visible_revisions: dict[int, str] = {}
                 for revision, candidate_run_id in revisions.items():
                     if self.get_published_artifact(candidate_run_id) is None:
-                        orphan = self._unaliased_publication_path(
+                        orphan = self._unaliased_path(
                             "diagnostics",
                             "orphans",
                             year_name,
@@ -1376,7 +1530,7 @@ class FileSystemRunRepository:
                     continue
                 run_id = visible_revisions[max(visible_revisions)]
                 for filename in ("bundle.json", "report.md"):
-                    self._unaliased_publication_path(
+                    self._unaliased_path(
                         "runs", year_name, day_name, run_id, filename
                     )
                 bundle = self.load_published_bundle(run_id)
@@ -1409,10 +1563,10 @@ class FileSystemRunRepository:
                 }
                 parts = ("runs", year_name, day_name, run_id)
                 for filename in ("run.json", "frozen-evidence.json", "checkpoints"):
-                    self._unaliased_publication_path(*parts, filename)
-                final = self._unaliased_publication_path(*parts)
+                    self._unaliased_path(*parts, filename)
+                final = self._unaliased_path(*parts)
                 for path in (final / "checkpoints").glob("*.json"):
-                    self._unaliased_publication_path(*parts, "checkpoints", path.name)
+                    self._unaliased_path(*parts, "checkpoints", path.name)
                 stored = self._load_from_path(run_id, final, True)
                 if stored is None:
                     raise PublicationError("operational stored run is missing")
@@ -1464,7 +1618,7 @@ class FileSystemRunRepository:
                         or checkpoint.artifact_hashes[names[0]] != digest
                     ):
                         raise PublicationError("operational telemetry checkpoint hash is invalid")
-                    artifact = self._unaliased_publication_path(
+                    artifact = self._unaliased_path(
                         *parts, "artifacts", names[0] + ".bin"
                     )
                     artifact_bytes = self._read_confined(artifact.parent, artifact.name)
