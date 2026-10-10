@@ -14,10 +14,13 @@ from finance_research_agent.application.feedback_service import (
 )
 from finance_research_agent.application.operations import (
     CitationEntailmentReview,
+    ExecutiveEventState,
     RecordRunFeedbackRequest,
 )
 from finance_research_agent.application.ports import Clock, PublishedArtifactReader
+from finance_research_agent.domain.enums import Capability
 from finance_research_agent.domain.models import PublishedArtifact, PublishedRunBundle, RunContext
+from finance_research_agent.domain.regime import Regime
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 
 RUN_ID = "premarket-2026-09-29-r1"
@@ -117,6 +120,32 @@ def test_feedback_accepts_bounded_scores_and_notes() -> None:
         _request(notes="x" * 1001)
 
 
+def test_record_feedback_persists_v02_durations_and_identification() -> None:
+    service, _, store = _service()
+    request = _request(
+        schema_version="0.2",
+        executive_review_duration_seconds=150,
+        detailed_review_duration_seconds=840,
+        executive_identification={
+            "market_posture": Regime.UNKNOWN,
+            "event_state": ExecutiveEventState.UNAVAILABLE,
+            "event_ids": (),
+            "priority_symbols": ("AAPL",),
+            "disabled_capabilities": (Capability.EVENT_RISK_CHECK_AVAILABLE,),
+        },
+    )
+
+    service.record(request)
+
+    assert len(store.records) == 1
+    [record] = store.records
+    assert record.schema_version == "0.2"
+    assert record.executive_review_duration_seconds == 150
+    assert record.detailed_review_duration_seconds == 840
+    assert record.executive_identification is not None
+    assert record.executive_identification.market_posture is Regime.UNKNOWN
+
+
 def test_recorded_feedback_rejects_invalid_run_identifiers() -> None:
     with pytest.raises(ValidationError):
         RecordedFeedback(
@@ -128,6 +157,22 @@ def test_recorded_feedback_rejects_invalid_run_identifiers() -> None:
             evidence_score=4,
             usefulness_score=5,
             citation_reviews=(),
+        )
+
+
+def test_recorded_feedback_requires_v02_for_additive_fields() -> None:
+    with pytest.raises(ValidationError, match="schema 0.1"):
+        RecordedFeedback(
+            schema_version="0.1",
+            feedback_id="feedback-legacy",
+            run_id=RUN_ID,
+            bundle_sha256="a" * 64,
+            recorded_at=RECORDED_AT,
+            clarity_score=3,
+            evidence_score=4,
+            usefulness_score=5,
+            citation_reviews=(),
+            executive_review_duration_seconds=120,
         )
 
 

@@ -73,7 +73,10 @@ def test_every_schema_export_is_stable_sorted_newline_terminated_json(tmp_path: 
         )
         if not filename.endswith("-result.schema.json"):
             assert parsed["additionalProperties"] is False
-            if "schema_version" in parsed["properties"]:
+            if "schema_version" in parsed["properties"] and filename not in {
+                "product-a-citation-entailment-review.schema.json",
+                "product-a-operation-record-run-feedback-request.schema.json",
+            }:
                 assert parsed["properties"]["schema_version"]["const"] == "0.1"
             for definition in parsed.get("$defs", {}).values():
                 if "properties" in definition and "additionalProperties" in definition:
@@ -163,7 +166,15 @@ def test_operation_schemas_are_strict_bounded_and_exclude_caller_authority() -> 
         schema = TypeAdapter(model).json_schema()
         if "-request." in filename or filename.endswith("operation-error.schema.json"):
             assert schema["additionalProperties"] is False
-            assert schema["properties"]["schema_version"]["const"] == "0.1"
+            if filename == "product-a-operation-record-run-feedback-request.schema.json":
+                assert schema["properties"]["schema_version"]["enum"] == ["0.1", "0.2"]
+                assert {
+                    "executive_review_duration_seconds",
+                    "detailed_review_duration_seconds",
+                    "executive_identification",
+                } <= set(schema["properties"])
+            else:
+                assert schema["properties"]["schema_version"]["const"] == "0.1"
         assert not {
             "provider",
             "url",
@@ -171,6 +182,12 @@ def test_operation_schemas_are_strict_bounded_and_exclude_caller_authority() -> 
             "deadline_seconds",
             "risk_policy",
         } & set(schema.get("properties", {}))
+
+    review_schema = TypeAdapter(SCHEMA_MODELS["product-a-citation-entailment-review.schema.json"])
+    assert review_schema.json_schema()["properties"]["schema_version"]["enum"] == [
+        "0.1",
+        "0.2",
+    ]
 
 
 def test_schema_command_checks_without_rewriting_and_fails_on_drift(tmp_path: Path) -> None:

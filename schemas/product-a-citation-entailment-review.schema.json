@@ -1,4 +1,16 @@
 {
+  "$defs": {
+    "CitationVerdict": {
+      "description": "Human-only result of reviewing citation support for one selected claim.",
+      "enum": [
+        "SUPPORTED",
+        "PARTIAL",
+        "UNSUPPORTED"
+      ],
+      "title": "CitationVerdict",
+      "type": "string"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "citation_id": {
@@ -19,11 +31,53 @@
       "title": "Entails Claim",
       "type": "boolean"
     },
+    "rationale": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rationale"
+    },
+    "reviewed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "pattern": "(?:Z|\\+00:00)$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewed At"
+    },
     "schema_version": {
-      "const": "0.1",
       "default": "0.1",
+      "enum": [
+        "0.1",
+        "0.2"
+      ],
       "title": "Schema Version",
       "type": "string"
+    },
+    "verdict": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CitationVerdict"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [

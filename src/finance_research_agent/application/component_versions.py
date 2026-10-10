@@ -21,7 +21,14 @@ def component_versions_for_skill(
         skill_version=skill_version,
         prompt_version=canonical_prompt_sha256(),
         report_template_version="0.1",
-        schema_versions=FrozenMap({"run-context": "0.1"}),
+        schema_versions=FrozenMap(
+            {
+                "citation-entailment-review": "0.2",
+                "record-run-feedback-request": "0.2",
+                "recorded-feedback": "0.2",
+                "run-context": "0.1",
+            }
+        ),
         watchlist_version=snapshot.watchlist_version,
         regime_policy_version=snapshot.regime_policy_version,
         setup_policy_version=snapshot.setup_policy_version,

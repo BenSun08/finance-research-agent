@@ -1,5 +1,19 @@
 {
   "$defs": {
+    "Capability": {
+      "enum": [
+        "MARKET_SUMMARY_AVAILABLE",
+        "REGIME_CLASSIFICATION_AVAILABLE",
+        "WATCHLIST_METRICS_AVAILABLE",
+        "EVENT_RISK_CHECK_AVAILABLE",
+        "SETUP_DETECTION_AVAILABLE",
+        "PLAN_DRAFT_AVAILABLE",
+        "POSITION_SIZING_AVAILABLE",
+        "PORTFOLIO_HEAT_CHECK_AVAILABLE"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
     "CitationEntailmentReview": {
       "additionalProperties": false,
       "properties": {
@@ -21,11 +35,53 @@
           "title": "Entails Claim",
           "type": "boolean"
         },
+        "rationale": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rationale"
+        },
+        "reviewed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "pattern": "(?:Z|\\+00:00)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewed At"
+        },
         "schema_version": {
-          "const": "0.1",
           "default": "0.1",
+          "enum": [
+            "0.1",
+            "0.2"
+          ],
           "title": "Schema Version",
           "type": "string"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CitationVerdict"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -35,6 +91,91 @@
       ],
       "title": "CitationEntailmentReview",
       "type": "object"
+    },
+    "CitationVerdict": {
+      "description": "Human-only result of reviewing citation support for one selected claim.",
+      "enum": [
+        "SUPPORTED",
+        "PARTIAL",
+        "UNSUPPORTED"
+      ],
+      "title": "CitationVerdict",
+      "type": "string"
+    },
+    "ExecutiveEventState": {
+      "description": "Human identification of whether material events were visible in a brief.",
+      "enum": [
+        "UNAVAILABLE",
+        "NO_MATERIAL_EVENTS",
+        "MATERIAL_EVENTS"
+      ],
+      "title": "ExecutiveEventState",
+      "type": "string"
+    },
+    "ExecutiveIdentification": {
+      "additionalProperties": false,
+      "description": "Bounded human identification of executive posture, events, and priorities.",
+      "properties": {
+        "disabled_capabilities": {
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "maxItems": 8,
+          "title": "Disabled Capabilities",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "event_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Event Ids",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "event_state": {
+          "$ref": "#/$defs/ExecutiveEventState"
+        },
+        "market_posture": {
+          "$ref": "#/$defs/Regime"
+        },
+        "priority_symbols": {
+          "items": {
+            "maxLength": 16,
+            "minLength": 1,
+            "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Priority Symbols",
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "market_posture",
+        "event_state",
+        "event_ids",
+        "priority_symbols",
+        "disabled_capabilities"
+      ],
+      "title": "ExecutiveIdentification",
+      "type": "object"
+    },
+    "Regime": {
+      "description": "Risk-environment taxonomy for the bounded release.",
+      "enum": [
+        "permissive",
+        "neutral",
+        "defensive",
+        "unknown"
+      ],
+      "title": "Regime",
+      "type": "string"
     }
   },
   "additionalProperties": false,
@@ -54,11 +195,50 @@
       "title": "Clarity Score",
       "type": "integer"
     },
+    "detailed_review_duration_seconds": {
+      "anyOf": [
+        {
+          "maximum": 86400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detailed Review Duration Seconds"
+    },
     "evidence_score": {
       "maximum": 5,
       "minimum": 1,
       "title": "Evidence Score",
       "type": "integer"
+    },
+    "executive_identification": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutiveIdentification"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "executive_review_duration_seconds": {
+      "anyOf": [
+        {
+          "maximum": 86400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Executive Review Duration Seconds"
     },
     "notes": {
       "anyOf": [
@@ -81,8 +261,11 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "0.1",
       "default": "0.1",
+      "enum": [
+        "0.1",
+        "0.2"
+      ],
       "title": "Schema Version",
       "type": "string"
     },

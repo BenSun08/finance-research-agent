@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from hashlib import sha256
+from typing import Literal
 from uuid import uuid4
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from finance_research_agent.application.operations import (
     CitationEntailmentReview,
+    ExecutiveIdentification,
     FeedbackReceipt,
     RecordRunFeedbackRequest,
     RunId,
@@ -26,6 +28,7 @@ from finance_research_agent.domain.types import UtcDatetime, canonical_bytes
 class RecordedFeedback(StrictModel):
     """Immutable snapshot of bounded rubric feedback for one published bundle."""
 
+    schema_version: Literal["0.1", "0.2"] = "0.1"  # type: ignore[assignment]
     feedback_id: Identifier
     run_id: RunId
     bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -35,6 +38,30 @@ class RecordedFeedback(StrictModel):
     usefulness_score: int = Field(ge=1, le=5)
     notes: str | None = Field(default=None, max_length=1000)
     citation_reviews: tuple[CitationEntailmentReview, ...] = Field(max_length=5)
+    executive_review_duration_seconds: int | None = Field(
+        default=None, ge=0, le=86400, exclude_if=lambda value: value is None
+    )
+    detailed_review_duration_seconds: int | None = Field(
+        default=None, ge=0, le=86400, exclude_if=lambda value: value is None
+    )
+    executive_identification: ExecutiveIdentification | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def stored_schema_matches_extensions(self) -> RecordedFeedback:
+        if self.schema_version == "0.1":
+            has_extensions = any(
+                value is not None
+                for value in (
+                    self.executive_review_duration_seconds,
+                    self.detailed_review_duration_seconds,
+                    self.executive_identification,
+                )
+            ) or any(review.schema_version != "0.1" for review in self.citation_reviews)
+            if has_extensions:
+                raise ValueError("feedback record schema 0.1 cannot contain schema 0.2 fields")
+        return self
 
 
 class RunFeedbackService:
@@ -73,6 +100,7 @@ class RunFeedbackService:
         if offset is None or offset.total_seconds() != 0:
             raise ValueError("feedback clock must return a UTC timestamp")
         feedback = RecordedFeedback(
+            schema_version=request.schema_version,
             feedback_id=self._feedback_id_factory(),
             run_id=request.run_id,
             bundle_sha256=artifact.bundle_sha256,
@@ -82,6 +110,9 @@ class RunFeedbackService:
             usefulness_score=request.usefulness_score,
             notes=request.notes,
             citation_reviews=request.citation_reviews,
+            executive_review_duration_seconds=request.executive_review_duration_seconds,
+            detailed_review_duration_seconds=request.detailed_review_duration_seconds,
+            executive_identification=request.executive_identification,
         )
         self._feedback_repository.append_feedback(feedback)
         return FeedbackReceipt(
