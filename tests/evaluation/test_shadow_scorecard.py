@@ -1,11 +1,24 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime, time, timedelta
+from hashlib import sha256
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
 
-from finance_research_agent.domain.models import PublishedRunBundle, RunContext
+from finance_research_agent.domain.models import (
+    PublishedArtifact,
+    PublishedRunBundle,
+    RunContext,
+    StoredRun,
+)
+from finance_research_agent.domain.types import canonical_bytes
+from finance_research_agent.evaluation.shadow_records import (
+    ShadowDayAvailability,
+    ShadowDayExclusionReason,
+    ShadowDayObservation,
+)
 from finance_research_agent.evaluation.shadow_scorecard import (
     DailyUsefulnessObservation,
     EvaluationGate,
@@ -16,6 +29,10 @@ from finance_research_agent.evaluation.shadow_scorecard import (
     ShadowScorecard,
     build_shadow_scorecard,
 )
+from tests.support.shadow_evidence import (
+    personal_reduced_publication,
+    recorded_component_versions,
+)
 
 
 class _Calendar:
@@ -24,6 +41,63 @@ class _Calendar:
 
     def session_open_close(self, market_date: date) -> tuple[datetime, datetime]:
         raise NotImplementedError
+
+
+class _EmptyRuns:
+    def __init__(self, records: tuple[StoredRun, ...] = ()) -> None:
+        self.records = records
+
+    def list_runs(self, market_date_start: date, market_date_end: date) -> tuple[()]:
+        return tuple(
+            item
+            for item in self.records
+            if market_date_start <= item.run.market_date <= market_date_end
+        )
+
+    def load(self, run_id: str):
+        return next((item for item in self.records if item.run.run_id == run_id), None)
+
+    def read_staged_artifact(self, run_id: str, artifact_name: str) -> bytes | None:
+        return None
+
+
+class _EmptyArtifacts:
+    def __init__(self) -> None:
+        self.bundle: PublishedRunBundle | None = None
+        self.report: str | None = None
+        self.artifact: PublishedArtifact | None = None
+
+    def load_published_bundle(self, run_id: str):
+        return self.bundle
+
+    def get_report(self, run_id: str) -> None:
+        return self.report
+
+    def get_published_artifact(self, run_id: str) -> None:
+        return self.artifact
+
+
+class _EmptyFeedback:
+    def list_feedback(self) -> tuple[()]:
+        return ()
+
+
+class _EmptyObservations:
+    def __init__(self, records: tuple[ShadowDayObservation, ...]) -> None:
+        self.records = records
+
+    def list_observations(self) -> tuple[ShadowDayObservation, ...]:
+        return self.records
+
+
+class _EmptyAttestations:
+    def list_attestations(self) -> tuple[()]:
+        return ()
+
+
+class _EmptyReleaseEvidence:
+    def list_receipts(self) -> tuple[()]:
+        return ()
 
 
 def _gates(status: EvaluationGateStatus = EvaluationGateStatus.PENDING):
@@ -202,3 +276,196 @@ def test_legacy_scorecard_period_uses_sorted_unique_published_dates(valid_packet
     assert scorecard.period_start == date(2026, 8, 26)
     assert scorecard.period_end == date(2026, 8, 27)
     assert scorecard.valid_trading_days == 0
+
+
+def test_verified_scorecard_counts_eligible_days_and_keeps_unknown_coverage_pending() -> None:
+    from finance_research_agent.application.shadow_evidence_loader import (
+        load_shadow_evaluation_evidence,
+    )
+
+    period = ShadowPeriod(start_date=date(2026, 10, 5), end_date=date(2026, 10, 7))
+    observations = (
+        ShadowDayObservation(
+            id="online-monday",
+            market_date=date(2026, 10, 5),
+            recorded_at=datetime(2026, 10, 5, 16, tzinfo=UTC),
+            session_id="session-monday",
+            availability=ShadowDayAvailability.ONLINE,
+        ),
+        ShadowDayObservation(
+            id="excluded-tuesday",
+            market_date=date(2026, 10, 6),
+            recorded_at=datetime(2026, 10, 6, 16, tzinfo=UTC),
+            session_id="session-tuesday",
+            availability=ShadowDayAvailability.EXCLUDED,
+            exclusion_reason=ShadowDayExclusionReason.COMPUTER_OR_CODEX_UNAVAILABLE,
+        ),
+        ShadowDayObservation(
+            id="unknown-wednesday",
+            market_date=date(2026, 10, 7),
+            recorded_at=datetime(2026, 10, 7, 16, tzinfo=UTC),
+            session_id="session-wednesday",
+            availability=ShadowDayAvailability.UNKNOWN,
+        ),
+    )
+    evidence = load_shadow_evaluation_evidence(
+        period,
+        _EmptyRuns(),  # type: ignore[arg-type]
+        _EmptyArtifacts(),  # type: ignore[arg-type]
+        _EmptyFeedback(),  # type: ignore[arg-type]
+        _EmptyObservations(observations),  # type: ignore[arg-type]
+        _EmptyAttestations(),  # type: ignore[arg-type]
+        _EmptyReleaseEvidence(),  # type: ignore[arg-type]
+    )
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    assert scorecard.period_start == period.start_date
+    assert scorecard.period_end == period.end_date
+    assert scorecard.eligible_online_days == 2
+    assert scorecard.valid_trading_days == 0
+    assert scorecard.published_in_target_window == 0
+    gates = {gate.id: gate for gate in scorecard.gate_results}
+    assert gates[ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS].status is EvaluationGateStatus.PENDING
+    assert gates[ShadowGateId.TIMELY_PUBLICATION].status is EvaluationGateStatus.PENDING
+    timely_reasons = gates[ShadowGateId.TIMELY_PUBLICATION].reason_codes
+    assert "UNKNOWN_OR_MISSING_DAY_OBSERVATION" in timely_reasons
+
+
+def test_personal_research_publication_counts_once_inside_new_york_target_window(
+    valid_packet, tmp_path, monkeypatch
+) -> None:
+    from finance_research_agent.application import shadow_evidence_loader
+    from finance_research_agent.application.shadow_evidence_loader import (
+        load_shadow_evaluation_evidence,
+    )
+
+    bundle, artifact = personal_reduced_publication(valid_packet, tmp_path)
+    artifact = artifact.model_copy(
+        update={"published_at": artifact.published_at + timedelta(minutes=13)}
+    )
+    monkeypatch.setattr(
+        shadow_evidence_loader,
+        "current_component_versions",
+        lambda snapshot: recorded_component_versions(bundle.run),
+    )
+    period = ShadowPeriod(start_date=bundle.run.market_date, end_date=bundle.run.market_date)
+    observation = ShadowDayObservation(
+        id="online-publication-day",
+        market_date=bundle.run.market_date,
+        recorded_at=datetime(2026, 8, 26, 16, tzinfo=UTC),
+        session_id="session-publication-day",
+        availability=ShadowDayAvailability.ONLINE,
+    )
+    runs = _EmptyRuns((StoredRun(run=bundle.run, published=True),))
+    artifacts = _EmptyArtifacts()
+    artifacts.bundle = bundle
+    artifacts.report = bundle.report_markdown
+    artifacts.artifact = artifact
+    evidence = load_shadow_evaluation_evidence(
+        period,
+        runs,  # type: ignore[arg-type]
+        artifacts,  # type: ignore[arg-type]
+        _EmptyFeedback(),  # type: ignore[arg-type]
+        _EmptyObservations((observation,)),  # type: ignore[arg-type]
+        _EmptyAttestations(),  # type: ignore[arg-type]
+        _EmptyReleaseEvidence(),  # type: ignore[arg-type]
+    )
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    assert artifact.published_at.astimezone(ZoneInfo("America/New_York")).time() == time(9, 0)
+    assert scorecard.origin is ShadowEvaluationOrigin.PERSONAL_SHADOW
+    assert scorecard.eligible_online_days == 1
+    assert scorecard.valid_trading_days == 1
+    assert scorecard.published_in_target_window == 1
+    timely_gate = next(
+        gate for gate in scorecard.gate_results if gate.id is ShadowGateId.TIMELY_PUBLICATION
+    )
+    assert timely_gate.status is EvaluationGateStatus.PASS
+    assert timely_gate.measured_value == 1
+
+
+def test_verified_scorecard_can_end_on_last_representable_calendar_date() -> None:
+    from finance_research_agent.application.shadow_evidence_loader import (
+        load_shadow_evaluation_evidence,
+    )
+
+    period = ShadowPeriod(start_date=date.max, end_date=date.max)
+    evidence = load_shadow_evaluation_evidence(
+        period,
+        _EmptyRuns(),  # type: ignore[arg-type]
+        _EmptyArtifacts(),  # type: ignore[arg-type]
+        _EmptyFeedback(),  # type: ignore[arg-type]
+        _EmptyObservations(()),  # type: ignore[arg-type]
+        _EmptyAttestations(),  # type: ignore[arg-type]
+        _EmptyReleaseEvidence(),  # type: ignore[arg-type]
+    )
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    assert scorecard.period_end == date.max
+    assert scorecard.eligible_online_days == 1
+
+
+def test_verified_scorecard_uses_latest_hash_linked_exclusion_correction() -> None:
+    from finance_research_agent.application.shadow_evidence_loader import (
+        load_shadow_evaluation_evidence,
+    )
+
+    period = ShadowPeriod(start_date=date(2026, 10, 5), end_date=date(2026, 10, 5))
+    original = ShadowDayObservation(
+        id="online-before-correction",
+        market_date=date(2026, 10, 5),
+        recorded_at=datetime(2026, 10, 5, 15, tzinfo=UTC),
+        session_id="session-corrected",
+        availability=ShadowDayAvailability.ONLINE,
+    )
+    correction = ShadowDayObservation(
+        id="exclusion-correction",
+        market_date=date(2026, 10, 5),
+        recorded_at=datetime(2026, 10, 5, 16, tzinfo=UTC),
+        session_id="session-corrected",
+        availability=ShadowDayAvailability.EXCLUDED,
+        exclusion_reason=ShadowDayExclusionReason.TOTAL_LOCAL_NETWORK_OUTAGE,
+        corrects_observation_id=original.id,
+        corrects_observation_sha256=sha256(canonical_bytes(original)).hexdigest(),
+    )
+    evidence = load_shadow_evaluation_evidence(
+        period,
+        _EmptyRuns(),  # type: ignore[arg-type]
+        _EmptyArtifacts(),  # type: ignore[arg-type]
+        _EmptyFeedback(),  # type: ignore[arg-type]
+        _EmptyObservations((original, correction)),  # type: ignore[arg-type]
+        _EmptyAttestations(),  # type: ignore[arg-type]
+        _EmptyReleaseEvidence(),  # type: ignore[arg-type]
+    )
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    assert scorecard.eligible_online_days == 0
+    timely_gate = next(
+        gate for gate in scorecard.gate_results if gate.id is ShadowGateId.TIMELY_PUBLICATION
+    )
+    assert timely_gate.status is EvaluationGateStatus.PENDING
+    assert timely_gate.reason_codes == ("NO_ELIGIBLE_TRADING_DAYS",)

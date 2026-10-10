@@ -4,12 +4,7 @@ import json
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 
-from finance_research_agent.application.config_service import (
-    ConfigService,
-    DirectoryConfigurationRepository,
-)
 from finance_research_agent.application.feedback_service import RecordedFeedback
-from finance_research_agent.application.packet_service import build_research_packet
 from finance_research_agent.application.performance_telemetry import RunTelemetryRecorder
 from finance_research_agent.application.reduced_report import (
     render_reduced_report,
@@ -36,6 +31,10 @@ from finance_research_agent.evaluation.shadow_records import (
     ShadowDayObservation,
 )
 from finance_research_agent.evaluation.shadow_scorecard import ShadowPeriod
+from tests.support.shadow_evidence import (
+    personal_reduced_publication,
+    recorded_component_versions,
+)
 
 
 class _Runs:
@@ -137,85 +136,6 @@ def test_loader_returns_empty_snapshot_for_exact_inclusive_period() -> None:
     assert release_evidence.read_count == 1
 
 
-def _recorded_versions(run):
-    from finance_research_agent.domain.models import ComponentVersions
-
-    configuration = run.configuration_snapshot
-    return ComponentVersions(
-        core_version=run.core_version,
-        mcp_contract_version=run.mcp_contract_version,
-        plugin_version=run.plugin_version,
-        skill_version=run.skill_version,
-        prompt_version=run.prompt_version,
-        report_template_version=run.report_template_version,
-        schema_versions=run.schema_versions,
-        watchlist_version=configuration.watchlist_version,
-        regime_policy_version=configuration.regime_policy_version,
-        setup_policy_version=configuration.setup_policy_version,
-        risk_policy_version=configuration.risk_policy_version,
-        source_policy_version=configuration.source_policy_version,
-    )
-
-
-def _personal_reduced_publication(valid_packet, tmp_path):
-    from pathlib import Path
-
-    from finance_research_agent.domain.enums import ExecutionStatus
-
-    examples = Path(__file__).parents[2] / "config" / "examples"
-    configuration_snapshot = ConfigService(
-        DirectoryConfigurationRepository(examples, tmp_path / "config-staging")
-    ).validate_and_snapshot()
-    run = valid_packet.run.model_copy(update={"configuration_snapshot": configuration_snapshot})
-    packet = build_research_packet(
-        run=run,
-        evidence=valid_packet.evidence,
-        snapshots=valid_packet.market,
-        events=valid_packet.events,
-        metrics=valid_packet.metrics,
-        gates=valid_packet.gates,
-        candidates=valid_packet.candidates,
-        exclusions=valid_packet.candidate_exclusions,
-        plans=valid_packet.deterministic_plan_inputs,
-        capabilities=valid_packet.capability_states,
-        observations=valid_packet.prior_plan_observations,
-        max_serialized_bytes=valid_packet.synthesis_constraints.max_serialized_bytes,
-    )
-    recorder = RunTelemetryRecorder(monotonic_ns=lambda: 0)
-    recorder.record_http_exchange("alpaca", 1, 256)
-    telemetry = recorder.snapshot(
-        research_packet_bytes=packet.synthesis_constraints.serialized_bytes
-    )
-    reason = ReducedReportReason.SYNTHESIS_UNAVAILABLE
-    report = render_reduced_report(packet, reason)
-    bundle = PublishedRunBundle(
-        run=packet.run.model_copy(update={"execution_status": ExecutionStatus.PUBLISHED}),
-        bundle=FrozenMap(
-            {
-                "research_packet": packet.model_dump(mode="json"),
-                "brief_origin": BriefOrigin.DETERMINISTIC_REDUCED.value,
-                "reduced_report_reason": reason.value,
-                "reduced_report_staged_sha256": sha256(
-                    render_reduced_report_base(packet)
-                ).hexdigest(),
-                "reduced_plans": (),
-                "validation_reports": (),
-                "performance_telemetry": telemetry.model_dump(mode="json"),
-                "performance_telemetry_sha256": sha256(canonical_bytes(telemetry)).hexdigest(),
-            }
-        ),
-        report_markdown=report,
-        markdown_sha256=sha256(report.encode("utf-8")).hexdigest(),
-    )
-    artifact = PublishedArtifact(
-        run_id=bundle.run.run_id,
-        bundle_sha256=sha256(canonical_bytes(bundle)).hexdigest(),
-        markdown_sha256=sha256(report.encode("utf-8")).hexdigest(),
-        published_at=bundle.run.invoked_at + timedelta(minutes=2),
-    )
-    return bundle, artifact
-
-
 def test_loader_verifies_and_replays_every_published_run(valid_packet, monkeypatch) -> None:
     from finance_research_agent.application import shadow_evidence_loader
 
@@ -253,7 +173,7 @@ def test_loader_verifies_and_replays_every_published_run(valid_packet, monkeypat
     monkeypatch.setattr(
         shadow_evidence_loader,
         "current_component_versions",
-        lambda snapshot: _recorded_versions(bundle.run),
+        lambda snapshot: recorded_component_versions(bundle.run),
     )
 
     evidence = shadow_evidence_loader.load_shadow_evaluation_evidence(
@@ -282,7 +202,7 @@ def test_loader_derives_normal_provider_and_uses_original_receipt_duration(
     from finance_research_agent.domain.models import PerformanceTelemetry
     from finance_research_agent.evaluation.shadow_scorecard import ShadowEvaluationOrigin
 
-    bundle, artifact = _personal_reduced_publication(valid_packet, tmp_path)
+    bundle, artifact = personal_reduced_publication(valid_packet, tmp_path)
     artifacts = _Artifacts()
     artifacts.bundle = bundle
     artifacts.report = bundle.report_markdown
@@ -290,7 +210,7 @@ def test_loader_derives_normal_provider_and_uses_original_receipt_duration(
     monkeypatch.setattr(
         shadow_evidence_loader,
         "current_component_versions",
-        lambda snapshot: _recorded_versions(bundle.run),
+        lambda snapshot: recorded_component_versions(bundle.run),
     )
     telemetry = PerformanceTelemetry.model_validate(
         bundle.model_dump(mode="json")["bundle"]["performance_telemetry"], strict=True
@@ -336,7 +256,7 @@ def test_loader_uses_final_failure_checkpoint_for_normal_provider_duration(
     from finance_research_agent.application import shadow_evidence_loader
     from finance_research_agent.evaluation.shadow_scorecard import ShadowEvaluationOrigin
 
-    bundle, _ = _personal_reduced_publication(valid_packet, tmp_path)
+    bundle, _ = personal_reduced_publication(valid_packet, tmp_path)
     failed_run = bundle.run.model_copy(
         update={
             "execution_status": ExecutionStatus.FAILED,

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated
+from zoneinfo import ZoneInfo
 
 from pydantic import Field, computed_field, model_validator
 
+from finance_research_agent.domain.enums import BriefOrigin
 from finance_research_agent.domain.models import (
     Identifier,
     PerformanceTelemetry,
@@ -312,21 +314,187 @@ def build_shadow_scorecard(
     *,
     evidence: ShadowEvaluationEvidence | None = None,
 ) -> ShadowScorecard:
-    """Keep the legacy descriptive call safe until verified evidence is supplied."""
-    del feedback, calendar, evidence
-    dates = tuple(sorted({bundle.run.market_date for bundle in published_runs}))
+    """Aggregate day and publication evidence without trusting caller decisions."""
+    if evidence is None:
+        dates = tuple(sorted({bundle.run.market_date for bundle in published_runs}))
+        gates = tuple(
+            EvaluationGate(
+                id=gate_id,
+                status=EvaluationGateStatus.PENDING,
+                reason_codes=("VERIFIED_SHADOW_EVIDENCE_REQUIRED",),
+            )
+            for gate_id in ShadowGateId
+        )
+        return ShadowScorecard(
+            period_start=dates[0] if dates else None,
+            period_end=dates[-1] if dates else None,
+            gate_results=gates,
+        )
+
+    del published_runs, feedback
+    period = evidence.period
+    trading_dates: list[date] = []
+    current = period.start_date
+    while current <= period.end_date:
+        if calendar.is_trading_day(current):
+            trading_dates.append(current)
+        if current == period.end_date:
+            break
+        current = date.fromordinal(current.toordinal() + 1)
+
+    superseded_ids = {
+        item.corrects_observation_id
+        for item in evidence.observations
+        if item.corrects_observation_id is not None
+    }
+    current_observations: dict[date, set[str]] = {}
+    for item in evidence.observations:
+        if item.id in superseded_ids:
+            continue
+        current_observations.setdefault(item.market_date, set()).add(item.availability.value)
+
+    eligible_dates = tuple(
+        market_date
+        for market_date in trading_dates
+        if current_observations.get(market_date) != {"EXCLUDED"}
+    )
+    complete_day_evidence = all(
+        current_observations.get(market_date) in ({"ONLINE"}, {"EXCLUDED"})
+        for market_date in trading_dates
+    )
+
+    research_publications: dict[date, list[VerifiedShadowRunEvidence]] = {}
+    for verified_run in evidence.verified_runs:
+        bundle = verified_run.published_bundle
+        artifact = verified_run.published_artifact
+        if bundle is None or artifact is None:
+            continue
+        contents = bundle.bundle
+        if (
+            "brief_draft" not in contents
+            and contents.get("brief_origin") != BriefOrigin.DETERMINISTIC_REDUCED.value
+        ):
+            continue
+        research_publications.setdefault(bundle.run.market_date, []).append(verified_run)
+
+    selected_publications = {
+        market_date: min(
+            records,
+            key=lambda item: (
+                item.published_artifact.published_at,  # type: ignore[union-attr]
+                item.stored_run.run.revision,
+                item.stored_run.run.run_id,
+            ),
+        )
+        for market_date, records in research_publications.items()
+    }
+    excluded_dates = {
+        market_date
+        for market_date in trading_dates
+        if current_observations.get(market_date) == {"EXCLUDED"}
+    }
+    target_zone = ZoneInfo("America/New_York")
+    published_in_target_window = 0
+    if evidence.origin is ShadowEvaluationOrigin.PERSONAL_SHADOW:
+        for market_date, verified_run in selected_publications.items():
+            if market_date in excluded_dates:
+                continue
+            artifact = verified_run.published_artifact
+            assert artifact is not None
+            published_local = artifact.published_at.astimezone(target_zone)
+            local_time = published_local.timetz().replace(tzinfo=None)
+            if published_local.date() == market_date and time(8, 45) <= local_time <= time(9, 0):
+                published_in_target_window += 1
+
+    valid_trading_days = 0
+    if evidence.origin is ShadowEvaluationOrigin.PERSONAL_SHADOW:
+        valid_trading_days = sum(
+            1
+            for market_date in trading_dates
+            if current_observations.get(market_date) == {"ONLINE"}
+            and market_date in selected_publications
+        )
+
+    if valid_trading_days >= 20 and complete_day_evidence:
+        day_gate = EvaluationGate(
+            id=ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS,
+            status=EvaluationGateStatus.PASS,
+            evidence_ids=evidence.evidence_hashes,
+            measured_value=valid_trading_days,
+            required_value=20,
+        )
+    else:
+        day_gate = EvaluationGate(
+            id=ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS,
+            status=EvaluationGateStatus.PENDING,
+            evidence_ids=evidence.evidence_hashes,
+            reason_codes=(
+                "UNKNOWN_OR_MISSING_DAY_OBSERVATION"
+                if not complete_day_evidence
+                else "TWENTY_VALID_PERSONAL_TRADING_DAYS_REQUIRED",
+            ),
+            measured_value=valid_trading_days,
+            required_value=20,
+        )
+
+    if not eligible_dates:
+        timely_gate = EvaluationGate(
+            id=ShadowGateId.TIMELY_PUBLICATION,
+            status=EvaluationGateStatus.PENDING,
+            evidence_ids=evidence.evidence_hashes,
+            reason_codes=("NO_ELIGIBLE_TRADING_DAYS",),
+        )
+    elif not complete_day_evidence:
+        timely_gate = EvaluationGate(
+            id=ShadowGateId.TIMELY_PUBLICATION,
+            status=EvaluationGateStatus.PENDING,
+            evidence_ids=evidence.evidence_hashes,
+            reason_codes=("UNKNOWN_OR_MISSING_DAY_OBSERVATION",),
+            measured_value=Decimal(published_in_target_window) / Decimal(len(eligible_dates)),
+            required_value=Decimal("0.95"),
+        )
+    else:
+        publication_ratio = Decimal(published_in_target_window) / Decimal(len(eligible_dates))
+        timely_gate = EvaluationGate(
+            id=ShadowGateId.TIMELY_PUBLICATION,
+            status=(
+                EvaluationGateStatus.PASS
+                if publication_ratio >= Decimal("0.95")
+                else EvaluationGateStatus.FAIL
+            ),
+            evidence_ids=evidence.evidence_hashes,
+            reason_codes=(
+                ()
+                if publication_ratio >= Decimal("0.95")
+                else ("TARGET_WINDOW_PUBLICATION_RATE_BELOW_95_PERCENT",)
+            ),
+            measured_value=publication_ratio,
+            required_value=Decimal("0.95"),
+        )
+
+    specific_gates = {
+        ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS: day_gate,
+        ShadowGateId.TIMELY_PUBLICATION: timely_gate,
+    }
     gates = tuple(
-        EvaluationGate(
+        specific_gates.get(gate_id)
+        or EvaluationGate(
             id=gate_id,
             status=EvaluationGateStatus.PENDING,
-            reason_codes=("VERIFIED_SHADOW_EVIDENCE_REQUIRED",),
+            evidence_ids=evidence.evidence_hashes,
+            reason_codes=("GATE_EVIDENCE_NOT_YET_AGGREGATED",),
         )
         for gate_id in ShadowGateId
     )
     return ShadowScorecard(
-        period_start=dates[0] if dates else None,
-        period_end=dates[-1] if dates else None,
+        period_start=period.start_date,
+        period_end=period.end_date,
+        origin=evidence.origin,
+        valid_trading_days=valid_trading_days,
+        eligible_online_days=len(eligible_dates),
+        published_in_target_window=published_in_target_window,
         gate_results=gates,
+        evidence_hashes=evidence.evidence_hashes,
     )
 
 
