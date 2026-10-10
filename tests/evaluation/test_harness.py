@@ -5,9 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from finance_research_agent.domain.enums import ReducedReportReason, ValidationCode
+from finance_research_agent.application.packet_service import build_research_packet
+from finance_research_agent.application.reduced_report import render_reduced_report_base
+from finance_research_agent.domain.enums import (
+    Capability,
+    ReducedReportReason,
+    ValidationCode,
+)
 from finance_research_agent.domain.errors import ErrorCode
-from finance_research_agent.domain.models import EvidenceItem, SourceObservation
+from finance_research_agent.domain.models import (
+    CapabilityState,
+    EvidenceItem,
+    SourceObservation,
+)
 from finance_research_agent.domain.regime import RegimePolicy
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.evaluation import (
@@ -19,7 +29,10 @@ from finance_research_agent.evaluation.domain_assertions import (
     CandidateScoreFixture,
     DomainFixtureBank,
 )
-from finance_research_agent.evaluation.harness import execute_current_scope_scenario
+from finance_research_agent.evaluation.harness import (
+    _source_limitations_adjacent,
+    execute_current_scope_scenario,
+)
 from finance_research_agent.evaluation.models import (
     SCENARIO_IDS,
     CurrentScopeExpectation,
@@ -110,6 +123,63 @@ def test_current_scope_harness_checks_watchlist_exclusions_in_rendered_report(
     observation = execute_current_scope_scenario(scenario, harness)
 
     assert observation.watchlist_exclusions_visible is True
+
+
+def test_source_limitation_evaluation_requires_each_affected_section(
+    valid_packet,
+) -> None:
+    disabled = {
+        Capability.EVENT_RISK_CHECK_AVAILABLE,
+        Capability.SETUP_DETECTION_AVAILABLE,
+        Capability.PLAN_DRAFT_AVAILABLE,
+        Capability.POSITION_SIZING_AVAILABLE,
+        Capability.PORTFOLIO_HEAT_CHECK_AVAILABLE,
+    }
+    capabilities = tuple(
+        CapabilityState(
+            capability=capability,
+            available=capability not in disabled,
+            reason_codes=(
+                ()
+                if capability not in disabled
+                else (ErrorCode.SOURCE_NOT_CONFIGURED,)
+            ),
+            evidence_ids=(),
+        )
+        for capability in Capability
+    )
+    packet = build_research_packet(
+        run=valid_packet.run,
+        evidence=valid_packet.evidence,
+        snapshots=valid_packet.market,
+        events=valid_packet.events,
+        metrics=valid_packet.metrics,
+        gates=valid_packet.gates,
+        candidates=valid_packet.candidates,
+        exclusions=valid_packet.candidate_exclusions,
+        plans=valid_packet.deterministic_plan_inputs,
+        capabilities=capabilities,
+        observations=valid_packet.prior_plan_observations,
+        max_serialized_bytes=valid_packet.synthesis_constraints.max_serialized_bytes,
+    )
+    report = render_reduced_report_base(packet).decode("utf-8")
+    event_limitation = (
+        "- Limitation: EVENT_RISK_CHECK_AVAILABLE unavailable "
+        "(SOURCE_NOT_CONFIGURED)."
+    )
+    event_section = report.split("### Today’s Event Clock\n", 1)[1].split("\n### ", 1)[0]
+
+    assert event_limitation in event_section
+    assert "- Disabled capability: EVENT_RISK_CHECK_AVAILABLE (SOURCE_NOT_CONFIGURED)" in report
+    assert _source_limitations_adjacent(packet, report) is True
+
+    report_without_adjacent_event_limitation = report.replace(
+        event_limitation + "\n", "", 1
+    )
+    assert "- Disabled capability: EVENT_RISK_CHECK_AVAILABLE (SOURCE_NOT_CONFIGURED)" in (
+        report_without_adjacent_event_limitation
+    )
+    assert _source_limitations_adjacent(packet, report_without_adjacent_event_limitation) is False
 
 
 def test_s05_unknown_regime_current_scope_projection_uses_missing_broad_evidence(

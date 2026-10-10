@@ -36,6 +36,7 @@ from finance_research_agent.domain.enums import (
     ExecutionStatus,
     InvocationType,
     ReducedReportReason,
+    ReportSection,
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import CapabilityState
@@ -651,17 +652,29 @@ def _provider_call_count(dependencies: RunDependencies) -> int:
 
 
 def _report_section_bullets(report: str, title: str) -> tuple[str, ...] | None:
+    groups = _report_section_bullet_groups(report, title)
+    if groups is None or len(groups) != 1:
+        return None
+    return groups[0]
+
+
+def _report_section_bullet_groups(
+    report: str, title: str
+) -> tuple[tuple[str, ...], ...] | None:
     heading = f"### {title}"
     lines = report.splitlines()
     heading_indexes = tuple(index for index, line in enumerate(lines) if line == heading)
-    if len(heading_indexes) != 1:
+    if not heading_indexes:
         return None
-    start = heading_indexes[0] + 1
-    end = next(
-        (index for index in range(start, len(lines)) if lines[index].startswith("#")),
-        len(lines),
-    )
-    return tuple(line for line in lines[start:end] if line.startswith("- "))
+    groups: list[tuple[str, ...]] = []
+    for heading_index in heading_indexes:
+        start = heading_index + 1
+        end = next(
+            (index for index in range(start, len(lines)) if lines[index].startswith("#")),
+            len(lines),
+        )
+        groups.append(tuple(line for line in lines[start:end] if line.startswith("- ")))
+    return tuple(groups)
 
 
 def _source_limitations_adjacent(packet: ResearchPacket, report: str) -> bool:
@@ -681,14 +694,54 @@ def _source_limitations_adjacent(packet: ResearchPacket, report: str) -> bool:
         actual_rows = tuple(
             line for line in bullets if line.startswith("- Disabled capability: ")
         )
-        if actual_rows != expected_rows:
+        if len(actual_rows) != len(expected_rows) or set(actual_rows) != set(expected_rows):
             return False
-    plan_state = next(
-        state
-        for state in packet.capability_states
-        if state.capability is Capability.PLAN_DRAFT_AVAILABLE
-    )
-    return plan_state.available or not packet.deterministic_plan_inputs
+    affected_sections: Mapping[Capability, tuple[ReportSection, ...]] = {
+        Capability.MARKET_SUMMARY_AVAILABLE: (
+            ReportSection.MARKET_POSTURE,
+            ReportSection.CORE_MARKET_RISKS,
+        ),
+        Capability.REGIME_CLASSIFICATION_AVAILABLE: (
+            ReportSection.MARKET_POSTURE,
+            ReportSection.MARKET_REGIME,
+        ),
+        Capability.WATCHLIST_METRICS_AVAILABLE: (
+            ReportSection.WATCHLIST_PRIORITIES,
+            ReportSection.WATCHLIST_DASHBOARD,
+        ),
+        Capability.EVENT_RISK_CHECK_AVAILABLE: (
+            ReportSection.TODAY_EVENT_CLOCK,
+            ReportSection.MACRO_EVENT_CALENDAR,
+        ),
+        Capability.SETUP_DETECTION_AVAILABLE: (
+            ReportSection.WATCHLIST_PRIORITIES,
+            ReportSection.ELIGIBLE_SETUPS,
+        ),
+        Capability.PLAN_DRAFT_AVAILABLE: (
+            ReportSection.EXECUTIVE_TRADE_PLAN_DRAFTS,
+            ReportSection.DETAILED_TRADE_PLAN_DRAFTS,
+        ),
+        Capability.POSITION_SIZING_AVAILABLE: (
+            ReportSection.EXECUTIVE_TRADE_PLAN_DRAFTS,
+            ReportSection.DETAILED_TRADE_PLAN_DRAFTS,
+        ),
+        Capability.PORTFOLIO_HEAT_CHECK_AVAILABLE: (
+            ReportSection.EXECUTIVE_TRADE_PLAN_DRAFTS,
+            ReportSection.DETAILED_TRADE_PLAN_DRAFTS,
+        ),
+    }
+    for state in disabled:
+        expected_line = (
+            f"- Limitation: {state.capability.value} unavailable "
+            f"({', '.join(reason.value for reason in state.reason_codes)})."
+        )
+        for section in affected_sections[state.capability]:
+            section_bullets = _report_section_bullet_groups(report, section.value)
+            if section_bullets is None or any(
+                expected_line not in bullets for bullets in section_bullets
+            ):
+                return False
+    return True
 
 
 def _watchlist_exclusions_visible(packet: ResearchPacket, report: str) -> bool:

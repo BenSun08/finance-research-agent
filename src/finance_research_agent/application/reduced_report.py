@@ -1,6 +1,9 @@
 """Deterministic reduced research report from one frozen packet."""
 
-from finance_research_agent.application.report_renderer import _inline_text
+from finance_research_agent.application.report_renderer import (
+    _capability_limitation_lines,
+    _inline_text,
+)
 from finance_research_agent.domain.enums import ReducedReportReason, ReportSection
 from finance_research_agent.domain.packets import ResearchPacket
 
@@ -69,7 +72,11 @@ def render_reduced_report_base(packet: ResearchPacket) -> bytes:
         lines.extend(("", f"## {title}", ""))
         for section in values:
             lines.extend((f"### {section.value}", ""))
-            lines.extend(section_content.get(section) or ["- No deterministic reduced content."])
+            content = (
+                *_capability_limitation_lines(packet, section),
+                *section_content.get(section, ()),
+            )
+            lines.extend(content or ("- No deterministic reduced content.",))
             lines.append("")
     return ("\n".join(lines).rstrip() + "\n").encode("utf-8")
 
