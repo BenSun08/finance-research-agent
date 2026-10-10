@@ -55,12 +55,18 @@ SCHEMA_NAMES = {
 }
 ROOT = Path(__file__).resolve().parents[2]
 _UTC_DATETIME_ADAPTER = TypeAdapter(UtcDatetime)
+_RFC3339_UTC_DATETIME_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+    r"(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)"
+)
 
 
 def _application_format_checker() -> FormatChecker:
     checker = FormatChecker()
 
     def is_utc_datetime(value: object) -> bool:
+        if not isinstance(value, str) or not _RFC3339_UTC_DATETIME_PATTERN.fullmatch(value):
+            return False
         try:
             _UTC_DATETIME_ADAPTER.validate_python(value)
         except ValidationError:
@@ -209,6 +215,7 @@ def test_operation_schemas_are_strict_bounded_and_exclude_caller_authority() -> 
 
 
 def test_feedback_json_schemas_enforce_versioned_runtime_requirements() -> None:
+    assert _application_format_checker().conforms("2026-10-10t13:00:00z", "date-time")
     review_schema = TypeAdapter(
         SCHEMA_MODELS["product-a-citation-entailment-review.schema.json"]
     ).json_schema()
@@ -249,6 +256,9 @@ def test_feedback_json_schemas_enforce_versioned_runtime_requirements() -> None:
     assert not review_validator.is_valid({**full_review, "rationale": "café support"})
     assert not review_validator.is_valid(
         {**full_review, "reviewed_at": "not-a-dateZ"}
+    )
+    assert not review_validator.is_valid(
+        {**full_review, "reviewed_at": "2026-10-10 13:00:00Z"}
     )
 
     request_schema = TypeAdapter(
