@@ -11,6 +11,9 @@ from finance_research_agent.evaluation.shadow_records import (
     OperatorReleaseAttestation,
     OperatorReleaseCheckId,
     OperatorReleaseResult,
+    ReleaseCheckConclusion,
+    ReleaseCheckId,
+    ReleaseCheckReceipt,
     ShadowDayAvailability,
     ShadowDayExclusionReason,
     ShadowDayObservation,
@@ -133,3 +136,51 @@ def test_operator_release_attestation_binds_check_result_and_exact_source_identi
         OperatorReleaseAttestation.model_validate(
             attestation.model_dump(mode="python") | {"verified": True}, strict=True
         )
+
+
+def test_release_check_receipt_binds_one_check_to_exact_source_and_ci_step() -> None:
+    receipt = ReleaseCheckReceipt(
+        id="receipt-lint-py313",
+        check_id=ReleaseCheckId.LINT,
+        source_commit_sha256="a" * 64,
+        source_tree_sha256="b" * 64,
+        repository_id="12345",
+        workflow_id="67890",
+        actions_run_id="run-20261011-1",
+        actions_job_id="job-lint-py313",
+        actions_step_id="step-ruff-check",
+        python_version="3.13",
+        completed_at=datetime(2026, 10, 11, 1, 0, tzinfo=UTC),
+        conclusion=ReleaseCheckConclusion.SUCCESS,
+        response_sha256="c" * 64,
+    )
+
+    assert receipt.check_id is ReleaseCheckId.LINT
+    assert receipt.conclusion is ReleaseCheckConclusion.SUCCESS
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ReleaseCheckReceipt.model_validate(
+            receipt.model_dump(mode="python") | {"status": "PASS"}, strict=True
+        )
+
+
+def test_release_check_receipt_rejects_unknown_checks_and_conclusions() -> None:
+    fields: dict[str, object] = {
+        "id": "receipt-lint-py313",
+        "check_id": ReleaseCheckId.LINT,
+        "source_commit_sha256": "a" * 64,
+        "source_tree_sha256": "b" * 64,
+        "repository_id": "12345",
+        "workflow_id": "67890",
+        "actions_run_id": "run-20261011-1",
+        "actions_job_id": "job-lint-py313",
+        "actions_step_id": "step-ruff-check",
+        "python_version": "3.13",
+        "completed_at": datetime(2026, 10, 11, 1, 0, tzinfo=UTC),
+        "conclusion": ReleaseCheckConclusion.SUCCESS,
+        "response_sha256": "c" * 64,
+    }
+
+    with pytest.raises(ValidationError):
+        ReleaseCheckReceipt(**(fields | {"check_id": "UNSCOPED_CHECK"}))
+    with pytest.raises(ValidationError):
+        ReleaseCheckReceipt(**(fields | {"conclusion": "pass"}))

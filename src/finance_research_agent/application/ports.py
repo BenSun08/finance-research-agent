@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from finance_research_agent.application.feedback_service import RecordedFeedback
     from finance_research_agent.evaluation.shadow_records import (
         OperatorReleaseAttestation,
+        ReleaseCheckReceipt,
         ShadowDayObservation,
     )
 
@@ -52,6 +53,7 @@ __all__ = [
     "RunRepository",
     "PublishedArtifactReader",
     "ShadowObservationRepository",
+    "ReleaseEvidenceReader",
     "WatchlistRepository",
     "TradingCalendar",
 ]
@@ -247,3 +249,11 @@ class OperatorReleaseAttestationRepository(Protocol):
     def append_attestation(self, attestation: OperatorReleaseAttestation) -> None: ...
 
     def list_attestations(self) -> tuple[OperatorReleaseAttestation, ...]: ...
+
+
+class ReleaseEvidenceReader(Protocol):
+    """Read fixed-workflow CI receipts for one exact source revision."""
+
+    def list_receipts_for_source(
+        self, source_commit_sha256: str, source_tree_sha256: str
+    ) -> tuple[ReleaseCheckReceipt, ...]: ...

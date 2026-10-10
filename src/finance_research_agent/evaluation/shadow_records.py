@@ -125,6 +125,57 @@ class OperatorReleaseResult(StrEnum):
     FAIL = "FAIL"
 
 
+class ReleaseCheckId(StrEnum):
+    """Closed set of machine checks used by the R11 release contract."""
+
+    FORMAT = "FORMAT"
+    LINT = "LINT"
+    TYPES = "TYPES"
+    UNIT_AND_INTEGRATION_TESTS = "UNIT_AND_INTEGRATION_TESTS"
+    SCENARIO_AND_FAILURE_MATRIX = "SCENARIO_AND_FAILURE_MATRIX"
+    BRANCH_COVERAGE = "BRANCH_COVERAGE"
+    SCHEMA_DRIFT = "SCHEMA_DRIFT"
+    DOCS_AND_EXAMPLES = "DOCS_AND_EXAMPLES"
+    SECRET_SCAN = "SECRET_SCAN"
+    NETWORK_BOUNDARY = "NETWORK_BOUNDARY"
+    PLUGIN_WHEEL_SDIST = "PLUGIN_WHEEL_SDIST"
+    FRESH_WHEEL_INSTALL = "FRESH_WHEEL_INSTALL"
+    DOCTOR = "DOCTOR"
+    COMPATIBILITY = "COMPATIBILITY"
+
+
+class ReleaseCheckConclusion(StrEnum):
+    """GitHub check conclusions retained without converting them into gates."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    CANCELLED = "cancelled"
+    SKIPPED = "skipped"
+    NEUTRAL = "neutral"
+    TIMED_OUT = "timed_out"
+    ACTION_REQUIRED = "action_required"
+    STARTUP_FAILURE = "startup_failure"
+    STALE = "stale"
+
+
+class ReleaseCheckReceipt(StrictModel):
+    """One source-bound CI step result; it carries evidence, not a pass flag."""
+
+    id: Identifier
+    check_id: ReleaseCheckId
+    source_commit_sha256: Sha256
+    source_tree_sha256: Sha256
+    repository_id: Identifier
+    workflow_id: Identifier
+    actions_run_id: Identifier
+    actions_job_id: Identifier
+    actions_step_id: Identifier
+    python_version: Identifier
+    completed_at: UtcDatetime
+    conclusion: ReleaseCheckConclusion
+    response_sha256: Sha256
+
+
 class OperatorReleaseAttestation(StrictModel):
     """Self-attributed result bound to exact package, skill, and source bytes."""
 
@@ -144,6 +195,9 @@ __all__ = [
     "OperatorReleaseAttestation",
     "OperatorReleaseCheckId",
     "OperatorReleaseResult",
+    "ReleaseCheckConclusion",
+    "ReleaseCheckId",
+    "ReleaseCheckReceipt",
     "ShadowDayAvailability",
     "ShadowDayExclusionReason",
     "ShadowDayObservation",
