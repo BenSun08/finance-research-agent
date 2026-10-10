@@ -1315,3 +1315,104 @@ def test_m01_calendar_initializer_and_collection_readiness_failures_are_stable(
     assert "Brief origin: OPERATIONAL" in report
     assert "MARKET_CALENDAR_UNAVAILABLE" in report
     assert "secret" not in report
+
+
+@pytest.mark.parametrize(
+    ("expected_configured", "http_status"),
+    [
+        pytest.param(False, None, id="missing"),
+        pytest.param(True, 401, id="rejected"),
+    ],
+)
+def test_m02_alpaca_credential_failures_are_secret_free_operational_results(
+    tmp_path: Path,
+    expected_configured: bool,
+    http_status: int | None,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from finance_research_agent.adapters.alpaca import AlpacaMarketDataProvider
+    from finance_research_agent.adapters.http_client import SafeHttpClient
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.domain.enums import SourceRole
+    from finance_research_agent.domain.policies import SourcePolicy
+    from finance_research_agent.domain.types import FrozenMap
+    from finance_research_agent.settings import Settings
+
+    fake_key = "offline-invalid-key"
+    fake_secret = "offline-invalid-secret"
+    calls: list[httpx.Request] = []
+    statuses: list[int] = []
+    now = datetime(2026, 9, 28, 12, 45, tzinfo=UTC)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        statuses.append(401)
+        return httpx.Response(
+            401,
+            headers={"content-type": "application/json"},
+            json={"message": "synthetic credential rejection"},
+        )
+
+    source_policy = SourcePolicy(
+        version="1",
+        quality_source_roles=(SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR),
+        allowed_adapters=("alpaca",),
+        allowed_https_domains=("api.alpaca.markets", "data.alpaca.markets"),
+        allowed_hosts_by_adapter=FrozenMap(
+            {"alpaca": ("api.alpaca.markets", "data.alpaca.markets")}
+        ),
+        freshness_by_data_type=FrozenMap({"market_data": 60}),
+        cache_retention_seconds=60,
+        request_deadline_seconds=Decimal("10"),
+        retry_attempts=0,
+        retry_backoff_seconds=Decimal("0.1"),
+        retry_jitter_seconds=Decimal("0.1"),
+        per_run_request_budgets=FrozenMap({"market_data": 20}),
+        maximum_response_bytes=1_000_000,
+        allowed_content_types=("application/json",),
+        excerpt_limits=FrozenMap({"application/json": 4096}),
+    )
+    transport = httpx.MockTransport(respond)
+    http_client = SafeHttpClient(
+        source_policy,
+        transport=transport,
+        resolver=lambda host, port: ("93.184.216.34",),
+        clock=lambda: now,
+    )
+    settings = Settings(
+        data_dir=tmp_path,
+        alpaca_api_key=fake_key if expected_configured else None,
+        alpaca_api_secret=fake_secret if expected_configured else None,
+    )
+    provider = AlpacaMarketDataProvider(settings, http_client, clock=lambda: now)
+    assert provider.readiness().configured is expected_configured
+
+    deps = replace(dependencies(tmp_path / "service"), market_data=provider)
+    result = prepare_research_packet(request(), deps)
+
+    assert result.outcome == "PUBLISHED"
+    assert result.failure_code is ErrorCode.CREDENTIALS_MISSING
+    assert result.research_packet is None
+    assert result.data_quality is not None
+    assert result.data_quality.status is DataQualityStatus.FAIL
+    assert ErrorCode.CREDENTIALS_MISSING in result.data_quality.global_reason_codes
+    assert result.stored_run is not None and result.stored_run.published
+    report = deps.run_repository.get_report(result.stored_run.run_id)
+    assert report is not None
+    assert "Brief origin: OPERATIONAL" in report
+    assert "CREDENTIALS_MISSING" in report
+    assert fake_key not in report and fake_secret not in report
+    assert fake_key not in settings.model_dump_json()
+    assert fake_secret not in settings.model_dump_json()
+    if expected_configured:
+        assert calls
+        assert all(call.headers["APCA-API-KEY-ID"] == fake_key for call in calls)
+        assert all(call.headers["APCA-API-SECRET-KEY"] == fake_secret for call in calls)
+        assert all(call.url.host in {"data.alpaca.markets", "api.alpaca.markets"} for call in calls)
+        assert statuses == [http_status] * len(calls)
+    else:
+        assert calls == []
