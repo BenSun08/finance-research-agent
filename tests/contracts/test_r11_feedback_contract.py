@@ -8,6 +8,9 @@ from pydantic import ValidationError
 
 from finance_research_agent.application.operations import (
     CitationEntailmentReview,
+    CitationVerdict,
+    ExecutiveEventState,
+    ExecutiveIdentification,
     RecordRunFeedbackRequest,
 )
 from finance_research_agent.domain.enums import Capability
@@ -26,31 +29,33 @@ def test_legacy_feedback_remains_valid_and_full_feedback_advertises_v02() -> Non
     full = RecordRunFeedbackRequest.model_validate_json(
         json.dumps(
             {
-            "schema_version": "0.2",
-            "run_id": "premarket-2026-10-10-r1",
-            "clarity_score": 3,
-            "evidence_score": 4,
-            "usefulness_score": 5,
-            "citation_reviews": [
-                {
-                    "schema_version": "0.2",
-                    "citation_id": "evidence-00",
-                    "claim_id": "claim-1",
-                    "entails_claim": True,
-                    "verdict": "SUPPORTED",
-                    "rationale": "The cited source directly supports the stated field and date.",
-                    "reviewed_at": REVIEWED_AT.isoformat(),
-                }
-            ],
-            "executive_review_duration_seconds": 160,
-            "detailed_review_duration_seconds": 720,
-            "executive_identification": {
-                "market_posture": "unknown",
-                "event_state": "UNAVAILABLE",
-                "event_ids": [],
-                "priority_symbols": ["AAPL"],
-                "disabled_capabilities": ["EVENT_RISK_CHECK_AVAILABLE"],
-            },
+                "schema_version": "0.2",
+                "run_id": "premarket-2026-10-10-r1",
+                "clarity_score": 3,
+                "evidence_score": 4,
+                "usefulness_score": 5,
+                "citation_reviews": [
+                    {
+                        "schema_version": "0.2",
+                        "citation_id": "evidence-00",
+                        "claim_id": "claim-1",
+                        "entails_claim": True,
+                        "verdict": "SUPPORTED",
+                        "rationale": (
+                            "The cited source directly supports the stated field and date."
+                        ),
+                        "reviewed_at": REVIEWED_AT.isoformat(),
+                    }
+                ],
+                "executive_review_duration_seconds": 160,
+                "detailed_review_duration_seconds": 720,
+                "executive_identification": {
+                    "market_posture": "unknown",
+                    "event_state": "UNAVAILABLE",
+                    "event_ids": [],
+                    "priority_symbols": ["AAPL"],
+                    "disabled_capabilities": ["EVENT_RISK_CHECK_AVAILABLE"],
+                },
             }
         ),
         strict=True,
@@ -108,7 +113,7 @@ def test_citation_review_requires_a_versioned_consistent_full_review_group(
     review: dict[str, object],
 ) -> None:
     with pytest.raises(ValidationError):
-        CitationEntailmentReview.model_validate(review)
+        CitationEntailmentReview.model_validate_json(json.dumps(review), strict=True)
 
 
 def test_feedback_bounds_durations_and_structured_identification() -> None:
@@ -139,13 +144,13 @@ def test_feedback_bounds_durations_and_structured_identification() -> None:
             usefulness_score=5,
             executive_identification={
                 "market_posture": Regime.UNKNOWN,
-                "event_state": "UNAVAILABLE",
-                "event_ids": [],
-                "priority_symbols": [],
-                "disabled_capabilities": [
+                "event_state": ExecutiveEventState.UNAVAILABLE,
+                "event_ids": (),
+                "priority_symbols": (),
+                "disabled_capabilities": (
                     Capability.EVENT_RISK_CHECK_AVAILABLE,
                     Capability.EVENT_RISK_CHECK_AVAILABLE,
-                ],
+                ),
             },
         )
 
@@ -194,7 +199,7 @@ def test_event_identification_state_requires_matching_event_ids() -> None:
             **base,
             executive_identification={
                 "market_posture": Regime.UNKNOWN,
-                "event_state": "MATERIAL_EVENTS",
+                "event_state": ExecutiveEventState.MATERIAL_EVENTS,
                 "event_ids": (),
                 "priority_symbols": (),
                 "disabled_capabilities": (),
@@ -205,9 +210,64 @@ def test_event_identification_state_requires_matching_event_ids() -> None:
             **base,
             executive_identification={
                 "market_posture": Regime.UNKNOWN,
-                "event_state": "NO_MATERIAL_EVENTS",
+                "event_state": ExecutiveEventState.NO_MATERIAL_EVENTS,
                 "event_ids": ("event-1",),
                 "priority_symbols": (),
                 "disabled_capabilities": (),
             },
+        )
+
+
+@pytest.mark.parametrize(
+    "identification",
+    (
+        {
+            "market_posture": Regime.UNKNOWN,
+            "event_state": ExecutiveEventState.MATERIAL_EVENTS,
+            "event_ids": ("event-1", "event-1"),
+            "priority_symbols": (),
+            "disabled_capabilities": (),
+        },
+        {
+            "market_posture": Regime.UNKNOWN,
+            "event_state": ExecutiveEventState.UNAVAILABLE,
+            "event_ids": (),
+            "priority_symbols": ("AAPL", "AAPL"),
+            "disabled_capabilities": (),
+        },
+    ),
+)
+def test_executive_identification_rejects_duplicate_answers(
+    identification: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        ExecutiveIdentification.model_validate(identification)
+
+
+def test_legacy_request_cannot_use_v02_extensions() -> None:
+    with pytest.raises(ValidationError, match="schema 0.1"):
+        RecordRunFeedbackRequest(
+            run_id="premarket-2026-10-10-r1",
+            clarity_score=3,
+            evidence_score=4,
+            usefulness_score=5,
+            executive_review_duration_seconds=0,
+        )
+    with pytest.raises(ValidationError, match="schema 0.1"):
+        RecordRunFeedbackRequest(
+            run_id="premarket-2026-10-10-r1",
+            clarity_score=3,
+            evidence_score=4,
+            usefulness_score=5,
+            citation_reviews=(
+                CitationEntailmentReview(
+                    schema_version="0.2",
+                    citation_id="evidence-00",
+                    claim_id="claim-1",
+                    entails_claim=True,
+                    verdict=CitationVerdict.SUPPORTED,
+                    rationale="The cited source supports the selected claim.",
+                    reviewed_at=REVIEWED_AT,
+                ),
+            ),
         )
