@@ -399,6 +399,138 @@ def _normal_provider_duration_evidence(
     )
 
 
+def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGate:
+    from finance_research_agent.application.operations import CitationVerdict
+    from finance_research_agent.evaluation.citation_sampling import (
+        build_citation_entailment_review_sample,
+    )
+
+    published_runs = tuple(
+        item
+        for item in evidence.verified_runs
+        if item.published_bundle is not None and item.published_artifact is not None
+    )
+    evidence_ids = set(evidence.evidence_hashes)
+    if not published_runs:
+        evidence_ids.update(item.stored_run.run_id for item in evidence.verified_runs)
+        return EvaluationGate(
+            id=ShadowGateId.EVIDENCE,
+            status=EvaluationGateStatus.PENDING,
+            evidence_ids=tuple(sorted(evidence_ids)),
+            reason_codes=("NO_PUBLISHED_RUNS",),
+        )
+
+    incomplete_sample = False
+    legacy_incomplete = False
+    adverse_full_review = False
+    adverse_legacy_review = False
+    invalid_context = False
+    no_material_claims = False
+
+    feedback_by_publication: dict[str, list[RecordedFeedback]] = {}
+    for record in evidence.feedback_records:
+        feedback_by_publication.setdefault(record.run_id, []).append(record)
+
+    for verified_run in published_runs:
+        bundle = verified_run.published_bundle
+        publication = verified_run.published_artifact
+        assert bundle is not None and publication is not None
+        run_id = verified_run.stored_run.run_id
+        evidence_ids.add(run_id)
+        matching_feedback = tuple(
+            record
+            for record in feedback_by_publication.get(run_id, ())
+            if record.bundle_sha256 == publication.bundle_sha256
+        )
+        evidence_ids.update(record.feedback_id for record in matching_feedback)
+        for record in matching_feedback:
+            for review in record.citation_reviews:
+                if review.schema_version == "0.1":
+                    legacy_incomplete = True
+                    if not review.entails_claim:
+                        adverse_legacy_review = True
+        try:
+            sample = build_citation_entailment_review_sample(
+                bundle,
+                publication=publication,
+            )
+        except (TypeError, ValueError):
+            invalid_context = True
+            continue
+
+        if sample.empty_reason is not None:
+            no_material_claims = True
+            continue
+
+        selected_claim_ids = set(sample.claim_ids)
+        allowed_citations_by_claim = {
+            context.claim.claim_id: {
+                item.evidence_id
+                for item in (
+                    *context.cited_evidence,
+                    *context.counter_evidence,
+                    *context.metric_input_evidence,
+                )
+            }
+            for context in sample.contexts
+        }
+        supported_claim_ids: set[str] = set()
+
+        for record in matching_feedback:
+            for review in record.citation_reviews:
+                if review.schema_version == "0.1":
+                    continue
+
+                if (
+                    review.claim_id not in selected_claim_ids
+                    or review.citation_id
+                    not in allowed_citations_by_claim.get(review.claim_id, set())
+                    or review.verdict is None
+                    or review.reviewed_at is None
+                    or not publication.published_at <= review.reviewed_at <= record.recorded_at
+                ):
+                    incomplete_sample = True
+                    continue
+                if review.verdict is CitationVerdict.SUPPORTED:
+                    supported_claim_ids.add(review.claim_id)
+                else:
+                    adverse_full_review = True
+
+        if selected_claim_ids - supported_claim_ids:
+            incomplete_sample = True
+
+    if adverse_full_review or adverse_legacy_review or invalid_context:
+        reasons = tuple(
+            reason
+            for condition, reason in (
+                (adverse_full_review, "MATERIAL_CITATION_REVIEW_NOT_SUPPORTED"),
+                (adverse_legacy_review, "LEGACY_ADVERSE_CITATION_REVIEW"),
+                (invalid_context, "CITATION_CONTEXT_INVALID"),
+            )
+            if condition
+        )
+        status = EvaluationGateStatus.FAIL
+    elif incomplete_sample:
+        reasons = ("CITATION_ENTAILMENT_SAMPLE_INCOMPLETE",)
+        status = EvaluationGateStatus.PENDING
+    else:
+        # Other deterministic evidence checks are not yet represented by this
+        # scorecard input. A citation-only success cannot satisfy the full gate.
+        reasons = ("ADDITIONAL_EVIDENCE_CHECKS_NOT_AGGREGATED",)
+        status = EvaluationGateStatus.PENDING
+    if legacy_incomplete:
+        reasons = (*reasons, "LEGACY_REVIEW_INCOMPLETE")
+    if no_material_claims:
+        reasons = ("NO_MATERIAL_CLAIMS", *reasons)
+
+    return EvaluationGate(
+        id=ShadowGateId.EVIDENCE,
+        status=status,
+        evidence_ids=tuple(sorted(evidence_ids)),
+        reason_codes=reasons,
+    )
+
+
 NonNegativeCount = Annotated[int, Field(ge=0)]
 NonNegativeSeconds = Annotated[int, Field(ge=0)]
 
@@ -751,6 +883,7 @@ def build_shadow_scorecard(
 
     specific_gates = {
         ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS: day_gate,
+        ShadowGateId.EVIDENCE: _citation_evidence_gate(evidence),
         ShadowGateId.REVIEW_TIME: review_time_gate,
         ShadowGateId.NORMAL_PROVIDER_DURATION: duration_gate,
         ShadowGateId.TIMELY_PUBLICATION: timely_gate,
