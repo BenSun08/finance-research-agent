@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from hashlib import sha256
 
 from finance_research_agent.domain.enums import ClaimType, ReportSection
 from finance_research_agent.domain.metrics import MetricResult
-from finance_research_agent.domain.models import PublishedRunBundle
+from finance_research_agent.domain.models import (
+    EvidenceItem,
+    PublishedArtifact,
+    PublishedRunBundle,
+)
 from finance_research_agent.domain.packets import ResearchPacket
-from finance_research_agent.domain.types import canonical_bytes
+from finance_research_agent.domain.types import UtcDatetime, canonical_bytes
 from finance_research_agent.domain.validation import Claim, ResearchBriefDraft
 
 _MAX_SAMPLE_SIZE = 5
@@ -24,6 +29,44 @@ _PRIORITY_SECTIONS = frozenset(
         ReportSection.MACRO_EVENT_CALENDAR,
     }
 )
+
+
+class CitationSampleEmptyReason(StrEnum):
+    """Structural reason why a run has no claim available for human review."""
+
+    NO_MATERIAL_CLAIMS = "NO_MATERIAL_CLAIMS"
+
+
+@dataclass(frozen=True, slots=True)
+class CitationReviewContext:
+    """Bounded evidence and provenance for one selected human review claim."""
+
+    claim: Claim
+    supporting_claims: tuple[Claim, ...]
+    cited_evidence: tuple[EvidenceItem, ...]
+    counter_evidence: tuple[EvidenceItem, ...]
+    metric_bindings: tuple[MetricResult, ...]
+    metric_input_evidence: tuple[EvidenceItem, ...]
+    authority_tiers: tuple[int, ...]
+    publication_time: UtcDatetime
+    evidence_cutoff: UtcDatetime
+
+
+@dataclass(frozen=True, slots=True)
+class CitationEntailmentReviewSample:
+    """Deterministic review contexts, or the structural empty-sample reason."""
+
+    contexts: tuple[CitationReviewContext, ...]
+    empty_reason: CitationSampleEmptyReason | None
+
+    def __post_init__(self) -> None:
+        if bool(self.contexts) == (self.empty_reason is not None):
+            raise ValueError("review sample must contain contexts or one empty reason")
+
+    @property
+    def claim_ids(self) -> tuple[str, ...]:
+        """Return selected claim identifiers in review order."""
+        return tuple(context.claim.claim_id for context in self.contexts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,4 +338,113 @@ def select_citation_entailment_sample(
     return _select(candidates, maximum_claims)
 
 
-__all__ = ["select_citation_entailment_sample"]
+def _ordered_unique(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))
+
+
+def build_citation_entailment_review_sample(
+    bundle: PublishedRunBundle,
+    *,
+    publication: PublishedArtifact,
+    maximum_claims: int = _MAX_SAMPLE_SIZE,
+) -> CitationEntailmentReviewSample:
+    """Materialize human-review context from the bundle and its publication receipt.
+
+    Evidence excerpts and structured fields are retained from the bounded frozen
+    packet. The publication timestamp must come from the verified publication
+    receipt. This function supplies evidence context only and never assigns a verdict.
+    """
+    if (
+        publication.run_id != bundle.run.run_id
+        or publication.bundle_sha256 != sha256(canonical_bytes(bundle)).hexdigest()
+    ):
+        raise ValueError("citation review context requires a matching publication receipt")
+
+    selected_claim_ids = select_citation_entailment_sample(
+        bundle, maximum_claims=maximum_claims
+    )
+    if not selected_claim_ids:
+        return CitationEntailmentReviewSample(
+            contexts=(),
+            empty_reason=CitationSampleEmptyReason.NO_MATERIAL_CLAIMS,
+        )
+
+    packet, brief = _bundle_models(bundle)
+    if packet is None or brief is None:
+        raise ValueError("selected citation claims require a packet and brief")
+    if packet.run.run_id != bundle.run.run_id or brief.run_id != bundle.run.run_id:
+        raise ValueError("citation review context inputs must share one run id")
+
+    claim_map = {claim.claim_id: claim for claim in brief.claims}
+    evidence_map = {item.evidence_id: item for item in packet.evidence}
+    metric_map = {metric.metric_id: metric for metric in packet.metrics}
+    if len(evidence_map) != len(packet.evidence):
+        raise ValueError("published packet has duplicate evidence ids")
+    if len(metric_map) != len(packet.metrics):
+        raise ValueError("published packet has duplicate metric ids")
+
+    cutoff = packet.run.require_evidence_cutoff()
+    contexts: list[CitationReviewContext] = []
+    for selected_claim_id in selected_claim_ids:
+        closure = _claim_closure(selected_claim_id, claim_map)
+        cited_ids = _ordered_unique(
+            evidence_id for claim in closure for evidence_id in claim.evidence_ids
+        )
+        counter_evidence_ids = _ordered_unique(
+            evidence_id
+            for claim in closure
+            for evidence_id in claim.counter_evidence_ids
+        )
+        metric_ids = _ordered_unique(
+            metric_id for claim in closure for metric_id in claim.metric_ids
+        )
+        try:
+            metrics = tuple(metric_map[metric_id] for metric_id in metric_ids)
+            cited = tuple(evidence_map[evidence_id] for evidence_id in cited_ids)
+            counter_evidence = tuple(
+                evidence_map[evidence_id] for evidence_id in counter_evidence_ids
+            )
+            metric_input_ids = _ordered_unique(
+                evidence_id
+                for metric in metrics
+                for evidence_id in metric.input_evidence_ids
+            )
+            metric_input_evidence = tuple(
+                evidence_map[evidence_id] for evidence_id in metric_input_ids
+            )
+        except KeyError as exc:
+            raise ValueError("published citation context references missing packet data") from exc
+
+        all_evidence = {
+            item.evidence_id: item
+            for item in (*cited, *counter_evidence, *metric_input_evidence)
+        }
+        contexts.append(
+            CitationReviewContext(
+                claim=claim_map[selected_claim_id],
+                supporting_claims=closure[1:],
+                cited_evidence=cited,
+                counter_evidence=counter_evidence,
+                metric_bindings=metrics,
+                metric_input_evidence=metric_input_evidence,
+                authority_tiers=tuple(
+                    sorted({item.authority_tier for item in all_evidence.values()})
+                ),
+                publication_time=publication.published_at,
+                evidence_cutoff=cutoff,
+            )
+        )
+
+    return CitationEntailmentReviewSample(
+        contexts=tuple(contexts),
+        empty_reason=None,
+    )
+
+
+__all__ = [
+    "CitationEntailmentReviewSample",
+    "CitationReviewContext",
+    "CitationSampleEmptyReason",
+    "build_citation_entailment_review_sample",
+    "select_citation_entailment_sample",
+]

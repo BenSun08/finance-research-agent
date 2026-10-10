@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 
 import yaml
@@ -16,8 +18,8 @@ from finance_research_agent.domain.enums import (
     ExecutionStatus,
     ReportSection,
 )
-from finance_research_agent.domain.models import PublishedRunBundle
-from finance_research_agent.domain.types import FrozenMap
+from finance_research_agent.domain.models import PublishedArtifact, PublishedRunBundle
+from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 from finance_research_agent.domain.validation import (
     Claim,
     PlanNarrative,
@@ -32,6 +34,7 @@ def _claim(
     *,
     evidence_ids: tuple[str, ...] = (),
     metric_ids: tuple[str, ...] = (),
+    counter_evidence_ids: tuple[str, ...] = (),
     supports_claim_ids: tuple[str, ...] = (),
     plan_id: str | None = None,
 ) -> Claim:
@@ -43,6 +46,7 @@ def _claim(
         field="research_value",
         evidence_ids=evidence_ids,
         metric_ids=metric_ids,
+        counter_evidence_ids=counter_evidence_ids,
         supports_claim_ids=supports_claim_ids,
         plan_id=plan_id,
     )
@@ -120,6 +124,7 @@ def _bundle(
     roots: tuple[str, ...] | None = None,
     second_tier: bool = False,
     plan_claim_ids: tuple[str, ...] = (),
+    packet_override=None,
 ):
     if claims is None:
         claims = valid_brief_draft.claims
@@ -133,7 +138,7 @@ def _bundle(
         roots=roots,
         plan_claim_ids=plan_claim_ids,
     )
-    packet = valid_packet
+    packet = packet_override if packet_override is not None else valid_packet
     if second_tier:
         packet = build_research_packet(
             run=valid_packet.run,
@@ -163,6 +168,15 @@ def _bundle(
         ),
         report_markdown="",
         markdown_sha256=None,
+    )
+
+
+def _publication_receipt(bundle: PublishedRunBundle, published_at: datetime) -> PublishedArtifact:
+    return PublishedArtifact(
+        run_id=bundle.run.run_id,
+        bundle_sha256=sha256(canonical_bytes(bundle)).hexdigest(),
+        markdown_sha256="a" * 64,
+        published_at=published_at,
     )
 
 
@@ -260,6 +274,54 @@ def test_selector_uses_reachable_claim_graph_and_is_stable(
     assert "orphan" not in first
 
 
+def test_selector_uses_canonical_bundle_hash_for_equal_priority_ties(
+    valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.evaluation.citation_sampling import (
+        select_citation_entailment_sample,
+    )
+
+    claims = (
+        _claim("claim-alpha", ClaimType.FACT, evidence_ids=("evidence-00",)),
+        _claim("claim-zeta", ClaimType.FACT, evidence_ids=("evidence-00",)),
+    )
+    bundle = _bundle(
+        valid_packet,
+        valid_brief_draft,
+        claims=claims,
+        roots=("claim-alpha", "claim-zeta"),
+    )
+
+    assert select_citation_entailment_sample(bundle, maximum_claims=1) == ("claim-zeta",)
+
+
+def test_selector_preserves_tier_coverage_before_plan_priority(
+    valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.evaluation.citation_sampling import (
+        select_citation_entailment_sample,
+    )
+
+    claims = (
+        _claim("priority-fact", ClaimType.FACT, evidence_ids=("evidence-01",)),
+        _claim("tier-two-fact", ClaimType.FACT, evidence_ids=("evidence-00",)),
+        _claim("tier-one-inference", ClaimType.INFERENCE, evidence_ids=("evidence-01",)),
+    )
+    bundle = _bundle(
+        valid_packet,
+        valid_brief_draft,
+        claims=claims,
+        roots=tuple(claim.claim_id for claim in claims),
+        second_tier=True,
+        plan_claim_ids=("priority-fact",),
+    )
+
+    selected = select_citation_entailment_sample(bundle, maximum_claims=2)
+
+    assert set(selected) == {"tier-two-fact", "tier-one-inference"}
+    assert "priority-fact" not in selected
+
+
 def test_selector_caps_sample_at_five_and_handles_fewer_claims_single_tier(
     valid_packet, valid_brief_draft
 ) -> None:
@@ -299,6 +361,126 @@ def test_selector_returns_empty_only_for_brief_without_reachable_material_claims
 
     assert select_citation_entailment_sample(empty) == ()
     assert select_citation_entailment_sample(orphan) == ()
+
+
+def test_review_context_materializes_bounded_bundle_evidence_and_provenance(
+    valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.evaluation.citation_sampling import (
+        build_citation_entailment_review_sample,
+    )
+
+    metric_id = "metric-sma-0123456789abcdef"
+    support = _claim(
+        "support", ClaimType.FACT, evidence_ids=("evidence-01",)
+    )
+    root = _claim(
+        "root",
+        ClaimType.CALCULATION,
+        evidence_ids=("evidence-00",),
+        metric_ids=(metric_id,),
+        counter_evidence_ids=("evidence-01",),
+        supports_claim_ids=("support",),
+    )
+    source = valid_packet.evidence[0].source.model_copy(
+        update={"excerpt": "Observed supporting excerpt."}
+    )
+    evidence_with_excerpt = valid_packet.evidence[0].model_copy(
+        update={"source": source}
+    )
+    packet = build_research_packet(
+        run=valid_packet.run,
+        evidence=(evidence_with_excerpt, valid_packet.evidence[1]),
+        snapshots=valid_packet.market,
+        events=valid_packet.events,
+        metrics=valid_packet.metrics,
+        gates=valid_packet.gates,
+        candidates=valid_packet.candidates,
+        exclusions=valid_packet.candidate_exclusions,
+        plans=valid_packet.deterministic_plan_inputs,
+        capabilities=valid_packet.capability_states,
+        observations=valid_packet.prior_plan_observations,
+        max_serialized_bytes=valid_packet.synthesis_constraints.max_serialized_bytes,
+        regime_result=valid_packet.regime_result,
+    )
+    bundle = _bundle(
+        valid_packet,
+        valid_brief_draft,
+        claims=(root, support),
+        roots=("root",),
+        packet_override=packet,
+    )
+    published_at = datetime(2026, 8, 26, 13, 0, tzinfo=UTC)
+    publication = _publication_receipt(bundle, published_at)
+
+    sample = build_citation_entailment_review_sample(bundle, publication=publication)
+
+    assert sample.empty_reason is None
+    assert set(sample.claim_ids) == {"root", "support"}
+    context = next(context for context in sample.contexts if context.claim.claim_id == "root")
+    assert context.claim.text == "Claim text for root."
+    assert tuple(claim.claim_id for claim in context.supporting_claims) == ("support",)
+    assert tuple(item.evidence_id for item in context.cited_evidence) == (
+        "evidence-00",
+        "evidence-01",
+    )
+    assert tuple(item.evidence_id for item in context.counter_evidence) == ("evidence-01",)
+    assert tuple(metric.metric_id for metric in context.metric_bindings) == (metric_id,)
+    assert tuple(item.evidence_id for item in context.metric_input_evidence) == ("evidence-00",)
+    assert context.cited_evidence[0].source.excerpt == "Observed supporting excerpt."
+    assert context.cited_evidence[0].structured_fields["subject"] == "AAPL"
+    assert context.publication_time == publication.published_at
+    assert context.evidence_cutoff == valid_packet.run.evidence_cutoff_at
+
+
+def test_review_context_marks_no_reachable_claims_with_structural_reason(
+    valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.evaluation.citation_sampling import (
+        CitationSampleEmptyReason,
+        build_citation_entailment_review_sample,
+    )
+
+    bundle = _bundle(valid_packet, valid_brief_draft, claims=(), roots=())
+
+    sample = build_citation_entailment_review_sample(
+        bundle,
+        publication=_publication_receipt(
+            bundle, datetime(2026, 8, 26, 13, 0, tzinfo=UTC)
+        ),
+    )
+
+    assert sample.contexts == ()
+    assert sample.claim_ids == ()
+    assert sample.empty_reason is CitationSampleEmptyReason.NO_MATERIAL_CLAIMS
+
+
+def test_review_context_rejects_publication_receipts_not_bound_to_the_bundle(
+    valid_packet, valid_brief_draft
+) -> None:
+    import pytest
+
+    from finance_research_agent.evaluation.citation_sampling import (
+        build_citation_entailment_review_sample,
+    )
+
+    claim = _claim("claim-1", ClaimType.FACT, evidence_ids=("evidence-00",))
+    bundle = _bundle(
+        valid_packet,
+        valid_brief_draft,
+        claims=(claim,),
+        roots=("claim-1",),
+    )
+    publication = _publication_receipt(bundle, datetime(2026, 8, 26, 13, 0, tzinfo=UTC))
+
+    for mismatched_receipt in (
+        publication.model_copy(update={"run_id": "premarket-2026-08-27-r1"}),
+        publication.model_copy(update={"bundle_sha256": "b" * 64}),
+    ):
+        with pytest.raises(ValueError, match="matching publication receipt"):
+            build_citation_entailment_review_sample(
+                bundle, publication=mismatched_receipt
+            )
 
 
 def test_citation_rubric_preserves_human_only_reviews_and_required_context() -> None:
