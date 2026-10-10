@@ -33,6 +33,12 @@ def test_pure_trusted_assembly_does_not_discover_installed_resources(snapshot, m
     assert result.skill_version == "sha256:" + "a" * 64
     assert result.plugin_version == "0.1.0"
     assert result.watchlist_version == snapshot.watchlist_version
+    assert dict(result.schema_versions) == {
+        "citation-entailment-review": "0.2",
+        "record-run-feedback-request": "0.2",
+        "recorded-feedback": "0.2",
+        "run-context": "0.1",
+    }
 
 
 def test_current_versions_use_installed_skill_and_manifest_version(snapshot, monkeypatch):

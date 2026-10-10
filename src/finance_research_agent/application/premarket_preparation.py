@@ -47,16 +47,26 @@ from finance_research_agent.application.run_service import (
 from finance_research_agent.application.run_state import compose_publication_context
 from finance_research_agent.domain.eligibility import evaluate_instrument_eligibility
 from finance_research_agent.domain.enums import (
+    Capability,
     DataQualityStatus,
     DeliveryStatus,
     ExecutionStatus,
+    GateStatus,
     InvocationType,
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.events import assess_event_risk
-from finance_research_agent.domain.market_calendar import NEW_YORK, RunWindowDecision, format_run_id
+from finance_research_agent.domain.market_calendar import (
+    NEW_YORK,
+    RunWindowDecision,
+    format_run_id,
+    resolve_run_window,
+)
 from finance_research_agent.domain.models import (
+    CapabilityState,
+    EvidenceItem,
     GateResult,
+    MissedRunRecord,
     ProviderFailure,
     PublishedArtifact,
     RunContext,
@@ -64,13 +74,105 @@ from finance_research_agent.domain.models import (
     StrictModel,
 )
 from finance_research_agent.domain.packets import PacketBudgetExceeded, ResearchPacket
-from finance_research_agent.domain.regime import calculate_regime
+from finance_research_agent.domain.quality import DataQualityResult
+from finance_research_agent.domain.regime import Regime, RegimeResult, calculate_regime
 from finance_research_agent.domain.setups import CandidateExclusion, assess_setups, setup_gate
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes, utc_datetime
 
 _RUN_DURATION = timedelta(minutes=15)
 _MARKET_AUTHORITY_TIER = 2
 _DEFAULT_PACKET_BYTES = 8_000_000
+
+
+def _unknown_regime_projection(
+    regime: RegimeResult,
+    evidence: tuple[EvidenceItem, ...],
+    capabilities: tuple[CapabilityState, ...],
+    broad_symbols: tuple[str, ...],
+) -> tuple[tuple[CapabilityState, ...], GateResult | None]:
+    """Disable usable regime/plan claims when required broad data is absent."""
+    if regime.regime is not Regime.UNKNOWN:
+        return capabilities, None
+    missing_evidence_ids = tuple(
+        dict.fromkeys(
+            item.evidence_id
+            for item in evidence
+            if item.source.provider == "alpaca"
+            and item.structured_fields.get("outcome") == "DAILY_BARS"
+            and item.structured_fields.get("requested_symbol") in broad_symbols
+            and item.structured_fields.get("error_code") == ErrorCode.PROVIDER_NO_DATA.value
+        )
+    )
+    if not missing_evidence_ids:
+        return capabilities, None
+
+    projected: list[CapabilityState] = []
+    affected = {
+        Capability.REGIME_CLASSIFICATION_AVAILABLE,
+        Capability.PLAN_DRAFT_AVAILABLE,
+    }
+    for state in capabilities:
+        if state.capability not in affected:
+            projected.append(state)
+            continue
+        projected.append(CapabilityState(
+            capability=state.capability,
+            available=False,
+            reason_codes=tuple(dict.fromkeys(
+                (*state.reason_codes, ErrorCode.PROVIDER_NO_DATA)
+            )),
+            evidence_ids=tuple(dict.fromkeys((*state.evidence_ids, *missing_evidence_ids))),
+        ))
+    disclosure = GateResult(
+        gate_id="regime-classification-unknown",
+        status=GateStatus.BLOCK,
+        reason_code=ErrorCode.PROVIDER_NO_DATA.value,
+        message=(
+            "Regime classification is UNKNOWN because required broad-market inputs "
+            "are unavailable; no usable classification or new plan can be drafted."
+        ),
+        evidence_ids=missing_evidence_ids,
+        capability=Capability.REGIME_CLASSIFICATION_AVAILABLE,
+        rule_version=regime.formula_version,
+    )
+    return tuple(projected), disclosure
+
+
+def _premarket_price_failure_gates(evidence: tuple[EvidenceItem, ...]) -> tuple[GateResult, ...]:
+    """Disclose current-price failures beside the affected sizing capability."""
+    gates: list[GateResult] = []
+    for item in evidence:
+        symbol = item.structured_fields.get("requested_symbol")
+        error_code_value = item.structured_fields.get("error_code")
+        if (
+            item.source.provider != "alpaca"
+            or item.structured_fields.get("outcome") != "PREMARKET_PRICE"
+            or not isinstance(symbol, str)
+            or not isinstance(error_code_value, str)
+        ):
+            continue
+        error_code = ErrorCode(error_code_value)
+        detail = (
+            "is stale"
+            if error_code is ErrorCode.STALE_DATA
+            else f"is unavailable ({error_code.value})"
+        )
+        gates.append(GateResult(
+            gate_id=(
+                f"{symbol}-current-price-"
+                f"{sha256(item.evidence_id.encode('utf-8')).hexdigest()[:24]}"
+            ),
+            status=GateStatus.BLOCK,
+            reason_code=error_code.value,
+            message=(
+                f"Current premarket price for {symbol} {detail}; "
+                "position sizing is unavailable."
+            ),
+            evidence_ids=(item.evidence_id,),
+            capability=Capability.POSITION_SIZING_AVAILABLE,
+            rule_version="application-current-price-v1",
+        ))
+    return tuple(gates)
 
 
 class PreparedPremarketRunResult(StrictModel):
@@ -82,6 +184,7 @@ class PreparedPremarketRunResult(StrictModel):
     research_packet: ResearchPacket | None = None
     publication: PublishedArtifact | None = None
     failure_code: ErrorCode | None = None
+    data_quality: DataQualityResult | None = None
 
     @model_validator(mode="after")
     def coherent_handoff(self) -> Self:
@@ -89,7 +192,14 @@ class PreparedPremarketRunResult(StrictModel):
         packet = self.research_packet
         if self.outcome == "SKIPPED":
             if self.window_decision.should_run or any(
-                value is not None for value in (stored, packet, self.publication, self.failure_code)
+                value is not None
+                for value in (
+                    stored,
+                    packet,
+                    self.publication,
+                    self.failure_code,
+                    self.data_quality,
+                )
             ):
                 raise ValueError("skipped preparation cannot carry run artifacts")
             return self
@@ -108,12 +218,18 @@ class PreparedPremarketRunResult(StrictModel):
                 or self.publication.run_id != stored.run_id
             ):
                 raise ValueError("published preparation requires the matching publication only")
+            if self.data_quality is not None and (
+                self.data_quality.status is not DataQualityStatus.FAIL
+                or self.failure_code not in self.data_quality.global_reason_codes
+            ):
+                raise ValueError("operational quality must explain its publication failure")
             return self
         if (
             stored.published
             or packet is None
             or self.publication is not None
             or self.failure_code is not None
+            or self.data_quality is not None
             or not stored.checkpoints
         ):
             raise ValueError("packet handoff requires an unpublished frozen packet only")
@@ -170,6 +286,8 @@ def _operational_failure(
     decision: RunWindowDecision,
     reason: ErrorCode,
     checkpointed_at: datetime,
+    *,
+    data_quality: DataQualityResult | None = None,
 ) -> PreparedPremarketRunResult:
     latest = stored.checkpoints[-1]
     if latest.data_quality_status is not DataQualityStatus.FAIL:
@@ -194,7 +312,15 @@ def _operational_failure(
         stored = _load_required(repository, stored.run_id)
     run = compose_publication_context(stored.run, stored.checkpoints[-1])
     publish_operational_report(repository, run, reason, checkpointed_at)
-    return _published_result(repository, _load_required(repository, stored.run_id), decision)
+    result = _published_result(repository, _load_required(repository, stored.run_id), decision)
+    return PreparedPremarketRunResult(
+        outcome=result.outcome,
+        window_decision=result.window_decision,
+        stored_run=result.stored_run,
+        publication=result.publication,
+        failure_code=result.failure_code,
+        data_quality=data_quality,
+    )
 
 
 def _load_required(repository: PublicationRepository, run_id: str) -> StoredRun:
@@ -232,8 +358,6 @@ def prepare_research_packet(
         day = request.market_date or dependencies.clock.now_utc().astimezone(NEW_YORK).date()
         existing = repository.load(format_run_id(day, request.requested_revision))
         if existing is not None and existing.published:
-            from finance_research_agent.domain.market_calendar import resolve_run_window
-
             decision = resolve_run_window(
                 existing.run.invoked_at,
                 dependencies.calendar,
@@ -248,10 +372,76 @@ def prepare_research_packet(
     initialized = prepare_premarket_run(request, dependencies)
     stored = initialized.stored_run
     decision = initialized.window_decision
+    if stored is not None and not stored.published:
+        retry_at = dependencies.clock.now_utc()
+        try:
+            current_decision = resolve_run_window(
+                retry_at,
+                dependencies.calendar,
+                stored.run.market_date,
+                InvocationType.MANUAL
+                if stored.run.delivery_status is DeliveryStatus.MANUAL
+                else InvocationType.SCHEDULED,
+            )
+        except RuntimeError as error:
+            if not str(error).startswith(f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}:"):
+                raise
+            return _operational_failure(
+                repository,
+                stored,
+                decision,
+                ErrorCode.MARKET_CALENDAR_UNAVAILABLE,
+                retry_at,
+            )
+        if current_decision.missed_record_only:
+            regular_close_at = dependencies.calendar.session_open_close(
+                stored.run.market_date
+            )[1]
+            repository.record_missed_run(
+                MissedRunRecord(
+                    market_date=stored.run.market_date,
+                    detected_at=retry_at,
+                    regular_close_at=utc_datetime(regular_close_at),
+                    reason_code="MISSED_WINDOW",
+                )
+            )
+            return PreparedPremarketRunResult(
+                outcome="SKIPPED", window_decision=current_decision
+            )
+        if current_decision.publish_missed_report:
+            # Keep the run's first immutable window/context while ending its
+            # resumable preparation with an explicit missed-window report.
+            return _operational_failure(
+                repository,
+                stored,
+                decision,
+                ErrorCode.MISSED_WINDOW,
+                retry_at,
+            )
     if stored is None:
+        if decision.missed_record_only:
+            regular_close_at = dependencies.calendar.session_open_close(
+                decision.market_date
+            )[1]
+            repository.record_missed_run(
+                MissedRunRecord(
+                    market_date=decision.market_date,
+                    detected_at=dependencies.clock.now_utc(),
+                    regular_close_at=utc_datetime(regular_close_at),
+                    reason_code="MISSED_WINDOW",
+                )
+            )
         return PreparedPremarketRunResult(outcome="SKIPPED", window_decision=decision)
     if stored.published:
         return _published_result(repository, stored, decision)
+    if decision.publish_missed_report:
+        return _operational_failure(
+            repository,
+            stored,
+            decision,
+            ErrorCode.MISSED_WINDOW,
+            dependencies.clock.now_utc(),
+        )
     latest = stored.checkpoints[-1]
     # Reuse an existing packet before consulting the clock, configuration, or
     # providers. This also completes a crash between packet staging/checkpoint.
@@ -281,12 +471,29 @@ def prepare_research_packet(
             sha256(reason_bytes).hexdigest() != latest.artifact_hashes["operational_reason"]
         ):
             raise ValueError("operational reason differs from its checkpoint hash")
+        reason = ErrorCode(reason_bytes.decode("ascii"))
+        quality_bytes = repository.read_staged_artifact(stored.run_id, "data_quality")
+        if quality_bytes is not None and (
+            latest.artifact_hashes.get("data_quality") != sha256(quality_bytes).hexdigest()
+        ):
+            raise ValueError("staged data quality differs from checkpoint hash")
+        quality = (
+            DataQualityResult.model_validate_json(quality_bytes, strict=True)
+            if quality_bytes is not None
+            else None
+        )
+        if quality is not None and (
+            quality.status is not DataQualityStatus.FAIL
+            or reason not in quality.global_reason_codes
+        ):
+            quality = None
         return _operational_failure(
             repository,
             stored,
             decision,
-            ErrorCode(reason_bytes.decode("ascii")),
+            reason,
             dependencies.clock.now_utc(),
+            data_quality=quality,
         )
 
     try:
@@ -348,6 +555,7 @@ def prepare_research_packet(
                 decision,
                 quality.global_reason_codes[0],
                 dependencies.clock.now_utc(),
+                data_quality=quality,
             )
         check_deadline()
         configuration = configuration_from_snapshot(stored.run.configuration_snapshot)
@@ -422,9 +630,19 @@ def prepare_research_packet(
         context = compose_publication_context(stored.run, stored.checkpoints[-1]).model_copy(
             update={"execution_status": ExecutionStatus.AWAITING_SYNTHESIS}
         )
+        packet_evidence = (*inputs.evidence, *prior_observations.evidence)
+        capabilities, regime_disclosure = _unknown_regime_projection(
+            regime,
+            inputs.evidence,
+            quality.capabilities,
+            configuration.regime.broad_symbols,
+        )
+        if regime_disclosure is not None:
+            gates.append(regime_disclosure)
+        gates.extend(_premarket_price_failure_gates(inputs.evidence))
         packet = build_research_packet(
             run=context,
-            evidence=(*inputs.evidence, *prior_observations.evidence),
+            evidence=packet_evidence,
             snapshots=inputs.market,
             events=(),
             metrics=regime.metrics,
@@ -432,7 +650,7 @@ def prepare_research_packet(
             candidates=(),
             exclusions=exclusions,
             plans=(),
-            capabilities=quality.capabilities,
+            capabilities=capabilities,
             observations=prior_observations.observations,
             max_serialized_bytes=max_packet_bytes,
             regime_result=regime,

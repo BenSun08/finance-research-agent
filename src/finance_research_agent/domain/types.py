@@ -172,7 +172,7 @@ def decimal_json(value: Decimal) -> str:
 UtcDatetime = Annotated[
     datetime,
     AfterValidator(utc_datetime),
-    Field(json_schema_extra={"pattern": r"(?:Z|\+00:00)$"}),
+    Field(json_schema_extra={"pattern": r"(?:[Zz]|\+00:00)$"}),
 ]
 PositiveDecimal = Annotated[
     Decimal,

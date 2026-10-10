@@ -6,6 +6,7 @@ import pytest
 
 from finance_research_agent.adapters.feedback import FileSystemFeedbackRepository
 from finance_research_agent.application.feedback_service import RecordedFeedback
+from finance_research_agent.domain.types import canonical_bytes
 
 
 def _feedback(feedback_id: str) -> RecordedFeedback:
@@ -82,3 +83,26 @@ def test_feedback_repository_rejects_a_symlink_root(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="local directory"):
         repository.list_feedback()
+
+
+def test_legacy_feedback_bytes_remain_canonical_and_are_not_rewritten(tmp_path) -> None:
+    root = tmp_path / "evaluation"
+    root.mkdir()
+    legacy_bytes = (
+        b'{"bundle_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+        b'"citation_reviews":[{"citation_id":"evidence-legacy",'
+        b'"claim_id":"claim-legacy","entails_claim":true,"schema_version":"0.1"}],'
+        b'"clarity_score":3,"evidence_score":4,'
+        b'"feedback_id":"feedback-legacy","notes":null,'
+        b'"recorded_at":"2026-09-29T13:00:00Z",'
+        b'"run_id":"premarket-2026-09-29-r1","usefulness_score":5}'
+    )
+    path = root / "feedback-legacy.json"
+    path.write_bytes(legacy_bytes)
+    repository = FileSystemFeedbackRepository(root)
+
+    [record] = repository.list_feedback()
+
+    assert record.schema_version == "0.1"
+    assert canonical_bytes(record) == legacy_bytes
+    assert path.read_bytes() == legacy_bytes

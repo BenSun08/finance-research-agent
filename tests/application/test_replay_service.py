@@ -415,7 +415,11 @@ def test_installed_skill_version_drift_skips_reconstruction_and_preserves_json_i
     from finance_research_agent.application import component_versions, replay_service
 
     run = valid_packet.run.model_copy(update={
-        "skill_version": "sha256:" + "a" * 64, "plugin_version": "0.1.0",
+        "skill_version": "sha256:" + "a" * 64,
+        "plugin_version": "0.1.0",
+        "schema_versions": component_versions.component_versions_for_skill(
+            valid_packet.run.configuration_snapshot, "sha256:" + "a" * 64
+        ).schema_versions,
     })
     packet = valid_packet.model_copy(update={"run": run})
     bundle = _frozen_bundle(packet, None, BriefOrigin.OPERATIONAL)

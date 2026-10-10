@@ -7,7 +7,7 @@ import json
 import os
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from fcntl import LOCK_EX, LOCK_UN, flock
@@ -24,6 +24,7 @@ from finance_research_agent.domain.enums import (
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.market_calendar import format_run_id
 from finance_research_agent.domain.models import (
+    MissedRunRecord,
     PerformanceTelemetry,
     PublishedArtifact,
     PublishedRunBundle,
@@ -56,6 +57,8 @@ class LeaseHeldError(RuntimeError):
 class PublicationError(RuntimeError):
     """Raised when complete publication cannot be committed."""
 
+    code: ErrorCode = ErrorCode.PUBLICATION_FAILED
+
 
 def _path_error() -> PathNotAllowedError:
     return PathNotAllowedError(f"{ErrorCode.PATH_NOT_ALLOWED}: unsafe run identifier")
@@ -63,6 +66,10 @@ def _path_error() -> PathNotAllowedError:
 
 def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _system_utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class FileSystemRunRepository:
@@ -75,9 +82,19 @@ class FileSystemRunRepository:
 
     inject_failure_before_rename = False
     inject_failure_during_index_update = False
+    inject_failure_after_index_write = False
 
-    def __init__(self, data_root: Path, *, create_layout: bool = True) -> None:
+    def __init__(
+        self,
+        data_root: Path,
+        *,
+        create_layout: bool = True,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.root = Path(data_root).expanduser().resolve()
+        if clock is not None and not callable(clock):
+            raise TypeError("clock must be callable")
+        self._clock = clock if clock is not None else _system_utc_now
         if create_layout:
             self.root.mkdir(parents=True, exist_ok=True)
             for name in ("config", "runs", "reports", "cache", "diagnostics", "logs"):
@@ -90,6 +107,44 @@ class FileSystemRunRepository:
         except ValueError as error:
             raise _path_error() from error
         return candidate
+
+    def _missed_run_path(self, market_date: date) -> Path:
+        parts = (
+            "diagnostics",
+            "missed-runs",
+            f"{market_date.year:04d}",
+            f"{market_date.isoformat()}.json",
+        )
+        candidate = self.root
+        for part in parts:
+            candidate = candidate / part
+            if candidate.is_symlink():
+                raise _path_error()
+        return self._safe_path(*parts)
+
+    def record_missed_run(self, record: MissedRunRecord) -> MissedRunRecord:
+        """Persist the first missed-run diagnostic for a market date unchanged."""
+        record = MissedRunRecord.model_validate(record, strict=True)
+        with self._run_lock(record.market_date):
+            existing = self.get_missed_run(record.market_date)
+            if existing is not None:
+                return existing
+            self._atomic_write(self._missed_run_path(record.market_date), canonical_bytes(record))
+            return record
+
+    def get_missed_run(self, market_date: date) -> MissedRunRecord | None:
+        """Load the immutable diagnostic written for an after-close invocation."""
+        if type(market_date) is not date:
+            raise TypeError("market_date must be a date")
+        path = self._missed_run_path(market_date)
+        try:
+            payload = path.read_bytes()
+        except FileNotFoundError:
+            return None
+        record = MissedRunRecord.model_validate_json(payload, strict=True)
+        if record.market_date != market_date:
+            raise _path_error()
+        return record
 
     @staticmethod
     def _validated_run_id(run_id: str) -> tuple[date, int]:
@@ -493,6 +548,19 @@ class FileSystemRunRepository:
             name: digest for name, digest in previous.artifact_hashes.items()
             if name not in previous_telemetry_names
         }
+        staged_reason = self._staged_artifact_path(run_id, "operational_reason")
+        reason_payload = staged_reason.read_bytes() if staged_reason.is_file() else None
+        packet_path = self._staged_artifact_path(run_id, "research_packet")
+        packet_hash = self._stored_packet_hash(stored)
+        has_packet = any(
+            "research_packet" in item.artifact_hashes for item in stored.checkpoints
+        ) or packet_path.is_file()
+        verified_missed_window_packet = (
+            reason_payload == ErrorCode.MISSED_WINDOW.value.encode("ascii")
+            and packet_hash is not None
+            and packet_path.is_file()
+            and _sha256(packet_path.read_bytes()) == packet_hash
+        )
         if (
             checkpoint.stage != "PUBLISHED"
             or checkpoint.execution_status is not ExecutionStatus.PUBLISHED
@@ -508,8 +576,7 @@ class FileSystemRunRepository:
                 "QUALITY_EVALUATED", "ANALYZED", "PACKET_FROZEN",
                 "COLLECTING", "NORMALIZING", "ANALYZING", "PREPARATION_FAILED",
             }
-            or any("research_packet" in item.artifact_hashes for item in stored.checkpoints)
-            or self._staged_artifact_path(run_id, "research_packet").is_file()
+            or has_packet and not verified_missed_window_packet
             or set(business_hashes) != set(previous_business_hashes) | {"operational_reason"}
             or any(
                 business_hashes[name] != digest
@@ -527,13 +594,11 @@ class FileSystemRunRepository:
             )
         ):
             return False
-        staged = self._staged_artifact_path(run_id, "operational_reason")
-        if not staged.is_file():
+        if reason_payload is None:
             return False
-        payload = staged.read_bytes()
         return (
-            payload in {code.value.encode("ascii") for code in ErrorCode}
-            and checkpoint.artifact_hashes["operational_reason"] == _sha256(payload)
+            reason_payload in {code.value.encode("ascii") for code in ErrorCode}
+            and checkpoint.artifact_hashes["operational_reason"] == _sha256(reason_payload)
         )
 
     def load(self, run_id: str) -> StoredRun | None:
@@ -693,23 +758,40 @@ class FileSystemRunRepository:
             )
             previous = stored.checkpoints[-1] if stored.checkpoints else None
             failure_reason = self._staged_artifact_path(run_id, "operational_reason")
+            failure_reason_payload = (
+                failure_reason.read_bytes() if failure_reason.is_file() else None
+            )
+            staged_packet = self._staged_artifact_path(run_id, "research_packet")
+            frozen_packet_hash = self._stored_packet_hash(stored)
+            packetless_preparation_failure = (
+                frozen_packet_hash is None and not staged_packet.is_file()
+            )
+            missed_window_packet_failure = (
+                failure_reason_payload == ErrorCode.MISSED_WINDOW.value.encode("ascii")
+                and frozen_packet_hash is not None
+                and staged_packet.is_file()
+                and _sha256(staged_packet.read_bytes()) == frozen_packet_hash
+            )
             valid_preparation_failure = (
                 checkpoint.stage == "PREPARATION_FAILED"
                 and previous is not None
-                and previous.stage in {"EVIDENCE_FROZEN", "QUALITY_EVALUATED"}
+                and (
+                    previous.stage in {"EVIDENCE_FROZEN", "QUALITY_EVALUATED"}
+                    and packetless_preparation_failure
+                    or previous.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
+                    and missed_window_packet_failure
+                )
                 and checkpoint.execution_status is previous.execution_status
                 and checkpoint.data_quality_status is DataQualityStatus.FAIL
                 and checkpoint.delivery_status is previous.delivery_status
                 and not checkpoint.resumable
-                and self._stored_packet_hash(stored) is None
-                and not self._staged_artifact_path(run_id, "research_packet").exists()
+                and (packetless_preparation_failure or missed_window_packet_failure)
                 and set(checkpoint.artifact_hashes)
                 == set(previous.artifact_hashes) | {"operational_reason"}
                 and all(checkpoint.artifact_hashes[name] == digest
                         for name, digest in previous.artifact_hashes.items())
                 and staged_hashes_valid
-                and failure_reason.is_file()
-                and failure_reason.read_bytes() in {
+                and failure_reason_payload in {
                     code.value.encode("ascii") for code in ErrorCode
                 }
             )
@@ -941,6 +1023,84 @@ class FileSystemRunRepository:
         with self._run_lock(bundle.run.market_date):
             return self._publish_atomically_unlocked(bundle)
 
+    def recover_interrupted_publication(self, run_id: str) -> PublishedArtifact:
+        """Explicitly retry one complete, hash-verified quarantined publication."""
+        market_date, _ = self._validated_run_id(run_id)
+        with self._run_lock(market_date):
+            existing = self.get_published_artifact(run_id)
+            if existing is not None:
+                return existing
+            staging, final, _, _ = self._publication_paths(run_id)
+            market_year = f"{market_date.year:04d}"
+            orphan = self._unaliased_publication_path(
+                "diagnostics", "orphans", market_year, market_date.isoformat(), run_id
+            )
+            if staging.exists() or final.exists() or not orphan.exists():
+                raise PublicationError("no interrupted publication is available for recovery")
+            if orphan.is_symlink() or any(path.is_symlink() for path in orphan.rglob("*")):
+                raise _path_error()
+            try:
+                bundle_bytes = self._read_confined(orphan, "bundle.json")
+                report_bytes = self._read_confined(orphan, "report.md")
+            except OSError as error:
+                raise PublicationError("interrupted publication files cannot be read") from error
+            try:
+                bundle = PublishedRunBundle.model_validate_json(bundle_bytes, strict=True)
+                stored = self._load_from_path(run_id, orphan, False)
+            except (OSError, TypeError, ValueError) as error:
+                raise PublicationError("interrupted publication metadata is invalid") from error
+            if (
+                stored is None
+                or not stored.checkpoints
+                or canonical_bytes(bundle) != bundle_bytes
+                or bundle.run.run_id != run_id
+                or bundle.markdown_sha256 != _sha256(report_bytes)
+                or bundle.report_markdown.encode("utf-8") != report_bytes
+            ):
+                raise PublicationError("interrupted publication pair is incomplete or inconsistent")
+            self._ensure_run_identity(stored.run, run_id)
+            checkpoint = stored.checkpoints[-1]
+            if (
+                checkpoint.stage != "PUBLISHED"
+                or checkpoint.execution_status is not ExecutionStatus.PUBLISHED
+                or checkpoint.data_quality_status is not bundle.run.data_quality_status
+                or checkpoint.delivery_status is not bundle.run.delivery_status
+                or checkpoint.evidence_cutoff_at != stored.evidence_cutoff_at
+                or checkpoint.resumable
+                or bundle.run
+                != stored.run.model_copy(
+                    update={
+                        "execution_status": checkpoint.execution_status,
+                        "data_quality_status": checkpoint.data_quality_status,
+                        "delivery_status": checkpoint.delivery_status,
+                    }
+                )
+            ):
+                raise PublicationError("interrupted publication checkpoint is not recoverable")
+            for name, digest in checkpoint.artifact_hashes.items():
+                if not _ARTIFACT_NAME.fullmatch(name):
+                    raise PublicationError("interrupted publication artifact name is invalid")
+                artifact_path = orphan / "artifacts" / f"{name}.bin"
+                if not artifact_path.is_file() or artifact_path.is_symlink():
+                    raise PublicationError("interrupted publication artifact hash differs")
+                try:
+                    artifact_bytes = artifact_path.read_bytes()
+                except OSError as error:
+                    raise PublicationError(
+                        "interrupted publication artifact cannot be read"
+                    ) from error
+                if _sha256(artifact_bytes) != digest:
+                    raise PublicationError("interrupted publication artifact hash differs")
+            try:
+                os.replace(orphan, staging)
+                self._fsync_directory(staging.parent)
+                self._fsync_directory(orphan.parent)
+            except OSError as error:
+                raise PublicationError(
+                    "interrupted publication could not return to staging"
+                ) from error
+            return self._publish_atomically_unlocked(bundle)
+
     def _publish_atomically_unlocked(self, bundle: PublishedRunBundle) -> PublishedArtifact:
         staging, final, index_path, latest_path = self._publication_paths(bundle.run.run_id)
         if not staging.is_dir():
@@ -991,14 +1151,17 @@ class FileSystemRunRepository:
             raise PublicationError("report SHA-256 does not match canonical report bytes")
         bundle_bytes = canonical_bytes(bundle)
         bundle_sha256 = _sha256(bundle_bytes)
-        self._atomic_write(staging / "bundle.json", bundle_bytes)
-        self._atomic_write(staging / "report.md", report_bytes)
-        if _sha256((staging / "bundle.json").read_bytes()) != bundle_sha256:
-            raise PublicationError("bundle SHA-256 changed before publication")
-        if _sha256((staging / "report.md").read_bytes()) != markdown_sha256:
-            raise PublicationError("report SHA-256 changed before publication")
-        self._fsync_directory(staging)
-        self._fsync_directory(staging.parent)
+        try:
+            self._atomic_write(staging / "bundle.json", bundle_bytes)
+            self._atomic_write(staging / "report.md", report_bytes)
+            if _sha256((staging / "bundle.json").read_bytes()) != bundle_sha256:
+                raise PublicationError("bundle SHA-256 changed before publication")
+            if _sha256((staging / "report.md").read_bytes()) != markdown_sha256:
+                raise PublicationError("report SHA-256 changed before publication")
+            self._fsync_directory(staging)
+            self._fsync_directory(staging.parent)
+        except OSError as error:
+            raise PublicationError("publication staging write or fsync failed") from error
         if self.inject_failure_before_rename:
             raise PublicationError("injected failure before atomic publication rename")
         renamed = False
@@ -1015,7 +1178,22 @@ class FileSystemRunRepository:
                 index_bytes = None
             if index_bytes is not None:
                 index_payload = json.loads(index_bytes)
-            published_at = datetime.now(UTC)
+            indexed_entry = index_payload.get(bundle.run.run_id)
+            if indexed_entry is None:
+                published_at = self._require_utc(self._clock())
+            elif (
+                not isinstance(indexed_entry, dict)
+                or indexed_entry.get("bundle_sha256") != bundle_sha256
+                or indexed_entry.get("markdown_sha256") != markdown_sha256
+            ):
+                raise PublicationError("publication index contains a conflicting receipt")
+            else:
+                try:
+                    published_at = self._require_utc(
+                        datetime.fromisoformat(indexed_entry["published_at"])
+                    )
+                except (KeyError, TypeError, ValueError) as error:
+                    raise PublicationError("publication index receipt time is invalid") from error
             index_payload[bundle.run.run_id] = {
                 "bundle_sha256": bundle_sha256,
                 "markdown_sha256": markdown_sha256,
@@ -1029,6 +1207,8 @@ class FileSystemRunRepository:
                 index_path,
                 json.dumps(index_payload, sort_keys=True, separators=(",", ":")).encode(),
             )
+            if self.inject_failure_after_index_write:
+                raise OSError("injected failure after publication index write")
             self._atomic_write(
                 latest_path,
                 json.dumps({"run_id": latest_run_id}, separators=(",", ":")).encode(),
@@ -1179,7 +1359,22 @@ class FileSystemRunRepository:
                     if indexed_date != candidate_date:
                         raise PublicationError("publication index date is invalid")
                     revisions[revision] = run_id
-                run_id = revisions[max(revisions)]
+                visible_revisions: dict[int, str] = {}
+                for revision, candidate_run_id in revisions.items():
+                    if self.get_published_artifact(candidate_run_id) is None:
+                        orphan = self._unaliased_publication_path(
+                            "diagnostics",
+                            "orphans",
+                            year_name,
+                            day_name,
+                            candidate_run_id,
+                        )
+                        if orphan.exists():
+                            continue
+                    visible_revisions[revision] = candidate_run_id
+                if not visible_revisions:
+                    continue
+                run_id = visible_revisions[max(visible_revisions)]
                 for filename in ("bundle.json", "report.md"):
                     self._unaliased_publication_path(
                         "runs", year_name, day_name, run_id, filename

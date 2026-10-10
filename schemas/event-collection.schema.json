@@ -7,6 +7,7 @@
         "CREDENTIALS_MISSING",
         "PERMISSION_DENIED",
         "MARKET_CALENDAR_UNAVAILABLE",
+        "MISSED_WINDOW",
         "PROVIDER_UNAVAILABLE",
         "PROVIDER_NO_DATA",
         "PROVIDER_MISSING_SESSION",
@@ -58,7 +59,7 @@
         },
         "event_time": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Event Time",
           "type": "string"
         },
@@ -150,7 +151,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -184,7 +185,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -399,7 +400,7 @@
         },
         "observed_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Observed At",
           "type": "string"
         },
@@ -428,7 +429,7 @@
         },
         "retrieved_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Retrieved At",
           "type": "string"
         },

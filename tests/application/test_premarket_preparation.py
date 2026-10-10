@@ -13,12 +13,20 @@ from finance_research_agent.application.run_service import (
     PreparePremarketRunRequest,
     RunDependencies,
 )
-from finance_research_agent.domain.enums import Coverage, InvocationType, Session
+from finance_research_agent.domain.enums import (
+    Capability,
+    Coverage,
+    GateStatus,
+    InvocationType,
+    ReducedReportReason,
+    Session,
+)
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     CompletedDailyBar,
     InstrumentIdentity,
     PriceObservation,
+    ProviderFailure,
     ProviderReadiness,
 )
 from tests.support.component_versions import synthetic_component_versions
@@ -194,6 +202,235 @@ def test_global_quality_failure_publishes_operational_report_without_packet(tmp_
     report = deps.run_repository.get_report(result.stored_run.run_id)
     assert "Brief origin: OPERATIONAL" in report
     assert "PROVIDER_UNAVAILABLE" in report
+
+
+def test_preparation_publishes_missed_window_before_collecting_market_data(tmp_path):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market = MarketData()
+    deps = dependencies(tmp_path, market=market)
+
+    class MissedClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 13, 30, tzinfo=UTC)
+
+    result = prepare_research_packet(request(), replace(deps, clock=MissedClock()))
+
+    assert result.outcome == "PUBLISHED"
+    assert result.failure_code.value == "MISSED_WINDOW"
+    assert result.stored_run.run.delivery_status.value == "MISSED_WINDOW"
+    assert market.calls == []
+    report = deps.run_repository.get_report(result.stored_run.run_id)
+    assert "Brief origin: OPERATIONAL" in report
+    assert "MISSED_WINDOW" in report
+
+
+def test_after_close_missed_run_is_durable_without_formal_publication_or_provider_reads(
+    tmp_path,
+):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market = MarketData()
+    deps = dependencies(tmp_path, market=market)
+
+    class AfterCloseClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+
+    missed_run_reader = getattr(deps.run_repository, "get_missed_run", None)
+    assert callable(missed_run_reader), "missed-run records require a durable repository read"
+
+    result = prepare_research_packet(request(), replace(deps, clock=AfterCloseClock()))
+
+    assert result.outcome == "SKIPPED"
+    assert result.window_decision.missed_record_only is True
+    record = missed_run_reader(date(2026, 9, 28))
+    assert record is not None
+    assert record.market_date == date(2026, 9, 28)
+    assert record.reason_code == "MISSED_WINDOW"
+    assert record.detected_at == datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+    assert record.regular_close_at == datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+    assert market.calls == []
+    assert deps.run_repository.get_latest(date(2026, 9, 28)) is None
+    assert deps.run_repository._existing_revision_ids(date(2026, 9, 28)) == ()
+
+    retry = prepare_research_packet(request(), replace(deps, clock=AfterCloseClock()))
+
+    assert retry.outcome == "SKIPPED"
+    assert missed_run_reader(date(2026, 9, 28)) == record
+
+
+def test_late_resume_publishes_missed_window_without_reusing_staged_packet(tmp_path):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market = MarketData()
+    deps = dependencies(tmp_path, market=market)
+    first = prepare_research_packet(request(1), deps)
+    assert first.outcome == "PACKET_READY"
+    calls_before_retry = tuple(market.calls)
+
+    class MissedClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 13, 30, tzinfo=UTC)
+
+    retry = prepare_research_packet(request(1), replace(deps, clock=MissedClock()))
+
+    assert retry.outcome == "PUBLISHED"
+    assert retry.failure_code is ErrorCode.MISSED_WINDOW
+    assert retry.stored_run.run_id == first.stored_run.run_id
+    assert retry.stored_run.run.delivery_status is first.stored_run.run.delivery_status
+    assert retry.stored_run.published is True
+    assert tuple(market.calls) == calls_before_retry
+    published_bundle = deps.run_repository.load_published_bundle(retry.stored_run.run_id)
+    assert published_bundle is not None
+    assert published_bundle.bundle["brief_origin"] == "OPERATIONAL"
+    assert published_bundle.bundle["failure_code"] == "MISSED_WINDOW"
+    assert "research_packet" not in published_bundle.bundle
+    assert any(
+        checkpoint.artifact_hashes.get("research_packet")
+        for checkpoint in retry.stored_run.checkpoints
+    )
+    report = deps.run_repository.get_report(retry.stored_run.run_id)
+    assert "MISSED_WINDOW" in report
+
+
+def test_after_close_resume_records_miss_and_skips_staged_packet(tmp_path):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market = MarketData()
+    deps = dependencies(tmp_path, market=market)
+    first = prepare_research_packet(request(1), deps)
+    assert first.outcome == "PACKET_READY"
+    calls_before_retry = tuple(market.calls)
+
+    class AfterCloseClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+
+    late_deps = replace(deps, clock=AfterCloseClock())
+    retry = prepare_research_packet(request(1), late_deps)
+
+    assert retry.outcome == "SKIPPED"
+    assert retry.window_decision.missed_record_only is True
+    assert retry.stored_run is None
+    assert deps.run_repository.load(first.stored_run.run_id) == first.stored_run
+    record = deps.run_repository.get_missed_run(date(2026, 9, 28))
+    assert record is not None
+    assert record.detected_at == datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+    assert deps.run_repository.get_latest(date(2026, 9, 28)) is None
+    assert tuple(market.calls) == calls_before_retry
+
+    repeated = prepare_research_packet(request(1), late_deps)
+
+    assert repeated.outcome == "SKIPPED"
+    assert deps.run_repository.get_missed_run(date(2026, 9, 28)) == record
+
+
+def test_unexpected_runtime_during_resume_window_check_propagates(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    from finance_research_agent.application import premarket_preparation
+
+    deps = dependencies(tmp_path)
+    first = premarket_preparation.prepare_research_packet(request(1), deps)
+    assert first.outcome == "PACKET_READY"
+
+    def fail_unexpectedly(*_args, **_kwargs):
+        raise RuntimeError("unexpected-window-check-error")
+
+    monkeypatch.setattr(premarket_preparation, "resolve_run_window", fail_unexpectedly)
+    with pytest.raises(RuntimeError, match="unexpected-window-check-error"):
+        premarket_preparation.prepare_research_packet(request(1), deps)
+
+
+def test_unknown_regime_disables_usable_classification_and_discloses_missing_evidence(
+    tmp_path,
+):
+    from finance_research_agent.application.premarket_preparation import (
+        _unknown_regime_projection,
+        prepare_research_packet,
+    )
+    from finance_research_agent.application.reduced_report import render_reduced_report
+    from finance_research_agent.domain.regime import RegimePolicy, calculate_regime
+
+    class MissingBroadData(MarketData):
+        def fetch_daily_bars(self, symbols, start, end, **kwargs):
+            outcomes = dict(super().fetch_daily_bars(symbols, start, end, **kwargs))
+            outcomes["SPY"] = ProviderFailure(
+                provider="alpaca",
+                symbol="SPY",
+                error_code=ErrorCode.PROVIDER_NO_DATA,
+                retryable=False,
+            )
+            return outcomes
+
+    baseline_result = prepare_research_packet(
+        request(), dependencies(tmp_path / "baseline", market=MarketData())
+    )
+    baseline_packet = baseline_result.research_packet
+    assert baseline_packet is not None
+    baseline_capabilities = {
+        state.capability: state for state in baseline_packet.capability_states
+    }
+
+    packet_result = prepare_research_packet(
+        request(), dependencies(tmp_path, market=MissingBroadData())
+    )
+
+    assert packet_result.outcome == "PACKET_READY"
+    packet = packet_result.research_packet
+    assert packet is not None and packet.regime_result is not None
+    assert packet.regime_result.regime.value == "unknown"
+    missing_evidence = tuple(
+        item.evidence_id
+        for item in packet.evidence
+        if item.structured_fields.get("outcome") == "DAILY_BARS"
+        and item.structured_fields.get("requested_symbol") == "SPY"
+        and item.structured_fields.get("error_code") == ErrorCode.PROVIDER_NO_DATA.value
+    )
+    assert len(missing_evidence) == 1
+    capabilities = {state.capability: state for state in packet.capability_states}
+    regime = capabilities[Capability.REGIME_CLASSIFICATION_AVAILABLE]
+    assert regime.available is False
+    assert regime.reason_codes == (ErrorCode.PROVIDER_NO_DATA,)
+    assert regime.evidence_ids == missing_evidence
+    plan = capabilities[Capability.PLAN_DRAFT_AVAILABLE]
+    assert plan.available is False
+    assert missing_evidence[0] in plan.evidence_ids
+    assert plan.reason_codes == tuple(dict.fromkeys((
+        *baseline_capabilities[Capability.PLAN_DRAFT_AVAILABLE].reason_codes,
+        ErrorCode.PROVIDER_NO_DATA,
+    )))
+    unknown_gates = tuple(
+        gate for gate in packet.gates if gate.gate_id == "regime-classification-unknown"
+    )
+    assert len(unknown_gates) == 1
+    assert unknown_gates[0].status is GateStatus.BLOCK
+    assert unknown_gates[0].reason_code == ErrorCode.PROVIDER_NO_DATA.value
+    assert unknown_gates[0].evidence_ids == missing_evidence
+    assert unknown_gates[0].capability is Capability.REGIME_CLASSIFICATION_AVAILABLE
+    assert unknown_gates[0].rule_version == packet.regime_result.formula_version
+    for capability in Capability:
+        if capability not in {
+            Capability.REGIME_CLASSIFICATION_AVAILABLE,
+            Capability.PLAN_DRAFT_AVAILABLE,
+        }:
+            assert capabilities[capability] == baseline_capabilities[capability]
+    assert packet.deterministic_plan_inputs == ()
+
+    evidence_free_unknown = calculate_regime({}, RegimePolicy(), NOW)
+    unchanged_capabilities, no_disclosure = _unknown_regime_projection(
+        evidence_free_unknown,
+        baseline_packet.evidence,
+        baseline_packet.capability_states,
+        ("SPY", "QQQ"),
+    )
+    assert unchanged_capabilities == baseline_packet.capability_states
+    assert no_disclosure is None
+
+    report = render_reduced_report(packet, ReducedReportReason.SYNTHESIS_UNAVAILABLE)
+    assert "Regime classification is UNKNOWN" in report
+    assert missing_evidence[0] in report
 
 
 def test_explicit_published_revision_returns_original_receipt_without_new_collection(tmp_path):
@@ -401,6 +638,45 @@ def test_staged_operational_reason_recovers_after_checkpoint_crash_even_after_de
     result = prepare_research_packet(request(1), replace(deps, clock=LateClock()))
     assert result.outcome == "PUBLISHED"
     assert result.failure_code is ErrorCode.INTERNAL_ERROR
+
+
+def test_staged_operational_quality_recovery_rejects_changed_quality_artifact(
+    tmp_path,
+    monkeypatch,
+):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    deps = dependencies(tmp_path)
+    original = deps.run_repository.checkpoint_if_current
+
+    def interrupted(run_id, checkpoint, expected_count):
+        if checkpoint.stage == "PREPARATION_FAILED":
+            raise OSError("checkpoint interruption")
+        return original(run_id, checkpoint, expected_count)
+
+    monkeypatch.setattr(deps.run_repository, "checkpoint_if_current", interrupted)
+    with pytest.raises(OSError):
+        prepare_research_packet(request(), deps, max_packet_bytes=1)
+    monkeypatch.setattr(deps.run_repository, "checkpoint_if_current", original)
+
+    from finance_research_agent.domain.market_calendar import format_run_id
+
+    run_id = format_run_id(date(2026, 9, 28), 1)
+    assert deps.run_repository.load(run_id) is not None
+    quality_path = (
+        tmp_path
+        / "runs"
+        / "2026"
+        / "2026-09-28"
+        / ".staging"
+        / run_id
+        / "artifacts"
+        / "data_quality.bin"
+    )
+    quality_path.write_bytes(b"tampered quality bytes")
+
+    with pytest.raises(ValueError, match="staged data quality differs from checkpoint hash"):
+        prepare_research_packet(request(1), deps)
 
 
 def test_known_historical_calendar_failure_publishes_closed_operational_report(tmp_path):

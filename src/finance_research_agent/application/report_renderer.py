@@ -6,6 +6,7 @@ import html
 import re
 from collections.abc import Mapping
 
+from finance_research_agent.domain.enums import Capability, ReportSection
 from finance_research_agent.domain.packets import ResearchPacket
 from finance_research_agent.domain.validation import (
     Claim,
@@ -13,6 +14,54 @@ from finance_research_agent.domain.validation import (
     ValidationReport,
     validate_research_brief,
 )
+
+_CAPABILITY_AFFECTED_SECTIONS: Mapping[Capability, frozenset[ReportSection]] = {
+    Capability.MARKET_SUMMARY_AVAILABLE: frozenset(
+        {ReportSection.MARKET_POSTURE, ReportSection.CORE_MARKET_RISKS}
+    ),
+    Capability.REGIME_CLASSIFICATION_AVAILABLE: frozenset(
+        {ReportSection.MARKET_POSTURE, ReportSection.MARKET_REGIME}
+    ),
+    Capability.WATCHLIST_METRICS_AVAILABLE: frozenset(
+        {ReportSection.WATCHLIST_PRIORITIES, ReportSection.WATCHLIST_DASHBOARD}
+    ),
+    Capability.EVENT_RISK_CHECK_AVAILABLE: frozenset(
+        {ReportSection.TODAY_EVENT_CLOCK, ReportSection.MACRO_EVENT_CALENDAR}
+    ),
+    Capability.SETUP_DETECTION_AVAILABLE: frozenset(
+        {ReportSection.WATCHLIST_PRIORITIES, ReportSection.ELIGIBLE_SETUPS}
+    ),
+    Capability.PLAN_DRAFT_AVAILABLE: frozenset(
+        {
+            ReportSection.EXECUTIVE_TRADE_PLAN_DRAFTS,
+            ReportSection.DETAILED_TRADE_PLAN_DRAFTS,
+        }
+    ),
+    Capability.POSITION_SIZING_AVAILABLE: frozenset(
+        {
+            ReportSection.EXECUTIVE_TRADE_PLAN_DRAFTS,
+            ReportSection.DETAILED_TRADE_PLAN_DRAFTS,
+        }
+    ),
+    Capability.PORTFOLIO_HEAT_CHECK_AVAILABLE: frozenset(
+        {
+            ReportSection.EXECUTIVE_TRADE_PLAN_DRAFTS,
+            ReportSection.DETAILED_TRADE_PLAN_DRAFTS,
+        }
+    ),
+}
+
+
+def _capability_limitation_lines(
+    packet: ResearchPacket, section: ReportSection
+) -> tuple[str, ...]:
+    return tuple(
+        f"- Limitation: {state.capability.value} unavailable "
+        f"({', '.join(reason.value for reason in state.reason_codes)})."
+        for state in packet.capability_states
+        if not state.available
+        and section in _CAPABILITY_AFFECTED_SECTIONS[state.capability]
+    )
 
 
 def _inline_text(value: str) -> str:
@@ -125,6 +174,8 @@ def render_markdown_report(
 
     for section in draft.executive_sections:
         lines.extend((f"### {section.section.value}", ""))
+        limitations = _capability_limitation_lines(packet, section.section)
+        lines.extend(limitations)
         lines.extend(_claim_line(claim_id, claim_map) for claim_id in section.claim_ids)
         if section.section.value == "Data Warnings":
             lines.extend(f"- {_inline_text(warning)}" for warning in draft.data_warnings)
@@ -133,9 +184,14 @@ def render_markdown_report(
                 f"{explanation.capability.value} ({', '.join(explanation.reason_codes)})"
                 for explanation in draft.disabled_capability_explanations
             )
-        if not section.claim_ids and not (
+        has_capability_warnings = (
             section.section.value == "Data Warnings"
-            and (draft.data_warnings or draft.disabled_capability_explanations)
+            and bool(draft.disabled_capability_explanations)
+        )
+        if not section.claim_ids and not (
+            limitations
+            or has_capability_warnings
+            or section.section.value == "Data Warnings" and draft.data_warnings
         ):
             lines.append("- No validated claims.")
         lines.append("")
@@ -143,11 +199,22 @@ def render_markdown_report(
     lines.extend(("## Detailed Report", ""))
     for section in draft.detailed_sections:
         lines.extend((f"### {section.section.value}", ""))
+        limitations = _capability_limitation_lines(packet, section.section)
+        lines.extend(limitations)
         lines.extend(_claim_line(claim_id, claim_map) for claim_id in section.claim_ids)
+        has_capability_warnings = section.section.value == "Data Quality and Limitations"
+        if has_capability_warnings:
+            lines.extend(
+                "- Disabled capability: "
+                f"{explanation.capability.value} ({', '.join(explanation.reason_codes)})"
+                for explanation in draft.disabled_capability_explanations
+            )
         if section.section.value == "Trade Plan Drafts":
             lines.extend(_plan_narrative_lines(draft, claim_map))
         if not section.claim_ids and not (
-            section.section.value == "Trade Plan Drafts" and draft.plan_narratives
+            limitations
+            or has_capability_warnings and draft.disabled_capability_explanations
+            or section.section.value == "Trade Plan Drafts" and draft.plan_narratives
         ):
             lines.append("- No validated claims.")
         lines.append("")

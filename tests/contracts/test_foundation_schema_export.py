@@ -6,7 +6,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator, FormatChecker
+from pydantic import TypeAdapter, ValidationError
 
+from finance_research_agent.domain.types import UtcDatetime
 from finance_research_agent.schema_export import SCHEMA_MODELS, check_schemas, export_schemas
 
 SCHEMA_NAMES = {
@@ -51,6 +54,27 @@ SCHEMA_NAMES = {
     "product-a-operation-list-watchlist-result.schema.json",
 }
 ROOT = Path(__file__).resolve().parents[2]
+_UTC_DATETIME_ADAPTER = TypeAdapter(UtcDatetime)
+_RFC3339_UTC_DATETIME_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+    r"(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)"
+)
+
+
+def _application_format_checker() -> FormatChecker:
+    checker = FormatChecker()
+
+    def is_utc_datetime(value: object) -> bool:
+        if not isinstance(value, str) or not _RFC3339_UTC_DATETIME_PATTERN.fullmatch(value):
+            return False
+        try:
+            _UTC_DATETIME_ADAPTER.validate_python(value)
+        except ValidationError:
+            return False
+        return True
+
+    checker.checks("date-time")(is_utc_datetime)
+    return checker
 
 
 def test_registry_is_immutable_and_contains_only_implemented_contracts() -> None:
@@ -73,7 +97,10 @@ def test_every_schema_export_is_stable_sorted_newline_terminated_json(tmp_path: 
         )
         if not filename.endswith("-result.schema.json"):
             assert parsed["additionalProperties"] is False
-            if "schema_version" in parsed["properties"]:
+            if "schema_version" in parsed["properties"] and filename not in {
+                "product-a-citation-entailment-review.schema.json",
+                "product-a-operation-record-run-feedback-request.schema.json",
+            }:
                 assert parsed["properties"]["schema_version"]["const"] == "0.1"
             for definition in parsed.get("$defs", {}).values():
                 if "properties" in definition and "additionalProperties" in definition:
@@ -107,7 +134,7 @@ def test_schema_preserves_wire_decimal_and_provenance_constraints(tmp_path: Path
     for invalid in ("0", "0.0", "-1", "NaN", "Infinity", "price", "1e2"):
         assert not re.fullmatch(properties["value"]["pattern"], invalid)
     assert properties["observed_at"]["format"] == "date-time"
-    assert properties["observed_at"]["pattern"] == r"(?:Z|\+00:00)$"
+    assert properties["observed_at"]["pattern"] == r"(?:[Zz]|\+00:00)$"
     assert properties["quality_flags"]["uniqueItems"] is True
     assert schema["$defs"]["Coverage"]["enum"] == ["single_exchange", "consolidated", "unknown"]
     evidence_schema = json.loads((tmp_path / "evidence-item.schema.json").read_bytes())
@@ -146,7 +173,7 @@ def test_schema_preserves_wire_decimal_and_provenance_constraints(tmp_path: Path
         "type": "string",
     }
     assert metric_properties["calculated_at"]["format"] == "date-time"
-    assert metric_properties["calculated_at"]["pattern"] == r"(?:Z|\+00:00)$"
+    assert metric_properties["calculated_at"]["pattern"] == r"(?:[Zz]|\+00:00)$"
     assert "input_evidence_ids" in metric_schema["required"]
     market_schema = json.loads((tmp_path / "market-snapshot.schema.json").read_bytes())
     assert market_schema["properties"]["completed_daily_bars"]["type"] == "array"
@@ -163,7 +190,15 @@ def test_operation_schemas_are_strict_bounded_and_exclude_caller_authority() -> 
         schema = TypeAdapter(model).json_schema()
         if "-request." in filename or filename.endswith("operation-error.schema.json"):
             assert schema["additionalProperties"] is False
-            assert schema["properties"]["schema_version"]["const"] == "0.1"
+            if filename == "product-a-operation-record-run-feedback-request.schema.json":
+                assert schema["properties"]["schema_version"]["enum"] == ["0.1", "0.2"]
+                assert {
+                    "executive_review_duration_seconds",
+                    "detailed_review_duration_seconds",
+                    "executive_identification",
+                } <= set(schema["properties"])
+            else:
+                assert schema["properties"]["schema_version"]["const"] == "0.1"
         assert not {
             "provider",
             "url",
@@ -171,6 +206,132 @@ def test_operation_schemas_are_strict_bounded_and_exclude_caller_authority() -> 
             "deadline_seconds",
             "risk_policy",
         } & set(schema.get("properties", {}))
+
+    review_schema = TypeAdapter(SCHEMA_MODELS["product-a-citation-entailment-review.schema.json"])
+    assert review_schema.json_schema()["properties"]["schema_version"]["enum"] == [
+        "0.1",
+        "0.2",
+    ]
+
+
+def test_feedback_json_schemas_enforce_versioned_runtime_requirements() -> None:
+    assert _application_format_checker().conforms("2026-10-10t13:00:00z", "date-time")
+    review_schema = TypeAdapter(
+        SCHEMA_MODELS["product-a-citation-entailment-review.schema.json"]
+    ).json_schema()
+    review_validator = Draft202012Validator(
+        review_schema, format_checker=_application_format_checker()
+    )
+    legacy_review = {
+        "citation_id": "evidence-1",
+        "claim_id": "claim-1",
+        "entails_claim": True,
+    }
+    full_review = {
+        **legacy_review,
+        "schema_version": "0.2",
+        "verdict": "SUPPORTED",
+        "rationale": "The cited source supports this selected claim.",
+        "reviewed_at": "2026-10-10T13:00:00Z",
+    }
+
+    assert review_validator.is_valid(legacy_review)
+    assert review_validator.is_valid(
+        {
+            **legacy_review,
+            "verdict": None,
+            "rationale": None,
+            "reviewed_at": None,
+        }
+    )
+    assert review_validator.is_valid(full_review)
+    assert review_validator.is_valid(
+        {**full_review, "reviewed_at": "2026-10-10t13:00:00z"}
+    )
+    assert not review_validator.is_valid(
+        {**full_review, "schema_version": "0.1"}
+    )
+    assert not review_validator.is_valid(
+        {**legacy_review, "schema_version": "0.2", "verdict": "SUPPORTED"}
+    )
+    assert not review_validator.is_valid({**full_review, "entails_claim": False})
+    assert not review_validator.is_valid({**full_review, "rationale": "   "})
+    assert not review_validator.is_valid({**full_review, "rationale": "café support"})
+    assert not review_validator.is_valid(
+        {**full_review, "reviewed_at": "not-a-dateZ"}
+    )
+    assert not review_validator.is_valid(
+        {**full_review, "reviewed_at": "2026-10-10 13:00:00Z"}
+    )
+
+    request_schema = TypeAdapter(
+        SCHEMA_MODELS["product-a-operation-record-run-feedback-request.schema.json"]
+    ).json_schema()
+    request_validator = Draft202012Validator(
+        request_schema, format_checker=_application_format_checker()
+    )
+    legacy_request = {
+        "run_id": "premarket-2026-10-10-r1",
+        "clarity_score": 3,
+        "evidence_score": 4,
+        "usefulness_score": 5,
+    }
+    assert request_validator.is_valid(legacy_request)
+    assert not request_validator.is_valid(
+        {**legacy_request, "executive_review_duration_seconds": 30}
+    )
+    assert not request_validator.is_valid(
+        {**legacy_request, "citation_reviews": [full_review]}
+    )
+    assert request_validator.is_valid(
+        {
+            **legacy_request,
+            "schema_version": "0.2",
+            "executive_review_duration_seconds": 30,
+            "citation_reviews": [full_review],
+        }
+    )
+    assert request_validator.is_valid(
+        {
+            **legacy_request,
+            "schema_version": "0.2",
+            "executive_review_duration_seconds": 30,
+            "citation_reviews": [
+                {**full_review, "reviewed_at": "2026-10-10t13:00:00z"}
+            ],
+        }
+    )
+    base_identification = {
+        "market_posture": "unknown",
+        "event_state": "MATERIAL_EVENTS",
+        "event_ids": [],
+        "priority_symbols": [],
+        "disabled_capabilities": [],
+    }
+    v02_request = {**legacy_request, "schema_version": "0.2"}
+    assert not request_validator.is_valid(
+        {**v02_request, "executive_identification": base_identification}
+    )
+    assert request_validator.is_valid(
+        {
+            **v02_request,
+            "executive_identification": {
+                **base_identification,
+                "event_ids": ["event-1"],
+            },
+        }
+    )
+    for event_state in ("UNAVAILABLE", "NO_MATERIAL_EVENTS"):
+        assert not request_validator.is_valid(
+            {
+                **v02_request,
+                "executive_identification": {
+                    **base_identification,
+                    "event_state": event_state,
+                    "event_ids": ["event-1"],
+                },
+            }
+        )
 
 
 def test_schema_command_checks_without_rewriting_and_fails_on_drift(tmp_path: Path) -> None:

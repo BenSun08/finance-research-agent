@@ -112,6 +112,116 @@ def _seed() -> RunContextSeed:
     )
 
 
+def test_missed_run_record_is_durable_and_idempotent_by_market_date(tmp_path: Path) -> None:
+    from finance_research_agent.domain import models
+
+    record_model = getattr(models, "MissedRunRecord", None)
+    assert record_model is not None, "after-close diagnostics need a typed missed-run record"
+    first_record = record_model(
+        market_date=date(2026, 8, 19),
+        detected_at=datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+        regular_close_at=datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+        reason_code="MISSED_WINDOW",
+    )
+    later_record = first_record.model_copy(
+        update={"detected_at": datetime(2026, 8, 19, 20, 1, tzinfo=UTC)}
+    )
+    repository = FileSystemRunRepository(tmp_path)
+    recorder = getattr(repository, "record_missed_run", None)
+    reader = getattr(repository, "get_missed_run", None)
+    assert callable(recorder), "repository must durably record missed-run diagnostics"
+    assert callable(reader), "repository must read the immutable missed-run diagnostic"
+
+    assert recorder(first_record) == first_record
+    assert recorder(later_record) == first_record
+    assert reader(date(2026, 8, 19)) == first_record
+    assert FileSystemRunRepository(tmp_path, create_layout=False).get_missed_run(
+        date(2026, 8, 19)
+    ) == first_record
+    with pytest.raises(TypeError, match="market_date must be a date"):
+        repository.get_missed_run("2026-08-19")
+
+
+def test_missed_run_read_and_write_reject_in_root_symlink_aliases(tmp_path: Path) -> None:
+    from finance_research_agent.domain.models import MissedRunRecord
+
+    repository = FileSystemRunRepository(tmp_path)
+    requested_date = date(2026, 8, 19)
+    target_date = date(2026, 8, 20)
+    target = MissedRunRecord(
+        market_date=target_date,
+        detected_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+        regular_close_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+        reason_code="MISSED_WINDOW",
+    )
+    requested = target.model_copy(
+        update={
+            "market_date": requested_date,
+            "detected_at": datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+            "regular_close_at": datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+        }
+    )
+    repository.record_missed_run(target)
+    requested_path = (
+        tmp_path / "diagnostics/missed-runs/2026/2026-08-19.json"
+    )
+    requested_path.parent.mkdir(parents=True, exist_ok=True)
+    requested_path.symlink_to(tmp_path / "diagnostics/missed-runs/2026/2026-08-20.json")
+
+    with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+        repository.get_missed_run(requested_date)
+    with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+        repository.record_missed_run(requested)
+
+
+def test_missed_run_reader_rejects_record_for_a_different_market_date(tmp_path: Path) -> None:
+    from finance_research_agent.domain.models import MissedRunRecord
+
+    repository = FileSystemRunRepository(tmp_path)
+    requested_date = date(2026, 8, 19)
+    other_date = date(2026, 8, 20)
+    record = MissedRunRecord(
+        market_date=other_date,
+        detected_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+        regular_close_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+        reason_code="MISSED_WINDOW",
+    )
+    record_path = tmp_path / "diagnostics/missed-runs/2026/2026-08-19.json"
+    record_path.parent.mkdir(parents=True)
+    record_path.write_text(record.model_dump_json(), encoding="utf-8")
+
+    with pytest.raises(PathNotAllowedError, match="PATH_NOT_ALLOWED"):
+        repository.get_missed_run(requested_date)
+
+
+def test_missed_run_record_rejects_detection_before_regular_close() -> None:
+    from finance_research_agent.domain import models
+
+    record_model = getattr(models, "MissedRunRecord", None)
+    assert record_model is not None
+    with pytest.raises(ValueError, match="at or after regular close"):
+        record_model(
+            market_date=date(2026, 8, 19),
+            detected_at=datetime(2026, 8, 19, 19, 59, tzinfo=UTC),
+            regular_close_at=datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
+            reason_code="MISSED_WINDOW",
+        )
+
+
+def test_missed_run_record_requires_regular_close_on_market_date() -> None:
+    from finance_research_agent.domain import models
+
+    record_model = getattr(models, "MissedRunRecord", None)
+    assert record_model is not None
+    with pytest.raises(ValueError, match="regular_close_at must fall on the market date"):
+        record_model(
+            market_date=date(2026, 8, 19),
+            detected_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+            regular_close_at=datetime(2026, 8, 20, 20, 0, tzinfo=UTC),
+            reason_code="MISSED_WINDOW",
+        )
+
+
 def _bundle(context: RunContext, report: str = "# Synthetic report\n") -> PublishedRunBundle:
     return PublishedRunBundle(
         run=context,
@@ -119,6 +229,55 @@ def _bundle(context: RunContext, report: str = "# Synthetic report\n") -> Publis
         report_markdown=report,
         markdown_sha256=hashlib.sha256(report.encode()).hexdigest(),
     )
+
+
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    (
+        ("bundle_hash", "conflicting receipt"),
+        ("published_at", "receipt time is invalid"),
+    ),
+)
+def test_publication_refuses_to_overwrite_conflicting_index_receipt(
+    tmp_path: Path, corruption: str, message: str
+) -> None:
+    from finance_research_agent.domain.types import canonical_bytes
+
+    context = _context()
+    bundle = _bundle(context)
+    bundle_hash = hashlib.sha256(canonical_bytes(bundle)).hexdigest()
+    report_hash = hashlib.sha256(bundle.report_markdown.encode()).hexdigest()
+    entry = {
+        "bundle_sha256": bundle_hash,
+        "markdown_sha256": report_hash,
+        "published_at": NOW.isoformat(),
+    }
+    if corruption == "bundle_hash":
+        entry["bundle_sha256"] = "0" * 64
+    else:
+        entry["published_at"] = "invalid-timestamp"
+    expected_index = {context.run_id: dict(entry)}
+
+    repository = FileSystemRunRepository(tmp_path)
+    repository.create(context)
+    index_path = (
+        tmp_path
+        / "reports"
+        / str(context.market_date.year)
+        / context.market_date.isoformat()
+        / "index.json"
+    )
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(json.dumps(expected_index), encoding="utf-8")
+
+    with pytest.raises(PublicationError, match="publication index update failed") as raised:
+        repository.publish_atomically(bundle)
+    assert raised.value.__cause__ is not None
+    assert message in str(raised.value.__cause__)
+
+    assert json.loads(index_path.read_bytes()) == expected_index
+    assert repository.get_published_artifact(context.run_id) is None
+    assert repository.diagnostic_orphan_exists(context.run_id)
 
 
 def test_lease_uses_expiry_and_heartbeat_not_file_existence(tmp_path: Path) -> None:
@@ -976,6 +1135,35 @@ def test_publication_hashes_and_visibility_are_atomic(tmp_path: Path) -> None:
     assert repository.get_report(context.run_id) == "# Synthetic report\n"
     assert final.is_dir()
     assert not (final / ".staging").exists()
+
+
+def test_publication_receipt_uses_injected_clock_and_keeps_original_time(
+    tmp_path: Path,
+) -> None:
+    from inspect import signature
+
+    assert "clock" in signature(FileSystemRunRepository).parameters, (
+        "publication receipt timestamps must use the trusted injected clock"
+    )
+    published_at = NOW + timedelta(minutes=20)
+
+    def publication_clock() -> datetime:
+        return published_at
+
+    repository = FileSystemRunRepository(tmp_path, clock=publication_clock)
+    context = _context()
+    repository.create(context)
+
+    receipt = repository.publish_atomically(_bundle(context))
+
+    assert receipt.published_at == published_at
+    assert repository.get_published_artifact(context.run_id) == receipt
+
+    def later_clock() -> datetime:
+        return published_at + timedelta(minutes=5)
+
+    reloaded = FileSystemRunRepository(tmp_path, create_layout=False, clock=later_clock)
+    assert reloaded.get_published_artifact(context.run_id) == receipt
 
 
 def test_publication_rejects_report_hash_mismatch_without_exposing_output(tmp_path: Path) -> None:

@@ -73,11 +73,14 @@ def _default_runtime() -> tuple[ApplicationServices, Replay]:
     settings = Settings()
     data_root = settings.data_dir
     configuration = YamlConfigurationRepository(data_root / "config")
-    run_repository = FileSystemRunRepository(data_root, create_layout=False)
+    trusted_clock = _SystemClock()
+    run_repository = FileSystemRunRepository(
+        data_root, create_layout=False, clock=trusted_clock.now_utc
+    )
     market_data = cast(MarketDataProvider, _ConfiguredMarketDataReadiness(settings))
     calendar = ExchangeCalendarAdapter()
     services = ApplicationServices(
-        clock=cast(Clock, _SystemClock()),
+        clock=cast(Clock, trusted_clock),
         calendar=calendar,
         configuration_repository=configuration,
         market_data=market_data,

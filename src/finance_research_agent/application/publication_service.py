@@ -541,12 +541,27 @@ def publish_operational_report(
     ):
         raise ValueError("operational report differs from frozen cutoff")
     latest = stored.checkpoints[-1]
+    frozen_packet_hash = next(
+        (
+            checkpoint.artifact_hashes["research_packet"]
+            for checkpoint in reversed(stored.checkpoints)
+            if "research_packet" in checkpoint.artifact_hashes
+        ),
+        None,
+    )
+    staged_packet = repository.read_staged_artifact(run_id, "research_packet")
+    has_packet = frozen_packet_hash is not None or staged_packet is not None
+    missed_window_packet = (
+        reason is ErrorCode.MISSED_WINDOW
+        and frozen_packet_hash is not None
+        and staged_packet is not None
+        and sha256(staged_packet).hexdigest() == frozen_packet_hash
+    )
     if (
         latest.data_quality_status is not DataQualityStatus.FAIL
         or latest.delivery_status is not run.delivery_status
         or checkpointed_at < latest.written_at
-        or any("research_packet" in item.artifact_hashes for item in stored.checkpoints)
-        or repository.read_staged_artifact(run_id, "research_packet") is not None
+        or has_packet and not missed_window_packet
     ):
         raise ValueError("operational publication requires matching FAIL state without packet")
     reason_bytes = reason.value.encode("ascii")

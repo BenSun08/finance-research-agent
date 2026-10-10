@@ -14,7 +14,7 @@
         },
         "evidence_cutoff_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Evidence Cutoff At",
           "type": "string"
         },
@@ -65,7 +65,7 @@
         },
         "observed_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Observed At",
           "type": "string"
         },
@@ -94,7 +94,7 @@
         },
         "retrieved_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Retrieved At",
           "type": "string"
         },
@@ -271,7 +271,7 @@
         },
         "evidence_cutoff_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Evidence Cutoff At",
           "type": "string"
         },
@@ -332,7 +332,7 @@
         },
         "retrieved_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Retrieved At",
           "type": "string"
         },
@@ -352,7 +352,7 @@
         },
         "source_timestamp": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Source Timestamp",
           "type": "string"
         },
@@ -537,7 +537,7 @@
         },
         "end_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "End At",
           "type": "string"
         },
@@ -598,7 +598,7 @@
         },
         "retrieved_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Retrieved At",
           "type": "string"
         },
@@ -613,7 +613,7 @@
         },
         "start_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Start At",
           "type": "string"
         },
@@ -760,6 +760,7 @@
         "CREDENTIALS_MISSING",
         "PERMISSION_DENIED",
         "MARKET_CALENDAR_UNAVAILABLE",
+        "MISSED_WINDOW",
         "PROVIDER_UNAVAILABLE",
         "PROVIDER_NO_DATA",
         "PROVIDER_MISSING_SESSION",
@@ -863,7 +864,7 @@
         },
         "event_time": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Event Time",
           "type": "string"
         },
@@ -955,7 +956,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -989,7 +990,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -1397,7 +1398,7 @@
       "properties": {
         "calculated_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Calculated At",
           "type": "string"
         },
@@ -1651,7 +1652,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -1674,7 +1675,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -1749,7 +1750,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -1897,7 +1898,7 @@
         },
         "calculated_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Calculated At",
           "type": "string"
         },
@@ -2130,7 +2131,7 @@
         },
         "observed_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Observed At",
           "type": "string"
         },
@@ -2155,7 +2156,7 @@
         },
         "retrieved_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Retrieved At",
           "type": "string"
         },
@@ -2206,7 +2207,7 @@
         },
         "published_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Published At",
           "type": "string"
         },
@@ -2607,7 +2608,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -2644,7 +2645,7 @@
         },
         "written_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Written At",
           "type": "string"
         }
@@ -2687,7 +2688,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -2701,7 +2702,7 @@
         },
         "invoked_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Invoked At",
           "type": "string"
         },
@@ -2887,7 +2888,7 @@
         },
         "evidence_cutoff_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Evidence Cutoff At",
           "type": "string"
         },
@@ -2973,7 +2974,7 @@
       "properties": {
         "evidence_cutoff_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Evidence Cutoff At",
           "type": "string"
         },
@@ -3071,7 +3072,7 @@
         },
         "evidence_cutoff_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Evidence Cutoff At",
           "type": "string"
         },
@@ -3248,7 +3249,7 @@
         },
         "observed_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Observed At",
           "type": "string"
         },
@@ -3277,7 +3278,7 @@
         },
         "retrieved_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Retrieved At",
           "type": "string"
         },
@@ -3338,7 +3339,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -3540,7 +3541,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
@@ -3568,13 +3569,13 @@
         },
         "evidence_cutoff_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Evidence Cutoff At",
           "type": "string"
         },
         "expires_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Expires At",
           "type": "string"
         },
@@ -3598,7 +3599,7 @@
         },
         "generated_at": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Generated At",
           "type": "string"
         },
@@ -3738,7 +3739,7 @@
         },
         "valid_from": {
           "format": "date-time",
-          "pattern": "(?:Z|\\+00:00)$",
+          "pattern": "(?:[Zz]|\\+00:00)$",
           "title": "Valid From",
           "type": "string"
         },
@@ -3799,6 +3800,17 @@
   "additionalProperties": false,
   "description": "Explicit immutable handoff; transport success alone never authorizes synthesis.",
   "properties": {
+    "data_quality": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DataQualityResult"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "failure_code": {
       "anyOf": [
         {

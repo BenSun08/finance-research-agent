@@ -277,6 +277,8 @@ The following names and signatures are binding. A task may add private helpers b
         def allocate_revision(self, market_date: date, invocation: InvocationType, now: datetime) -> RunContext
         def acquire_lease(self, key: RunKey, now: datetime) -> RunLease
         def heartbeat(self, lease: RunLease, now: datetime) -> RunLease
+        def record_missed_run(self, record: MissedRunRecord) -> MissedRunRecord
+        def get_missed_run(self, market_date: date) -> MissedRunRecord | None
         def load(self, run_id: str) -> StoredRun | None
         def create(self, context: RunContext) -> None
         def checkpoint(self, run_id: str, checkpoint: RunCheckpoint) -> None
@@ -312,6 +314,7 @@ The following names and signatures are binding. A task may add private helpers b
 ### Required top-level contract fields
 
 - RunContext: schema_version, run_id, run_type, market_date, revision, invoked_at, evidence_cutoff_at, execution_status, data_quality_status, delivery_status, configuration_snapshot, core_version, mcp_contract_version, plugin_version, skill_version, prompt_version, report_template_version, schema_versions.
+- MissedRunRecord: market_date, detected_at, regular_close_at, and reason_code=`MISSED_WINDOW`. One immutable record per market date is stored under diagnostics; retries return the original record and create no formal research run or publication.
 - SourceObservation: observation_id, provider, source_url, source_hash_sha256, observed_at, retrieved_at, content_type, excerpt, persistence_allowed, quality_flags.
 - EvidenceItem: evidence_id, source, authority_tier, instrument_id, event_time, published_time, structured_fields, citation_label.
 - PriceObservation: instrument_id, value, currency, session, provider, feed, coverage, observed_at, retrieved_at, evidence_id, quality_flags.
@@ -1343,7 +1346,7 @@ Expected: one commit with deterministic DST and transition tests.
 
 **Interfaces:**
 - Consumes: RunContext, RunKey, RunCheckpoint, StoredRun, PublishedRunBundle, PublishedArtifact, ErrorCode.
-- Produces: FileSystemRunRepository implementing RunRepository; acquire_lease(), heartbeat(), create(), checkpoint(), freeze_evidence(), publish_atomically(), get_latest(); allocate_revision(market_date: date, invocation: InvocationType, now: datetime) -> RunContext.
+- Produces: `FileSystemRunRepository(data_root: Path, *, create_layout: bool = True, clock: Callable[[], datetime] | None = None)` implementing RunRepository; acquire_lease(), heartbeat(), create(), checkpoint(), freeze_evidence(), publish_atomically(), get_latest(); allocate_revision(market_date: date, invocation: InvocationType, now: datetime) -> RunContext. The optional clock supplies UTC publication receipt timestamps; omission retains the system UTC clock.
 
 - [ ] **Step 1: Write failing revision and idempotency tests**
 
@@ -4211,13 +4214,51 @@ Expected: the local plugin loads from its repo marketplace, invokes only the con
         clock: Clock,
     ) -> RecordedFeedback
 
+    def select_citation_entailment_sample(
+        bundle: PublishedRunBundle,
+        maximum_claims: int = 5,
+    ) -> tuple[str, ...]
+
+    def record_shadow_day_observation(
+        request: RecordShadowDayObservation,
+        repository: ShadowObservationRepository,
+        calendar: TradingCalendar,
+        clock: Clock,
+    ) -> ShadowObservationReceipt
+
+    def record_operator_release_attestation(
+        request: RecordOperatorReleaseAttestation,
+        repository: OperatorReleaseAttestationRepository,
+        clock: Clock,
+    ) -> OperatorReleaseAttestationReceipt
+
+    def load_shadow_evaluation_evidence(
+        period: ShadowPeriod,
+        runs: RunRepository,
+        artifacts: PublishedArtifactReader,
+        feedback: FeedbackRepository,
+        observations: ShadowObservationRepository,
+        operator_attestations: OperatorReleaseAttestationRepository,
+        release_evidence: ReleaseEvidenceReader,
+    ) -> ShadowEvaluationEvidence
+
     def build_shadow_scorecard(
         published_runs: Sequence[PublishedRunBundle],
         feedback: Sequence[RecordedFeedback],
         calendar: TradingCalendar,
+        *,
+        evidence: ShadowEvaluationEvidence | None = None,
     ) -> ShadowScorecard
 
-EvaluationScenario requires id, title, fixture_set, injected_failures, expected_execution_status, expected_data_quality_status, expected_delivery_status, expected_capabilities, expected_plan_states, expected_report_banner, expected_error_codes, expected_recoverability, and assertions. ShadowScorecard contains period_start/end, valid_trading_days, eligible_online_days, published_in_target_window, duration observations, review-time observations, usefulness observations, plan-observation counts, block-reason counts, setup/regime distributions, and each pass/fail graduation gate. It has no realized P&L, return, win-rate, fill, fee, slippage, or execution field.
+    def build_migration_readiness(
+        scenario_outcomes: Sequence[EvaluationOutcome],
+        evidence: ShadowEvaluationEvidence,
+        scorecard: ShadowScorecard,
+    ) -> MigrationReadiness
+
+The focused R11 evaluation/release-readiness delta (`docs/superpowers/specs/2026-10-10-product-a-r11-evaluation-release-readiness-design.md`) scopes the original scenario expectations to the approved current sources, keeps separate domain assertions, adds the optional keyword-only verified evidence input, and defines three-state gate output. Original full-source operational behavior remains deferred.
+
+EvaluationScenario retains Task 18's expected_* fields as full-source reference values and adds `original_scope_reference`, `current_scope_expectation`, and typed `domain_assertions`. Compare current service output only with `current_scope_expectation`; if Task 18 did not specify exact legacy banner text, set `expected_report_banner` to `NOT_SPECIFIED_IN_TASK_18` and do not compare it with current output. ShadowScorecard contains period_start/end, valid_trading_days, eligible_online_days, published_in_target_window, duration observations, review-time observations, usefulness observations, plan-observation counts, block-reason counts, setup/regime distributions, and ordered PASS/FAIL/PENDING graduation-gate results with separate failed and pending gate ids. It has no realized P&L, return, win-rate, fill, fee, slippage, or execution field.
 
 - [ ] **Step 1: Write failing scenario-manifest completeness and outcome tests**
 
@@ -4243,14 +4284,15 @@ Create tests/evaluation/test_scenarios.py:
     @pytest.mark.parametrize("scenario", load_evaluation_scenarios())
     def test_scenario_matches_all_declared_outcomes(scenario, evaluation_harness) -> None:
         outcome = execute_evaluation_scenario(scenario, evaluation_harness)
-        assert outcome.execution_status == scenario.expected_execution_status
-        assert outcome.data_quality_status == scenario.expected_data_quality_status
-        assert outcome.delivery_status == scenario.expected_delivery_status
-        assert outcome.capabilities == scenario.expected_capabilities
-        assert outcome.plan_states == scenario.expected_plan_states
-        assert outcome.report_banner == scenario.expected_report_banner
-        assert outcome.error_codes == scenario.expected_error_codes
-        assert outcome.recoverability == scenario.expected_recoverability
+        expected = scenario.current_scope_expectation.primary
+        assert outcome.execution_status == expected.execution_status
+        assert outcome.data_quality_status == expected.data_quality_status
+        assert outcome.delivery_status == expected.delivery_status
+        assert outcome.capabilities == expected.capabilities
+        assert outcome.plan_states == expected.plan_states
+        assert outcome.report_banner == expected.report_banner
+        assert outcome.error_codes == expected.error_codes
+        assert outcome.recoverability == expected.recoverability
         assert outcome.assertions_failed == ()
 
 Run:
@@ -4336,7 +4378,8 @@ Create tests/evaluation/test_shadow_scorecard.py:
         )
         assert scorecard.valid_trading_days == 19
         assert scorecard.graduation_ready is False
-        assert "AT_LEAST_TWENTY_TRADING_DAYS" in scorecard.failed_gates
+        assert "AT_LEAST_TWENTY_TRADING_DAYS" in scorecard.pending_gate_ids
+        assert "AT_LEAST_TWENTY_TRADING_DAYS" not in scorecard.failed_gate_ids
 
 
     def test_scorecard_has_no_execution_or_profit_fields() -> None:
@@ -4356,15 +4399,23 @@ Create tests/evaluation/test_shadow_scorecard.py:
     def test_human_entailment_sample_is_required_for_each_published_day(
         twenty_day_run_bundles,
         feedback_missing_one_daily_sample,
+        verified_shadow_evidence_missing_one_daily_sample,
         calendar,
     ) -> None:
         scorecard = build_shadow_scorecard(
             twenty_day_run_bundles,
             feedback_missing_one_daily_sample,
             calendar,
+            evidence=verified_shadow_evidence_missing_one_daily_sample,
         )
         assert scorecard.graduation_ready is False
-        assert "CITATION_ENTAILMENT_SAMPLE_INCOMPLETE" in scorecard.failed_gates
+        evidence_gate = next(
+            gate for gate in scorecard.gate_results if gate.id == "EVIDENCE"
+        )
+        assert evidence_gate.status == "PENDING"
+        assert "CITATION_ENTAILMENT_SAMPLE_INCOMPLETE" in evidence_gate.reason_codes
+        assert "EVIDENCE" in scorecard.pending_gate_ids
+        assert "EVIDENCE" not in scorecard.failed_gate_ids
 
 Run:
 

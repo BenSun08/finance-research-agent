@@ -1,0 +1,1629 @@
+"""R11 failure injections against real application and repository services."""
+
+import json
+from datetime import date, timedelta
+from decimal import Decimal
+from hashlib import sha256
+from pathlib import Path
+
+import pytest
+
+from finance_research_agent.domain.enums import (
+    BriefOrigin,
+    Capability,
+    DataQualityStatus,
+    DeliveryStatus,
+    ExecutionStatus,
+    GateStatus,
+    PlanStatus,
+    ReducedReportReason,
+    SourceRole,
+)
+from finance_research_agent.domain.errors import ErrorCode
+from finance_research_agent.domain.models import ProviderFailure
+from finance_research_agent.domain.policies import SourcePolicy
+from finance_research_agent.domain.types import FrozenMap, canonical_bytes
+from tests.application.test_premarket_preparation import (
+    Calendar,
+    MarketData,
+    dependencies,
+    request,
+)
+
+
+def _offline_alpaca_source_policy() -> SourcePolicy:
+    """Allow only the Alpaca market-data hosts for HTTP-mocked adapter tests."""
+    return SourcePolicy(
+        version="1",
+        quality_source_roles=(SourceRole.MARKET_DATA, SourceRole.MARKET_CALENDAR),
+        allowed_adapters=("alpaca",),
+        allowed_https_domains=("api.alpaca.markets", "data.alpaca.markets"),
+        allowed_hosts_by_adapter=FrozenMap(
+            {"alpaca": ("api.alpaca.markets", "data.alpaca.markets")}
+        ),
+        freshness_by_data_type=FrozenMap({"market_data": 60}),
+        cache_retention_seconds=60,
+        request_deadline_seconds=Decimal("10"),
+        retry_attempts=0,
+        retry_backoff_seconds=Decimal("0.1"),
+        retry_jitter_seconds=Decimal("0.1"),
+        per_run_request_budgets=FrozenMap({"market_data": 20}),
+        maximum_response_bytes=1_000_000,
+        allowed_content_types=("application/json",),
+        excerpt_limits=FrozenMap({"application/json": 4096}),
+    )
+
+
+def test_f01_global_alpaca_outage_publishes_only_a_hashed_operational_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from finance_research_agent.application import premarket_preparation
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+
+    class GlobalOutage(MarketData):
+        def __init__(self):
+            super().__init__(available=False)
+            self.calls = []
+
+        def fetch_instruments(self, symbols, **kwargs):
+            self.calls.append("instruments")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+        def fetch_daily_bars(self, symbols, start, end, **kwargs):
+            self.calls.append("daily_bars")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+        def fetch_premarket_observations(self, symbols, as_of, **kwargs):
+            self.calls.append("premarket")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+    provider = GlobalOutage()
+    deps = dependencies(tmp_path, market=provider)
+    market_date = date(2026, 9, 28)
+    assert deps.run_repository.get_latest(market_date) is None
+
+    captured_quality = []
+    checkpoint_quality = premarket_preparation.checkpoint_collected_market_data_quality
+
+    def capture_quality(*args, **kwargs):
+        value = checkpoint_quality(*args, **kwargs)
+        captured_quality.append(value.quality)
+        return value
+
+    monkeypatch.setattr(
+        premarket_preparation,
+        "checkpoint_collected_market_data_quality",
+        capture_quality,
+    )
+
+    result = premarket_preparation.prepare_research_packet(request(), deps)
+
+    assert result.outcome == "PUBLISHED"
+    assert result.failure_code is ErrorCode.PROVIDER_UNAVAILABLE
+    assert result.research_packet is None
+    assert result.stored_run is not None
+    assert len(captured_quality) == 1
+    quality = captured_quality[0]
+    assert quality.status is DataQualityStatus.FAIL
+    assert tuple(state.capability for state in quality.capabilities) == tuple(Capability)
+    assert all(not state.available for state in quality.capabilities)
+    assert all(
+        ErrorCode.PROVIDER_UNAVAILABLE in state.reason_codes
+        for state in quality.capabilities
+    )
+
+    assert provider.calls == ["instruments", "daily_bars", "premarket", "readiness"]
+
+    stored = result.stored_run
+    assert all(
+        "research_packet" not in checkpoint.artifact_hashes
+        for checkpoint in stored.checkpoints
+    )
+    assert deps.run_repository.read_staged_artifact(stored.run_id, "research_packet") is None
+    assert deps.run_repository.get_latest(market_date) == stored.run_id
+    bundle = deps.run_repository.load_published_bundle(stored.run_id)
+    report = deps.run_repository.get_report(stored.run_id)
+    artifact = deps.run_repository.get_published_artifact(stored.run_id)
+    assert bundle is not None and report is not None and artifact is not None
+    assert bundle.run.execution_status is ExecutionStatus.PUBLISHED
+    assert bundle.run.data_quality_status is DataQualityStatus.FAIL
+    assert bundle.run.delivery_status is DeliveryStatus.MANUAL
+    assert bundle.bundle["brief_origin"] == BriefOrigin.OPERATIONAL.value
+    assert bundle.bundle["failure_code"] == ErrorCode.PROVIDER_UNAVAILABLE.value
+    assert "Brief origin: OPERATIONAL" in report
+    assert "Data quality status: FAIL" in report
+    assert "Failure code: PROVIDER_UNAVAILABLE" in report
+    assert "No market conclusion or trade plan is available." in report
+    assert "SPY" not in report and "QQQ" not in report
+    assert result.publication == artifact
+    assert artifact.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    assert artifact.markdown_sha256 == sha256(report.encode("utf-8")).hexdigest()
+    replay = replay_published_artifact(
+        deps.run_repository, stored.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f02_one_symbol_history_failure_is_scoped_and_other_data_survives(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from finance_research_agent.application import premarket_preparation
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.publication_service import publish_reduced_report
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+
+    class OneSymbolHistoryFailure(MarketData):
+        def fetch_daily_bars(self, symbols, start, end, **kwargs):
+            outcomes = dict(super().fetch_daily_bars(symbols, start, end, **kwargs))
+            outcomes["AAPL"] = ProviderFailure(
+                provider="alpaca",
+                symbol="AAPL",
+                error_code=ErrorCode.PROVIDER_NO_DATA,
+                retryable=False,
+            )
+            return outcomes
+
+    provider = OneSymbolHistoryFailure()
+    deps = dependencies(tmp_path, market=provider)
+    captured_quality = []
+    checkpoint_quality = premarket_preparation.checkpoint_collected_market_data_quality
+
+    def capture_quality(*args, **kwargs):
+        value = checkpoint_quality(*args, **kwargs)
+        captured_quality.append(value.quality)
+        return value
+
+    monkeypatch.setattr(
+        premarket_preparation,
+        "checkpoint_collected_market_data_quality",
+        capture_quality,
+    )
+    prepared = prepare_research_packet(request(), deps)
+
+    assert prepared.outcome == "PACKET_READY"
+    assert prepared.failure_code is None
+    packet = prepared.research_packet
+    assert packet is not None
+    assert packet.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert packet.run.execution_status is ExecutionStatus.AWAITING_SYNTHESIS
+    assert packet.run.delivery_status is DeliveryStatus.MANUAL
+    assert len(captured_quality) == 1
+    quality = captured_quality[0]
+    assert quality.symbol_plan_status("AAPL") is PlanStatus.BLOCKED
+    aapl_plan = quality.symbol_capability("AAPL", Capability.PLAN_DRAFT_AVAILABLE)
+    assert aapl_plan.available is False
+    assert ErrorCode.PROVIDER_NO_DATA in aapl_plan.reason_codes
+    assert quality.capability(Capability.REGIME_CLASSIFICATION_AVAILABLE).available is True
+    assert provider.calls == ["instruments", "bars", "prices", "readiness"]
+    assert packet.regime_result is not None
+    assert packet.regime_result.regime.value != "unknown"
+    assert packet.deterministic_plan_inputs == ()
+    missing_evidence = tuple(
+        item.evidence_id
+        for item in packet.evidence
+        if item.structured_fields.get("outcome") == "DAILY_BARS"
+        and item.structured_fields.get("requested_symbol") == "AAPL"
+        and item.structured_fields.get("error_code") == ErrorCode.PROVIDER_NO_DATA.value
+    )
+    assert len(missing_evidence) == 1
+    aapl_exclusions = tuple(
+        item for item in packet.candidate_exclusions if item.symbol == "AAPL"
+    )
+    assert len(aapl_exclusions) == 1
+    assert "REQUIRED_DATA_MISSING" in aapl_exclusions[0].reason_codes
+    scoped_gates = aapl_exclusions[0].gates
+    assert scoped_gates
+    assert all(gate.gate_id.startswith("AAPL-") for gate in scoped_gates)
+    assert any(gate.reason_code == "PROVIDER_MISSING_SESSION" for gate in scoped_gates)
+    assert any(ErrorCode.PROVIDER_NO_DATA.value in gate.message for gate in scoped_gates)
+    assert "SPY" in packet.market
+    assert "QQQ" in packet.market
+
+    receipt = publish_reduced_report(
+        deps.run_repository,
+        packet,
+        ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        deps.clock.now_utc(),
+    )
+    report = deps.run_repository.get_report(receipt.run_id)
+    bundle = deps.run_repository.load_published_bundle(receipt.run_id)
+    assert report is not None and bundle is not None
+    assert bundle.bundle["brief_origin"] == BriefOrigin.DETERMINISTIC_REDUCED.value
+    assert bundle.run.execution_status is ExecutionStatus.PUBLISHED
+    assert bundle.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert bundle.run.delivery_status is DeliveryStatus.MANUAL
+    assert deps.run_repository.get_latest(packet.run.market_date) == receipt.run_id
+    assert receipt.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    assert receipt.markdown_sha256 == sha256(report.encode("utf-8")).hexdigest()
+    replay = replay_published_artifact(
+        deps.run_repository, receipt.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+    assert "Brief origin: DETERMINISTIC_REDUCED" in report
+    assert "AAPL" in report
+    assert missing_evidence[0] in report
+
+
+def test_f03_stale_current_price_preserves_daily_regime_but_blocks_sizing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from finance_research_agent.application import premarket_preparation
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.publication_service import publish_reduced_report
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+
+    class StaleCurrentPrice(MarketData):
+        def fetch_premarket_observations(self, symbols, as_of, **kwargs):
+            outcomes = dict(super().fetch_premarket_observations(symbols, as_of, **kwargs))
+            outcomes["AAPL"] = ProviderFailure(
+                provider="alpaca",
+                symbol="AAPL",
+                error_code=ErrorCode.STALE_DATA,
+                retryable=False,
+            )
+            return outcomes
+
+    provider = StaleCurrentPrice()
+    deps = dependencies(tmp_path, market=provider)
+    captured_quality = []
+    checkpoint_quality = premarket_preparation.checkpoint_collected_market_data_quality
+
+    def capture_quality(*args, **kwargs):
+        value = checkpoint_quality(*args, **kwargs)
+        captured_quality.append(value.quality)
+        return value
+
+    monkeypatch.setattr(
+        premarket_preparation,
+        "checkpoint_collected_market_data_quality",
+        capture_quality,
+    )
+    prepared = prepare_research_packet(request(), deps)
+
+    assert prepared.outcome == "PACKET_READY"
+    packet = prepared.research_packet
+    assert packet is not None and packet.regime_result is not None
+    assert packet.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert packet.regime_result.regime.value != "unknown"
+    assert "AAPL" in packet.market
+    assert packet.market["AAPL"].completed_daily_bars
+    assert packet.market["AAPL"].latest_price is None
+    assert packet.deterministic_plan_inputs == ()
+    assert len(captured_quality) == 1
+    sizing = captured_quality[0].symbol_capability(
+        "AAPL", Capability.POSITION_SIZING_AVAILABLE
+    )
+    assert sizing.available is False
+    assert ErrorCode.STALE_DATA in sizing.reason_codes
+    failure_evidence = tuple(
+        item.evidence_id
+        for item in packet.evidence
+        if item.structured_fields.get("requested_symbol") == "AAPL"
+        and item.structured_fields.get("error_code") == ErrorCode.STALE_DATA.value
+    )
+    assert len(failure_evidence) == 1
+    stale_gates = tuple(
+        gate for gate in packet.gates if gate.reason_code == ErrorCode.STALE_DATA.value
+    )
+    assert len(stale_gates) == 1
+    assert stale_gates[0].status is GateStatus.BLOCK
+    assert stale_gates[0].capability is Capability.POSITION_SIZING_AVAILABLE
+    assert stale_gates[0].evidence_ids == failure_evidence
+    assert "AAPL" in stale_gates[0].message and "stale" in stale_gates[0].message.lower()
+    assert provider.calls == ["instruments", "bars", "prices", "readiness"]
+
+    receipt = publish_reduced_report(
+        deps.run_repository,
+        packet,
+        ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        deps.clock.now_utc(),
+    )
+    report = deps.run_repository.get_report(receipt.run_id)
+    bundle = deps.run_repository.load_published_bundle(receipt.run_id)
+    assert report is not None and bundle is not None
+    assert "Brief origin: DETERMINISTIC_REDUCED" in report
+    assert "AAPL" in report
+    assert ErrorCode.STALE_DATA.value.replace("_", "\\_") in report
+    assert failure_evidence[0] in report
+    assert receipt.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    assert receipt.markdown_sha256 == sha256(report.encode("utf-8")).hexdigest()
+    replay = replay_published_artifact(
+        deps.run_repository, receipt.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f04_conflicting_event_fixture_stays_out_of_current_source_publication(
+    tmp_path: Path,
+) -> None:
+    from finance_research_agent.domain.enums import ReducedReportReason
+    from finance_research_agent.evaluation import (
+        EvaluationHarness,
+        execute_evaluation_scenario,
+    )
+    from finance_research_agent.evaluation.models import FixtureSetId, ScenarioAssertionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.evaluation.fixture_bank import build_domain_fixture_bank
+
+    scenario = load_evaluation_scenarios()[8]
+    assert scenario.id.value == "S09"
+    created_dependencies = []
+
+    def create_dependencies(current_scenario, expectation):
+        value = dependencies(tmp_path)
+        created_dependencies.append(value)
+        return value
+
+    harness = EvaluationHarness(
+        dependencies_factory=create_dependencies,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        domain_fixtures=build_domain_fixture_bank(),
+    )
+
+    outcome = execute_evaluation_scenario(scenario, harness)
+
+    assert outcome.assertions_failed == ()
+    assert outcome.assertions_pending == ()
+    assert ScenarioAssertionId.SOURCE_LIMITATIONS_ADJACENT in outcome.assertions_passed
+    assert len(outcome.domain_assertion_outcomes) == 1
+    domain_result = outcome.domain_assertion_outcomes[0]
+    assert domain_result.fixture_id is FixtureSetId.S09_SOURCE_CONFLICT
+    assert domain_result.status == "PASS"
+    assert "gate_reason_codes" in domain_result.matched_fields
+    assert len(outcome.current_scope_outcomes) == 1
+    current = outcome.current_scope_outcomes[0]
+    assert current.current_scope == scenario.current_scope_expectation.primary
+    assert current.replay_json_matches is True
+    assert current.replay_markdown_matches is True
+    assert len(created_dependencies) == 1
+    deps = created_dependencies[0]
+    run_id = deps.run_repository.get_latest(harness.market_date)
+    assert run_id is not None
+    bundle = deps.run_repository.load_published_bundle(run_id)
+    report = deps.run_repository.get_report(run_id)
+    artifact = deps.run_repository.get_published_artifact(run_id)
+    assert bundle is not None and report is not None and artifact is not None
+    packet = bundle.bundle["research_packet"]
+    assert isinstance(packet, FrozenMap)
+    assert packet["events"] == ()
+    event_capability = next(
+        item
+        for item in packet["capability_states"]
+        if item["capability"] == Capability.EVENT_RISK_CHECK_AVAILABLE.value
+    )
+    assert event_capability["available"] is False
+    assert event_capability["reason_codes"] == (ErrorCode.SOURCE_NOT_CONFIGURED.value,)
+    assert packet["deterministic_plan_inputs"] == ()
+    assert "Brief origin: DETERMINISTIC_REDUCED" in report
+    assert "SOURCE_NOT_CONFIGURED" in report
+    assert "SOURCE_CONFLICT" not in report
+    assert "earnings" not in report.lower()
+    assert deps.market_data.calls == ["instruments", "bars", "prices", "readiness"]
+    assert deps.run_repository.get_latest(harness.market_date) == run_id
+    assert current.artifact_hashes["research_packet"] == packet["canonical_sha256"]
+    assert current.artifact_hashes["published_bundle"] == artifact.bundle_sha256
+    assert current.artifact_hashes["report_markdown"] == artifact.markdown_sha256
+    assert artifact.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    assert artifact.markdown_sha256 == sha256(report.encode("utf-8")).hexdigest()
+
+
+def test_f05_missing_macro_fixture_does_not_create_an_operational_event_calendar(
+    tmp_path: Path,
+) -> None:
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.publication_service import publish_reduced_report
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.evaluation.domain_assertions import execute_domain_assertion
+    from finance_research_agent.evaluation.models import FailureInjectionId, FixtureSetId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.evaluation.fixture_bank import build_domain_fixture_bank
+
+    scenario = load_evaluation_scenarios()[11]
+    assert scenario.id.value == "S12"
+    assert scenario.injected_failures == (FailureInjectionId.F05,)
+    fixture_bank = build_domain_fixture_bank()
+    domain_result = execute_domain_assertion(
+        scenario.domain_assertions[0], fixture_bank
+    )
+    assert domain_result.fixture_id is FixtureSetId.S12_MISSING_MACRO_CALENDAR
+    assert domain_result.status == "PASS"
+    assert "gate_reason_codes" in domain_result.matched_fields
+
+    deps = dependencies(tmp_path)
+    prepared = prepare_research_packet(request(), deps)
+    assert prepared.outcome == "PACKET_READY"
+    packet = prepared.research_packet
+    assert packet is not None
+    assert packet.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert packet.events == ()
+    assert packet.deterministic_plan_inputs == ()
+    event_capability = next(
+        state
+        for state in packet.capability_states
+        if state.capability is Capability.EVENT_RISK_CHECK_AVAILABLE
+    )
+    assert event_capability.available is False
+    assert event_capability.reason_codes == (ErrorCode.SOURCE_NOT_CONFIGURED,)
+    assert deps.event_providers == ()
+    assert deps.market_data.calls == ["instruments", "bars", "prices", "readiness"]
+
+    receipt = publish_reduced_report(
+        deps.run_repository,
+        packet,
+        ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        deps.clock.now_utc(),
+    )
+    report = deps.run_repository.get_report(receipt.run_id)
+    bundle = deps.run_repository.load_published_bundle(receipt.run_id)
+    assert report is not None and bundle is not None
+    assert "Brief origin: DETERMINISTIC_REDUCED" in report
+    assert "EVENT_RISK_CHECK_AVAILABLE" in report
+    assert "SOURCE_NOT_CONFIGURED" in report
+    assert "earnings" not in report.lower()
+    assert receipt.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    assert receipt.markdown_sha256 == sha256(report.encode("utf-8")).hexdigest()
+    replay = replay_published_artifact(
+        deps.run_repository, receipt.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f06_synthesis_timeout_publishes_the_same_packet_as_reduced_research(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.enums import ReducedReportReason
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.integration.test_premarket_workflow_matrix import _support
+    from tests.support.premarket_workflow import run_workflow
+
+    scenario = load_evaluation_scenarios()[22]
+    assert scenario.id.value == "S23"
+    assert FailureInjectionId.F06 in scenario.injected_failures
+    support = _support()
+    protocol, packet, _ = support.prepared_protocol(
+        tmp_path, valid_packet, valid_brief_draft
+    )
+    before_packet = canonical_bytes(packet)
+    host = support.ScriptedSynthesis([TimeoutError()])
+
+    result = run_workflow(protocol, host)
+
+    assert result.outcome == "deterministic_reduced"
+    assert (result.validations, result.repairs) == (0, 0)
+    assert protocol.requests[-2].reason is ReducedReportReason.SYNTHESIS_TIMEOUT
+    assert protocol.names[-2:] == ("publish_reduced_report", "get_report")
+    assert host.packet_objects == [packet]
+    assert host.packet_hashes == [packet.canonical_sha256]
+    assert canonical_bytes(packet) == before_packet
+    assert result.report.bundle["brief_origin"] == BriefOrigin.DETERMINISTIC_REDUCED.value
+    assert result.report.bundle["reduced_report_reason"] == (
+        ReducedReportReason.SYNTHESIS_TIMEOUT.value
+    )
+    assert (
+        result.report.bundle["research_packet"]["canonical_sha256"]
+        == packet.canonical_sha256
+    )
+    assert protocol.repository.get_report(packet.run.run_id) == result.report.report_markdown
+    artifact = protocol.repository.get_published_artifact(packet.run.run_id)
+    assert artifact is not None
+    assert artifact.bundle_sha256 == sha256(canonical_bytes(result.report)).hexdigest()
+    assert artifact.markdown_sha256 == sha256(
+        result.report.report_markdown.encode("utf-8")
+    ).hexdigest()
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(result.report),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f07_malformed_draft_json_is_not_recorded_as_a_validated_attempt(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.enums import ReducedReportReason
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.integration.test_premarket_workflow_matrix import _support
+    from tests.support.premarket_workflow import run_workflow
+
+    scenario = load_evaluation_scenarios()[21]
+    assert scenario.id.value == "S22"
+    assert FailureInjectionId.F07 in scenario.injected_failures
+    support = _support()
+    protocol, packet, _ = support.prepared_protocol(
+        tmp_path, valid_packet, valid_brief_draft
+    )
+    before_packet = canonical_bytes(packet)
+    host = support.ScriptedSynthesis(["{malformed json"])
+
+    result = run_workflow(protocol, host)
+
+    assert result.outcome == "deterministic_reduced"
+    assert (result.validations, result.repairs) == (0, 0)
+    assert protocol.requests[-2].reason is ReducedReportReason.SYNTHESIS_UNAVAILABLE
+    assert protocol.names[-2:] == ("publish_reduced_report", "get_report")
+    assert host.packet_objects == [packet]
+    assert host.packet_hashes == [packet.canonical_sha256]
+    assert canonical_bytes(packet) == before_packet
+    assert result.report.bundle["brief_origin"] == BriefOrigin.DETERMINISTIC_REDUCED.value
+    assert result.report.bundle["validation_reports"] == ()
+    assert (
+        result.report.bundle["research_packet"]["canonical_sha256"]
+        == packet.canonical_sha256
+    )
+    artifact = protocol.repository.get_published_artifact(packet.run.run_id)
+    assert artifact is not None
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(result.report),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f08_unsupported_claim_is_rejected_before_valid_repair_publishes(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.enums import ValidationCode
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.integration.test_premarket_workflow_matrix import _support
+    from tests.support.premarket_workflow import run_workflow
+
+    scenario = load_evaluation_scenarios()[21]
+    assert scenario.id.value == "S22"
+    assert FailureInjectionId.F08 in scenario.injected_failures
+    support = _support()
+    protocol, packet, _ = support.prepared_protocol(
+        tmp_path, valid_packet, valid_brief_draft
+    )
+    valid_repair = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    unsupported = valid_repair.model_copy(
+        update={"data_warnings": ("unverified earnings are confirmed",)}
+    )
+    host = support.ScriptedSynthesis([unsupported, valid_repair])
+    before_packet = canonical_bytes(packet)
+
+    result = run_workflow(protocol, host)
+
+    assert result.outcome == "published"
+    assert (result.validations, result.repairs) == (2, 1)
+    assert protocol.names.count("validate_and_publish_brief") == 2
+    assert host.packet_objects == [packet, packet]
+    assert host.packet_hashes == [packet.canonical_sha256] * 2
+    assert canonical_bytes(packet) == before_packet
+    assert host.issues[1] is not None
+    assert any(issue.code is ValidationCode.UNSUPPORTED_CLAIM for issue in host.issues[1].issues)
+
+    bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    artifact = protocol.repository.get_published_artifact(packet.run.run_id)
+    assert bundle is not None and artifact is not None
+    assert bundle.bundle["brief_draft"]["data_warnings"] == ()
+    final_report = bundle.bundle["validation_report"]
+    assert final_report["is_valid"] is True
+    assert final_report["validation_attempt"] == 2
+    assert artifact.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    report = protocol.repository.get_report(packet.run.run_id)
+    assert report == result.report.report_markdown
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(bundle),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f09_numeric_mismatch_is_rejected_without_changing_packet_values(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.enums import ValidationCode
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.integration.test_premarket_workflow_matrix import _support
+    from tests.support.premarket_workflow import run_workflow
+
+    scenario = load_evaluation_scenarios()[21]
+    assert scenario.id.value == "S22"
+    assert FailureInjectionId.F09 in scenario.injected_failures
+    support = _support()
+    protocol, packet, _ = support.prepared_protocol(
+        tmp_path, valid_packet, valid_brief_draft
+    )
+    valid_repair = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    numeric_claim = valid_repair.claims[1].model_copy(
+        update={
+            "numeric_value": Decimal("104.00"),
+            "text": "AAPL two-session SMA is 104.00 price.",
+        }
+    )
+    unsupported = valid_repair.model_copy(
+        update={"claims": (valid_repair.claims[0], numeric_claim)}
+    )
+    host = support.ScriptedSynthesis([unsupported, valid_repair])
+    before_packet = canonical_bytes(packet)
+    metric = next(
+        item
+        for item in packet.metrics
+        if item.metric_id == valid_repair.claims[1].metric_ids[0]
+    )
+
+    result = run_workflow(protocol, host)
+
+    assert result.outcome == "published"
+    assert (result.validations, result.repairs) == (2, 1)
+    assert host.packet_objects == [packet, packet]
+    assert host.packet_hashes == [packet.canonical_sha256] * 2
+    assert canonical_bytes(packet) == before_packet
+    assert host.issues[1] is not None
+    assert any(
+        issue.code is ValidationCode.DETERMINISTIC_VALUE_MISMATCH
+        for issue in host.issues[1].issues
+    )
+
+    bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    published_claim = next(
+        item
+        for item in bundle.bundle["brief_draft"]["claims"]
+        if item["claim_id"] == valid_repair.claims[1].claim_id
+    )
+    assert Decimal(published_claim["numeric_value"]) == metric.value
+    assert Decimal(published_claim["numeric_value"]) != Decimal("104.00")
+    final_report = bundle.bundle["validation_report"]
+    assert final_report["is_valid"] is True
+    assert final_report["validation_attempt"] == 2
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(bundle),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f10_repair_exhaustion_records_three_validations_and_never_requests_a_fourth(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.enums import ValidationCode
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+    from tests.integration.test_premarket_workflow_matrix import _support
+    from tests.support.premarket_workflow import run_workflow
+
+    scenario = load_evaluation_scenarios()[21]
+    assert scenario.id.value == "S22"
+    assert FailureInjectionId.F10 in scenario.injected_failures
+    support = _support()
+    protocol, packet, _ = support.prepared_protocol(
+        tmp_path, valid_packet, valid_brief_draft
+    )
+    invalid_drafts = tuple(
+        valid_brief_draft.model_copy(
+            update={
+                "execution_status": packet.run.execution_status,
+                "data_warnings": (f"unverified earnings are confirmed attempt-{index}",),
+            }
+        )
+        for index in range(3)
+    )
+    repaired = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    host = support.ScriptedSynthesis([*invalid_drafts, repaired])
+    before_packet = canonical_bytes(packet)
+
+    result = run_workflow(protocol, host)
+
+    assert result.outcome == "deterministic_reduced"
+    assert (result.validations, result.repairs) == (3, 2)
+    assert protocol.names.count("validate_and_publish_brief") == 3
+    assert protocol.names[-2:] == ("publish_reduced_report", "get_report")
+    assert len(host.packet_objects) == 3
+    assert host.packet_objects == [packet, packet, packet]
+    assert host.packet_hashes == [packet.canonical_sha256] * 3
+    assert canonical_bytes(packet) == before_packet
+    assert len(host.issues) == 3
+    assert host.issues[1] is not None and host.issues[2] is not None
+    assert all(
+        any(issue.code is ValidationCode.UNSUPPORTED_CLAIM for issue in report.issues)
+        for report in host.issues[1:]
+        if report is not None
+    )
+
+    bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    artifact = protocol.repository.get_published_artifact(packet.run.run_id)
+    assert bundle is not None and artifact is not None
+    assert bundle.bundle["brief_origin"] == BriefOrigin.DETERMINISTIC_REDUCED.value
+    assert bundle.bundle["reduced_report_reason"] == (
+        ReducedReportReason.VALIDATION_REPAIR_EXHAUSTED.value
+    )
+    reports = bundle.bundle["validation_reports"]
+    assert len(reports) == 3
+    assert [item["validation_attempt"] for item in reports] == [1, 2, 3]
+    assert all(item["is_valid"] is False for item in reports)
+    assert artifact.bundle_sha256 == sha256(canonical_bytes(bundle)).hexdigest()
+    report_markdown = protocol.repository.get_report(packet.run.run_id)
+    assert report_markdown == result.report.report_markdown
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(bundle),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+@pytest.mark.parametrize("failure_stage", ["write", "fsync"])
+def test_f11_pre_rename_disk_failure_is_typed_and_never_visible_as_published(
+    tmp_path: Path, valid_packet, valid_brief_draft, monkeypatch, failure_stage: str
+) -> None:
+    from finance_research_agent.adapters.filesystem import PublicationError
+    from finance_research_agent.application.operations import ProductAOperation
+    from tests.integration.test_premarket_workflow_matrix import _support
+
+    protocol, packet, _ = _support().prepared_protocol(tmp_path, valid_packet, valid_brief_draft)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    if failure_stage == "write":
+        original_atomic_write = protocol.repository._atomic_write
+
+        def fail_bundle_write(target: Path, payload: bytes) -> None:
+            if target.name == "bundle.json":
+                raise OSError("injected publication bundle write failure")
+            original_atomic_write(target, payload)
+
+        monkeypatch.setattr(protocol.repository, "_atomic_write", fail_bundle_write)
+    else:
+        original_fsync_directory = protocol.repository._fsync_directory
+
+        def fail_staging_fsync(directory: Path) -> None:
+            if directory.name == packet.run.run_id:
+                raise OSError("injected staging directory fsync failure")
+            original_fsync_directory(directory)
+
+        monkeypatch.setattr(protocol.repository, "_fsync_directory", fail_staging_fsync)
+
+    with pytest.raises(PublicationError) as raised:
+        protocol.dispatch(
+            ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value,
+            json.dumps({"draft": draft.model_dump(mode="json")}),
+        )
+
+    assert raised.value.code is ErrorCode.PUBLICATION_FAILED
+    assert protocol.repository.get_latest(packet.run.market_date) is None
+    assert protocol.repository.get_published_artifact(packet.run.run_id) is None
+    assert protocol.repository.load_published_bundle(packet.run.run_id) is None
+    assert protocol.repository.get_report(packet.run.run_id) is None
+    assert protocol.repository.diagnostic_staging_exists(packet.run.run_id)
+    stored = protocol.repository.load(packet.run.run_id)
+    assert stored is not None and stored.published is False
+    assert stored.checkpoints[-1].stage == "PUBLISHED"
+    final_run = (
+        tmp_path
+        / "runs"
+        / str(packet.run.market_date.year)
+        / packet.run.market_date.isoformat()
+        / packet.run.run_id
+    )
+    assert final_run.exists() is False
+
+
+def test_f12_index_interruption_hides_then_recovers_the_same_frozen_publication(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.adapters.filesystem import PublicationError
+    from finance_research_agent.application.operations import ProductAOperation
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from tests.integration.test_premarket_workflow_matrix import _support
+
+    protocol, packet, _ = _support().prepared_protocol(tmp_path, valid_packet, valid_brief_draft)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    protocol.repository.inject_failure_during_index_update = True
+    arguments = json.dumps({"draft": draft.model_dump(mode="json")})
+
+    with pytest.raises(PublicationError) as raised:
+        protocol.dispatch(ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value, arguments)
+
+    assert raised.value.code is ErrorCode.PUBLICATION_FAILED
+    assert protocol.repository.get_latest(packet.run.market_date) is None
+    assert protocol.repository.get_published_artifact(packet.run.run_id) is None
+    assert protocol.repository.load_published_bundle(packet.run.run_id) is None
+    assert protocol.repository.get_report(packet.run.run_id) is None
+    assert protocol.repository.load(packet.run.run_id) is None
+    assert protocol.repository.diagnostic_orphan_exists(packet.run.run_id)
+    orphan = (
+        tmp_path
+        / "diagnostics"
+        / "orphans"
+        / str(packet.run.market_date.year)
+        / packet.run.market_date.isoformat()
+        / packet.run.run_id
+    )
+    expected_bundle = (orphan / "bundle.json").read_bytes()
+    expected_report = (orphan / "report.md").read_bytes()
+    expected_bundle_sha256 = sha256(expected_bundle).hexdigest()
+    expected_report_sha256 = sha256(expected_report).hexdigest()
+
+    protocol.repository.inject_failure_during_index_update = False
+    receipt = protocol.repository.recover_interrupted_publication(packet.run.run_id)
+    assert protocol.repository.recover_interrupted_publication(packet.run.run_id) == receipt
+
+    assert receipt.run_id == packet.run.run_id
+    assert receipt.bundle_sha256 == expected_bundle_sha256
+    assert receipt.markdown_sha256 == expected_report_sha256
+    assert protocol.repository.diagnostic_orphan_exists(packet.run.run_id) is False
+    assert protocol.repository.get_latest(packet.run.market_date) == packet.run.run_id
+    stored = protocol.repository.load(packet.run.run_id)
+    assert stored is not None and stored.published is True
+    recovered_bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    assert recovered_bundle is not None
+    assert canonical_bytes(recovered_bundle) == expected_bundle
+    recovered_report = protocol.repository.get_report(packet.run.run_id)
+    assert recovered_report is not None
+    assert recovered_report.encode("utf-8") == expected_report
+    replay = replay_published_artifact(
+        protocol.repository,
+        packet.run.run_id,
+        _recorded_versions(recovered_bundle),
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f12_failure_after_index_write_is_invisible_and_retains_receipt(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.adapters.filesystem import PublicationError
+    from finance_research_agent.application.operations import ProductAOperation
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from tests.integration.test_premarket_workflow_matrix import _support
+
+    protocol, packet, _ = _support().prepared_protocol(tmp_path, valid_packet, valid_brief_draft)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    protocol.repository.inject_failure_after_index_write = True
+    arguments = json.dumps({"draft": draft.model_dump(mode="json")})
+
+    with pytest.raises(PublicationError) as raised:
+        protocol.dispatch(ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value, arguments)
+
+    assert raised.value.code is ErrorCode.PUBLICATION_FAILED
+    assert protocol.repository.get_latest(packet.run.market_date) is None
+    assert protocol.repository.get_published_artifact(packet.run.run_id) is None
+    assert protocol.repository.get_report(packet.run.run_id) is None
+    assert protocol.repository.diagnostic_orphan_exists(packet.run.run_id)
+    index_path = (
+        tmp_path
+        / "reports"
+        / str(packet.run.market_date.year)
+        / packet.run.market_date.isoformat()
+        / "index.json"
+    )
+    partial_index = json.loads(index_path.read_bytes())
+    partial_entry = partial_index[packet.run.run_id]
+    original_published_at = partial_entry["published_at"]
+    assert protocol.repository.get_previous_research_run(
+        packet.run.market_date + timedelta(days=1)
+    ) is None
+
+    protocol.repository.inject_failure_after_index_write = False
+    receipt = protocol.repository.recover_interrupted_publication(packet.run.run_id)
+    assert receipt.run_id == packet.run.run_id
+    assert receipt.bundle_sha256 == partial_entry["bundle_sha256"]
+    assert receipt.markdown_sha256 == partial_entry["markdown_sha256"]
+    assert receipt.published_at.isoformat() == original_published_at
+    assert protocol.repository.get_latest(packet.run.market_date) == packet.run.run_id
+    assert protocol.repository.diagnostic_orphan_exists(packet.run.run_id) is False
+    bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    replay = replay_published_artifact(
+        protocol.repository, packet.run.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f12_recovery_rejects_an_orphan_with_a_changed_staged_artifact(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.adapters.filesystem import PublicationError
+    from finance_research_agent.application.operations import ProductAOperation
+    from tests.integration.test_premarket_workflow_matrix import _support
+
+    protocol, packet, _ = _support().prepared_protocol(tmp_path, valid_packet, valid_brief_draft)
+    draft = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    protocol.repository.inject_failure_during_index_update = True
+    with pytest.raises(PublicationError):
+        protocol.dispatch(
+            ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value,
+            json.dumps({"draft": draft.model_dump(mode="json")}),
+        )
+
+    orphan_artifact = (
+        tmp_path
+        / "diagnostics"
+        / "orphans"
+        / str(packet.run.market_date.year)
+        / packet.run.market_date.isoformat()
+        / packet.run.run_id
+        / "artifacts"
+        / "research_packet.bin"
+    )
+    assert orphan_artifact.is_file()
+    orphan_artifact.write_bytes(b"changed frozen packet bytes")
+    protocol.repository.inject_failure_during_index_update = False
+
+    with pytest.raises(PublicationError, match="artifact hash differs"):
+        protocol.repository.recover_interrupted_publication(packet.run.run_id)
+
+    assert protocol.repository.diagnostic_orphan_exists(packet.run.run_id)
+    assert protocol.repository.get_latest(packet.run.market_date) is None
+    assert protocol.repository.load_published_bundle(packet.run.run_id) is None
+    assert protocol.repository.get_published_artifact(packet.run.run_id) is None
+
+
+def test_f13_stale_lease_checkpoint_is_rejected_before_same_revision_recovery(
+    tmp_path: Path, valid_packet, valid_brief_draft
+) -> None:
+    from finance_research_agent.adapters.filesystem import LeaseHeldError
+    from finance_research_agent.application.operations import ProductAOperation
+    from finance_research_agent.application.publication_service import publish_validated_brief
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+    from finance_research_agent.domain.models import RunKey
+    from tests.integration.test_premarket_workflow_matrix import _support
+
+    protocol, packet, _ = _support().prepared_protocol(tmp_path, valid_packet, valid_brief_draft)
+    repository = protocol.repository
+    key = RunKey(run_type=packet.run.run_type, market_date=packet.run.market_date)
+    original_lease = repository.acquire_lease(key, packet.run.invoked_at)
+    original_stored = repository.load(packet.run.run_id)
+    assert original_stored is not None and original_stored.published is False
+    stale_checkpoint_count = len(original_stored.checkpoints)
+    replacement_lease = repository.acquire_lease(
+        key, original_lease.expires_at + timedelta(seconds=1)
+    )
+    assert replacement_lease.token != original_lease.token
+    with pytest.raises(LeaseHeldError, match="no longer owned"):
+        repository.heartbeat(original_lease, original_lease.expires_at + timedelta(seconds=1))
+
+    invalid = valid_brief_draft.model_copy(
+        update={
+            "execution_status": packet.run.execution_status,
+            "data_warnings": ("unverified earnings are confirmed",),
+        }
+    )
+    invalid_result = protocol.dispatch(
+        ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value,
+        json.dumps({"draft": invalid.model_dump(mode="json")}),
+    )
+    assert invalid_result.validation_report is not None
+    assert invalid_result.validation_report.is_valid is False
+    current_stored = repository.load(packet.run.run_id)
+    assert current_stored is not None and not current_stored.published
+    assert len(current_stored.checkpoints) == stale_checkpoint_count + 1
+    with pytest.raises(ValueError, match="checkpoint state changed"):
+        repository.checkpoint_if_current(
+            packet.run.run_id,
+            current_stored.checkpoints[-1],
+            expected_count=stale_checkpoint_count,
+        )
+    with pytest.raises(ValueError, match="valid recorded attempt"):
+        publish_validated_brief(
+            repository, packet, current_stored.checkpoints[-1].written_at + timedelta(seconds=1)
+        )
+    assert repository.get_latest(packet.run.market_date) is None
+    assert repository.get_published_artifact(packet.run.run_id) is None
+
+    repaired = valid_brief_draft.model_copy(
+        update={"execution_status": packet.run.execution_status}
+    )
+    recovered = protocol.dispatch(
+        ProductAOperation.VALIDATE_AND_PUBLISH_BRIEF.value,
+        json.dumps({"draft": repaired.model_dump(mode="json")}),
+    )
+
+    assert recovered.publication is not None
+    assert recovered.publication.run_id == packet.run.run_id
+    recovered_stored = protocol.repository.load(packet.run.run_id)
+    assert recovered_stored is not None and len(recovered_stored.checkpoints) == (
+        stale_checkpoint_count + 3
+    )
+    assert protocol.repository.get_latest(packet.run.market_date) == packet.run.run_id
+    bundle = protocol.repository.load_published_bundle(packet.run.run_id)
+    assert bundle is not None
+    validation = bundle.bundle["validation_report"]
+    assert validation["validation_attempt"] == 2
+    assert validation["is_valid"] is True
+    replay = replay_published_artifact(
+        protocol.repository, packet.run.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_f14_duplicate_scheduled_initialization_reuses_one_unpublished_revision(
+    tmp_path: Path,
+) -> None:
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.run_service import PreparePremarketRunRequest
+    from finance_research_agent.domain.enums import InvocationType
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+
+    scenario = load_evaluation_scenarios()[24]
+    assert scenario.id.value == "S25"
+    assert FailureInjectionId.F14 in scenario.injected_failures
+    deps = dependencies(tmp_path)
+    scheduled = PreparePremarketRunRequest(
+        date(2026, 9, 28), None, InvocationType.SCHEDULED
+    )
+
+    first = prepare_research_packet(scheduled, deps)
+    assert first.outcome == "PACKET_READY"
+    assert first.research_packet is not None
+    first_calls = tuple(deps.market_data.calls)
+    first_stored = first.stored_run
+    assert first_stored is not None
+
+    duplicate = prepare_research_packet(scheduled, deps)
+
+    assert duplicate.outcome == "PACKET_READY"
+    assert duplicate.research_packet == first.research_packet
+    assert duplicate.stored_run == first_stored
+    assert tuple(deps.market_data.calls) == first_calls
+    assert first.research_packet.run.run_id == "premarket-2026-09-28-r1"
+    assert first.research_packet.run.revision == 1
+    assert deps.run_repository._existing_revision_ids(date(2026, 9, 28)) == (
+        first.research_packet.run.run_id,
+    )
+    assert deps.run_repository.get_latest(date(2026, 9, 28)) is None
+    assert deps.run_repository.get_published_artifact(first.research_packet.run.run_id) is None
+
+
+@pytest.mark.parametrize(
+    ("invoked_at", "allow_normal_plan", "force_review_required", "delivery", "outcome"),
+    [
+        ("2026-09-28T13:10:00+00:00", False, False, DeliveryStatus.DELAYED, "PACKET_READY"),
+        ("2026-09-28T13:27:00+00:00", True, True, DeliveryStatus.DELAYED, "PACKET_READY"),
+        ("2026-09-28T13:31:00+00:00", False, False, DeliveryStatus.MISSED_WINDOW, "PUBLISHED"),
+    ],
+)
+def test_f15_scheduled_wake_boundaries_reuse_one_revision(
+    tmp_path: Path,
+    invoked_at: str,
+    allow_normal_plan: bool,
+    force_review_required: bool,
+    delivery: DeliveryStatus,
+    outcome: str,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.run_service import PreparePremarketRunRequest
+    from finance_research_agent.domain.enums import InvocationType
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+
+    class FixedClock:
+        def now_utc(self):
+            return datetime.fromisoformat(invoked_at).astimezone(UTC)
+
+    scenario = load_evaluation_scenarios()[24]
+    assert scenario.id.value == "S25"
+    assert FailureInjectionId.F15 in scenario.injected_failures
+    market_date = date(2026, 9, 28)
+    deps = dependencies(tmp_path)
+    deps = replace(deps, clock=FixedClock())
+    scheduled = PreparePremarketRunRequest(market_date, None, InvocationType.SCHEDULED)
+
+    first = prepare_research_packet(scheduled, deps)
+
+    assert first.outcome == outcome
+    assert first.window_decision.delivery_status is delivery
+    assert first.window_decision.allow_normal_plan is allow_normal_plan
+    assert first.window_decision.force_review_required is force_review_required
+    assert first.stored_run is not None
+    run_id = first.stored_run.run_id
+    first_calls = tuple(deps.market_data.calls)
+
+    duplicate = prepare_research_packet(scheduled, deps)
+
+    assert duplicate.outcome == outcome
+    assert duplicate.stored_run is not None
+    assert duplicate.stored_run.run_id == run_id
+    assert tuple(deps.market_data.calls) == first_calls
+    assert deps.run_repository._existing_revision_ids(market_date) == (run_id,)
+    if outcome == "PACKET_READY":
+        assert first.research_packet is not None
+        assert duplicate.research_packet == first.research_packet
+        assert deps.run_repository.get_latest(market_date) is None
+        assert deps.run_repository.get_published_artifact(run_id) is None
+    else:
+        assert first.research_packet is None
+        assert duplicate.research_packet is None
+        assert first.publication is not None
+        assert duplicate.publication == first.publication
+        assert deps.run_repository.get_latest(market_date) == run_id
+        assert deps.run_repository.get_published_artifact(run_id) == first.publication
+
+
+@pytest.mark.parametrize(
+    ("invoked_at", "record_only"),
+    [("2026-09-28T13:30:00+00:00", False), ("2026-09-28T20:00:00+00:00", True)],
+)
+def test_f16_missed_window_cutoffs_publish_before_close_or_record_after_close(
+    tmp_path: Path,
+    invoked_at: str,
+    record_only: bool,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.run_service import PreparePremarketRunRequest
+    from finance_research_agent.domain.enums import InvocationType
+    from finance_research_agent.evaluation.models import FailureInjectionId
+    from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
+
+    class FixedClock:
+        def now_utc(self):
+            return datetime.fromisoformat(invoked_at).astimezone(UTC)
+
+    scenario = load_evaluation_scenarios()[24]
+    assert scenario.id.value == "S25"
+    assert FailureInjectionId.F16 in scenario.injected_failures
+    market_date = date(2026, 9, 28)
+    deps = dependencies(tmp_path)
+    deps = replace(deps, clock=FixedClock())
+    scheduled = PreparePremarketRunRequest(market_date, None, InvocationType.SCHEDULED)
+
+    first = prepare_research_packet(scheduled, deps)
+
+    assert first.window_decision.delivery_status is DeliveryStatus.MISSED_WINDOW
+    assert first.window_decision.missed_record_only is record_only
+    assert first.window_decision.publish_missed_report is (not record_only)
+    assert deps.market_data.calls == []
+
+    duplicate = prepare_research_packet(scheduled, deps)
+
+    assert duplicate.window_decision.delivery_status is DeliveryStatus.MISSED_WINDOW
+    assert deps.market_data.calls == []
+    if record_only:
+        assert first.outcome == duplicate.outcome == "SKIPPED"
+        assert first.stored_run is duplicate.stored_run is None
+        assert first.publication is duplicate.publication is None
+        assert deps.run_repository.get_missed_run(market_date) is not None
+        assert deps.run_repository.get_latest(market_date) is None
+        assert deps.run_repository._existing_revision_ids(market_date) == ()
+    else:
+        assert first.outcome == duplicate.outcome == "PUBLISHED"
+        assert first.failure_code is ErrorCode.MISSED_WINDOW
+        assert first.stored_run is not None
+        assert duplicate.stored_run is not None
+        assert duplicate.stored_run.run_id == first.stored_run.run_id
+        assert first.publication is not None
+        assert duplicate.publication == first.publication
+        assert deps.run_repository.get_missed_run(market_date) is None
+        assert deps.run_repository._existing_revision_ids(market_date) == (first.stored_run.run_id,)
+        assert deps.run_repository.get_latest(market_date) == first.stored_run.run_id
+
+
+def test_m01_calendar_initializer_and_collection_readiness_failures_are_stable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from dataclasses import replace
+
+    import exchange_calendars
+
+    from finance_research_agent.adapters.exchange_calendar import ExchangeCalendarAdapter
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market_date = date(2026, 9, 28)
+    uninitialized_repository = FileSystemRunRepository(tmp_path / "initializer")
+
+    def fail_calendar_initialization(name: str) -> object:
+        raise RuntimeError("calendar secret must not escape")
+
+    monkeypatch.setattr(exchange_calendars, "get_calendar", fail_calendar_initialization)
+    with pytest.raises(RuntimeError) as caught:
+        ExchangeCalendarAdapter()
+
+    assert str(caught.value) == (
+        "MARKET_CALENDAR_UNAVAILABLE: market calendar unavailable"
+    )
+    assert "secret" not in str(caught.value)
+    assert uninitialized_repository.get_latest(market_date) is None
+
+    class ReadinessFailureCalendar(Calendar):
+        def readiness(self):
+            raise OSError("calendar health secret must not escape")
+
+    deps = replace(dependencies(tmp_path / "readiness"), calendar=ReadinessFailureCalendar())
+    result = prepare_research_packet(request(market_date=market_date), deps)
+
+    assert result.outcome == "PUBLISHED"
+    assert result.failure_code is ErrorCode.MARKET_CALENDAR_UNAVAILABLE
+    assert result.research_packet is None
+    assert result.data_quality is not None
+    assert result.data_quality.status is DataQualityStatus.FAIL
+    assert ErrorCode.MARKET_CALENDAR_UNAVAILABLE in result.data_quality.global_reason_codes
+    assert result.stored_run is not None and result.stored_run.published
+    report = deps.run_repository.get_report(result.stored_run.run_id)
+    assert report is not None
+    assert "Brief origin: OPERATIONAL" in report
+    assert "MARKET_CALENDAR_UNAVAILABLE" in report
+    assert "secret" not in report
+
+
+@pytest.mark.parametrize(
+    ("expected_configured", "http_status"),
+    [
+        pytest.param(False, None, id="missing"),
+        pytest.param(True, 401, id="rejected"),
+    ],
+)
+def test_m02_alpaca_credential_failures_are_secret_free_operational_results(
+    tmp_path: Path,
+    expected_configured: bool,
+    http_status: int | None,
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from finance_research_agent.adapters.alpaca import AlpacaMarketDataProvider
+    from finance_research_agent.adapters.http_client import SafeHttpClient
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.settings import Settings
+
+    fake_key = "offline-invalid-key"
+    fake_secret = "offline-invalid-secret"
+    calls: list[httpx.Request] = []
+    statuses: list[int] = []
+    now = datetime(2026, 9, 28, 12, 45, tzinfo=UTC)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        statuses.append(401)
+        return httpx.Response(
+            401,
+            headers={"content-type": "application/json"},
+            json={"message": "synthetic credential rejection"},
+        )
+
+    transport = httpx.MockTransport(respond)
+    http_client = SafeHttpClient(
+        _offline_alpaca_source_policy(),
+        transport=transport,
+        resolver=lambda host, port: ("93.184.216.34",),
+        clock=lambda: now,
+    )
+    settings = Settings(
+        data_dir=tmp_path,
+        alpaca_api_key=fake_key if expected_configured else None,
+        alpaca_api_secret=fake_secret if expected_configured else None,
+    )
+    provider = AlpacaMarketDataProvider(settings, http_client, clock=lambda: now)
+    assert provider.readiness().configured is expected_configured
+
+    deps = replace(dependencies(tmp_path / "service"), market_data=provider)
+    result = prepare_research_packet(request(), deps)
+
+    assert result.outcome == "PUBLISHED"
+    assert result.failure_code is ErrorCode.CREDENTIALS_MISSING
+    assert result.research_packet is None
+    assert result.data_quality is not None
+    assert result.data_quality.status is DataQualityStatus.FAIL
+    assert ErrorCode.CREDENTIALS_MISSING in result.data_quality.global_reason_codes
+    assert result.stored_run is not None and result.stored_run.published
+    report = deps.run_repository.get_report(result.stored_run.run_id)
+    assert report is not None
+    assert "Brief origin: OPERATIONAL" in report
+    assert "CREDENTIALS_MISSING" in report
+    assert fake_key not in report and fake_secret not in report
+    assert fake_key not in settings.model_dump_json()
+    assert fake_secret not in settings.model_dump_json()
+    if expected_configured:
+        assert calls
+        assert all(call.headers["APCA-API-KEY-ID"] == fake_key for call in calls)
+        assert all(call.headers["APCA-API-SECRET-KEY"] == fake_secret for call in calls)
+        assert all(call.url.host in {"data.alpaca.markets", "api.alpaca.markets"} for call in calls)
+        assert statuses == [http_status] * len(calls)
+    else:
+        assert calls == []
+
+
+def test_m04_missing_current_quote_preserves_history_and_disables_sizing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from finance_research_agent.application import premarket_preparation
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.application.publication_service import publish_reduced_report
+    from finance_research_agent.application.replay_service import (
+        _recorded_versions,
+        replay_published_artifact,
+    )
+
+    class MissingCurrentQuote(MarketData):
+        def fetch_premarket_observations(self, symbols, as_of, **kwargs):
+            self.calls.append("prices")
+            return {
+                symbol: ProviderFailure(
+                    provider="alpaca",
+                    symbol=symbol,
+                    error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                    retryable=True,
+                )
+                for symbol in symbols
+            }
+
+    provider = MissingCurrentQuote()
+    deps = dependencies(tmp_path, market=provider)
+    captured_quality = []
+    checkpoint_quality = premarket_preparation.checkpoint_collected_market_data_quality
+
+    def capture_quality(*args, **kwargs):
+        value = checkpoint_quality(*args, **kwargs)
+        captured_quality.append(value.quality)
+        return value
+
+    monkeypatch.setattr(
+        premarket_preparation,
+        "checkpoint_collected_market_data_quality",
+        capture_quality,
+    )
+    prepared = prepare_research_packet(request(), deps)
+
+    assert prepared.outcome == "PACKET_READY"
+    packet = prepared.research_packet
+    assert packet is not None and packet.regime_result is not None
+    assert packet.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert packet.regime_result.regime.value != "unknown"
+    assert packet.market["AAPL"].completed_daily_bars
+    assert packet.market["AAPL"].latest_price is None
+    assert packet.deterministic_plan_inputs == ()
+    assert prepared.stored_run is not None and not prepared.stored_run.published
+    assert deps.market_data.calls == ["instruments", "bars", "prices", "readiness"]
+
+    assert len(captured_quality) == 1
+    sizing = captured_quality[0].symbol_capability(
+        "AAPL", Capability.POSITION_SIZING_AVAILABLE
+    )
+    assert sizing.available is False
+    assert ErrorCode.PROVIDER_UNAVAILABLE in sizing.reason_codes
+    price_failure_evidence = tuple(
+        item.evidence_id
+        for item in packet.evidence
+        if item.structured_fields.get("outcome") == "PREMARKET_PRICE"
+        and item.structured_fields.get("requested_symbol") == "AAPL"
+        and item.structured_fields.get("error_code") == ErrorCode.PROVIDER_UNAVAILABLE.value
+    )
+    assert len(price_failure_evidence) == 1
+    unavailable_gates = tuple(
+        gate
+        for gate in packet.gates
+        if gate.reason_code == ErrorCode.PROVIDER_UNAVAILABLE.value
+        and gate.evidence_ids == price_failure_evidence
+    )
+    assert len(unavailable_gates) == 1
+    assert unavailable_gates[0].status is GateStatus.BLOCK
+    assert unavailable_gates[0].capability is Capability.POSITION_SIZING_AVAILABLE
+    assert unavailable_gates[0].evidence_ids == price_failure_evidence
+    assert "current premarket price" in unavailable_gates[0].message.lower()
+    assert "unavailable" in unavailable_gates[0].message.lower()
+
+    receipt = publish_reduced_report(
+        deps.run_repository,
+        packet,
+        ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        deps.clock.now_utc(),
+    )
+    report = deps.run_repository.get_report(receipt.run_id)
+    bundle = deps.run_repository.load_published_bundle(receipt.run_id)
+    assert report is not None and bundle is not None
+    assert bundle.run.data_quality_status is DataQualityStatus.DEGRADED
+    assert bundle.bundle["research_packet"]["canonical_sha256"] == packet.canonical_sha256
+    assert "AAPL" in report
+    assert ErrorCode.PROVIDER_UNAVAILABLE.value.replace("_", "\\_") in report
+    assert price_failure_evidence[0] in report
+    replay = replay_published_artifact(
+        deps.run_repository, receipt.run_id, _recorded_versions(bundle)
+    )
+    assert replay.json_matches is True
+    assert replay.markdown_matches is True
+
+
+def test_m10_alpaca_latest_schema_drift_fails_exactly_without_guessing_fields(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from finance_research_agent.adapters.alpaca import AlpacaMarketDataProvider
+    from finance_research_agent.adapters.http_client import SafeHttpClient
+    from finance_research_agent.application import premarket_preparation
+    from finance_research_agent.application.market_collection import SymbolMarketCollection
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+    from finance_research_agent.settings import Settings
+
+    fake_key = "offline-schema-key"
+    fake_secret = "offline-schema-secret"
+    now = datetime(2026, 9, 28, 12, 45, tzinfo=UTC)
+    http_requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        http_requests.append(request)
+        symbols = request.url.params["symbols"].split(",")
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "trades": {
+                    symbol: {
+                        "p": 101.25,
+                        "s": 100,
+                        "t": "2026-09-28T12:44:00Z",
+                        "x": "V",
+                        "future_price_field": "must not be guessed",
+                    }
+                    for symbol in symbols
+                }
+            },
+        )
+
+    settings = Settings(
+        data_dir=tmp_path,
+        alpaca_api_key=fake_key,
+        alpaca_api_secret=fake_secret,
+    )
+    alpaca = AlpacaMarketDataProvider(
+        settings,
+        SafeHttpClient(
+            _offline_alpaca_source_policy(),
+            transport=httpx.MockTransport(respond),
+            resolver=lambda host, port: ("93.184.216.34",),
+            clock=lambda: now,
+        ),
+        clock=lambda: now,
+    )
+
+    class SchemaDriftWithValidHistory(MarketData):
+        def fetch_premarket_observations(self, symbols, as_of, **kwargs):
+            self.calls.append("prices")
+            return alpaca.fetch_premarket_observations(symbols, as_of, **kwargs)
+
+    provider = SchemaDriftWithValidHistory()
+    deps = replace(dependencies(tmp_path / "service"), market_data=provider)
+    captured_collections = []
+    checkpoint_quality = premarket_preparation.checkpoint_collected_market_data_quality
+
+    def capture_collection(repository, collected, *args, **kwargs):
+        captured_collections.append(collected.collection)
+        return checkpoint_quality(repository, collected, *args, **kwargs)
+
+    monkeypatch.setattr(
+        premarket_preparation,
+        "checkpoint_collected_market_data_quality",
+        capture_collection,
+    )
+    prepared = prepare_research_packet(request(), deps)
+
+    assert prepared.outcome == "PUBLISHED"
+    assert prepared.failure_code is ErrorCode.PROVIDER_SCHEMA_DRIFT
+    assert prepared.research_packet is None
+    assert prepared.data_quality is not None
+    assert prepared.data_quality.status is DataQualityStatus.FAIL
+    assert ErrorCode.PROVIDER_SCHEMA_DRIFT in prepared.data_quality.global_reason_codes
+    assert prepared.stored_run is not None and prepared.stored_run.published
+    assert provider.calls == ["instruments", "bars", "prices", "readiness"]
+    assert len(http_requests) == 1
+    assert http_requests[0].url.path == "/v2/stocks/trades/latest"
+    assert http_requests[0].headers["APCA-API-KEY-ID"] == fake_key
+    assert http_requests[0].headers["APCA-API-SECRET-KEY"] == fake_secret
+
+    assert len(captured_collections) == 1
+    collection = captured_collections[0]
+    assert "AAPL" in {item.symbol for item in collection.symbols}
+    for item in collection.symbols:
+        assert isinstance(item, SymbolMarketCollection)
+        assert item.daily_bars
+        assert isinstance(item.premarket_observation, ProviderFailure)
+        assert item.premarket_observation.error_code is ErrorCode.PROVIDER_SCHEMA_DRIFT
+        assert item.premarket_observation.symbol is None
+        assert item.premarket_observation.message == "premarket response schema drift"
+
+    report = deps.run_repository.get_report(prepared.stored_run.run_id)
+    assert report is not None
+    assert ErrorCode.PROVIDER_SCHEMA_DRIFT.value in report
+    assert fake_key not in report and fake_secret not in report
+    assert "future_price_field" not in report

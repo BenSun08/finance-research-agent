@@ -395,6 +395,46 @@ def test_staged_reduced_report_discloses_source_not_configured_capabilities(
     assert b"Disabled capability: PLAN_DRAFT_AVAILABLE (SOURCE_NOT_CONFIGURED)" in report
     assert b"event-risk check passed" not in report.lower()
 
+    text = report.decode("utf-8")
+
+    def section_bodies(title: str) -> tuple[str, ...]:
+        lines = text.splitlines()
+        headings = tuple(
+            index for index, line in enumerate(lines) if line == f"### {title}"
+        )
+        return tuple(
+            "\n".join(
+                lines[
+                    start
+                    + 1 : next(
+                        (
+                            index
+                            for index in range(start + 1, len(lines))
+                            if lines[index].startswith("#")
+                        ),
+                        len(lines),
+                    )
+                ]
+            )
+            for start in headings
+        )
+
+    assert "- Limitation: EVENT_RISK_CHECK_AVAILABLE unavailable (SOURCE_NOT_CONFIGURED)." in (
+        section_bodies("Today’s Event Clock")[0]
+    )
+    assert "- Limitation: EVENT_RISK_CHECK_AVAILABLE unavailable (SOURCE_NOT_CONFIGURED)." in (
+        section_bodies("Macro and Event Calendar")[0]
+    )
+    assert "- Limitation: SETUP_DETECTION_AVAILABLE unavailable (SOURCE_NOT_CONFIGURED)." in (
+        section_bodies("Eligible Setups")[0]
+    )
+    plan_bodies = section_bodies("Trade Plan Drafts")
+    assert len(plan_bodies) == 2
+    assert all(
+        "- Limitation: PLAN_DRAFT_AVAILABLE unavailable (SOURCE_NOT_CONFIGURED)." in body
+        for body in plan_bodies
+    )
+
 
 def test_stage_research_packet_retry_is_idempotent(tmp_path, valid_packet) -> None:
     packet = _awaiting_packet(valid_packet)
