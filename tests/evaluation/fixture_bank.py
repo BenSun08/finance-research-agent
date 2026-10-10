@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 
+from finance_research_agent.application.packet_service import build_research_packet
+from finance_research_agent.application.prompt_source import canonical_prompt_sha256
 from finance_research_agent.domain.enums import InvocationType, PlanStatus
-from finance_research_agent.domain.models import EventRecord
-from finance_research_agent.domain.plans import build_trade_plan
+from finance_research_agent.domain.events import EventEvidenceProjection, assess_event_risk
+from finance_research_agent.domain.models import EventRecord, EvidenceItem, SourceObservation
+from finance_research_agent.domain.plans import TradePlanDraft, build_trade_plan
 from finance_research_agent.domain.regime import Regime, RegimePolicy
 from finance_research_agent.domain.scoring import CorrelationEvidence
 from finance_research_agent.domain.types import FrozenMap
@@ -17,6 +21,7 @@ from finance_research_agent.evaluation.domain_assertions import (
     DomainFixtureBank,
     EventRiskFixture,
     InstrumentEligibilityFixture,
+    MaterialRevisionFixture,
     PlanBuildFixture,
     PlanExpiryFixture,
     PositionSizingFixture,
@@ -55,6 +60,19 @@ def build_domain_fixture_bank() -> DomainFixtureBank:
     breakout_setup = setups.detect_setups(**breakout)[0]
     plan_inputs = trade_plans.inputs.__wrapped__()
     plan = build_trade_plan(**plan_inputs)
+    plan_build = PlanBuildFixture(
+        candidate=plan_inputs["candidate"],
+        run=plan_inputs["run"],
+        watchlist_item=plan_inputs["watchlist_item"],
+        regime=plan_inputs["regime"],
+        event_assessment=plan_inputs["event_assessment"],
+        gates=plan_inputs["gates"],
+        current_price=plan_inputs["current_price"],
+        capability_states=plan_inputs["capability_states"],
+        setup_policy=plan_inputs["setup_policy"],
+        risk_policy=plan_inputs["risk_policy"],
+        generated_at=plan_inputs["generated_at"],
+    )
     defensive_plan_inputs = dict(plan_inputs)
     defensive_plan_inputs["regime"] = scoring._regime(Regime.DEFENSIVE)
     defensive_multipliers = dict(plan_inputs["risk_policy"].regime_risk_multipliers)
@@ -145,18 +163,7 @@ def build_domain_fixture_bank() -> DomainFixtureBank:
             halted=False,
         ),
         FixtureSetId.S07_EARNINGS_WINDOW: event_fixture,
-        FixtureSetId.S08_MATERIAL_REVISION: PlanExpiryFixture(
-            plan=plan,
-            now_utc=plan.valid_from,
-            current_price=None,
-            entry_trigger_satisfied=False,
-            invalidation_observed=False,
-            new_material_information=True,
-            earnings_blackout=False,
-            incompatible_regime=False,
-            stale_or_conflicting_data=False,
-            eligibility_changed=False,
-        ),
+        FixtureSetId.S08_MATERIAL_REVISION: _material_revision_fixture(plan, plan_build),
         FixtureSetId.S09_SOURCE_CONFLICT: EventRiskFixture(
             instrument=supported,
             events=(conflict_event,),
@@ -325,3 +332,142 @@ def build_domain_fixture_bank() -> DomainFixtureBank:
         ),
     }
     return DomainFixtureBank(records)
+
+
+def _material_revision_fixture(
+    prior_plan: TradePlanDraft,
+    prior_plan_inputs: PlanBuildFixture,
+) -> MaterialRevisionFixture:
+    prior_run = prior_plan_inputs.run.model_copy(
+        update={"prompt_version": canonical_prompt_sha256()}
+    )
+    revised_cutoff = prior_run.invoked_at + timedelta(minutes=5)
+    revised_invoked_at = prior_run.invoked_at + timedelta(minutes=15)
+    revised_run = prior_run.model_copy(
+        update={
+            "run_id": f"premarket-{prior_run.market_date.isoformat()}-r2",
+            "revision": 2,
+            "invoked_at": revised_invoked_at,
+            "evidence_cutoff_at": revised_cutoff,
+        }
+    )
+    filing_evidence_id = "s08-sec-filing-evidence"
+    filing_event_id = "s08-material-corporate-action"
+    candidate = prior_plan_inputs.candidate
+    instrument = events.INSTRUMENT.model_copy(
+        update={
+            "instrument_id": candidate.symbol,
+            "symbol": candidate.symbol,
+        }
+    )
+    filing_time = revised_cutoff
+    filing_evidence = EvidenceItem(
+        evidence_id=filing_evidence_id,
+        source=SourceObservation(
+            observation_id="s08-sec-filing-source",
+            provider="sec_edgar",
+            source_url="https://www.sec.gov/Archives/edgar/data/0000789019/000078901926000001/filing.json",
+            source_hash_sha256="c" * 64,
+            observed_at=filing_time,
+            retrieved_at=filing_time,
+            content_type="application/json",
+            excerpt="Form 8-K reports a material corporate action.",
+            persistence_allowed=True,
+            quality_flags=(),
+        ),
+        authority_tier=1,
+        instrument_id=candidate.symbol,
+        event_time=filing_time,
+        published_time=filing_time,
+        structured_fields=FrozenMap({"form": "8-K", "event_id": filing_event_id}),
+        citation_label="SEC Form 8-K fixture",
+    )
+    filing_event = EventRecord(
+        event_id=filing_event_id,
+        event_type="CORPORATE_ACTION",
+        subject_symbol=candidate.symbol,
+        event_time=filing_time,
+        verified=True,
+        materiality="HIGH",
+        supporting_evidence_ids=(filing_evidence_id,),
+        conflict_evidence_ids=(),
+    )
+    source_health = events._healthy_macro_source_health()
+    event_projection = EventEvidenceProjection(
+        event_id=filing_event_id,
+        retrieved_at=filing_time,
+        supporting_authority_tier=1,
+    )
+    plan_expires_at = prior_plan.expires_at
+    event_assessment = assess_event_risk(
+        instrument=instrument,
+        events=(filing_event,),
+        plan_expires_at=plan_expires_at,
+        evidence_cutoff_at=filing_time,
+        source_health=source_health,
+        event_evidence=(event_projection,),
+    )
+    revised_candidate = candidate.model_copy(
+        update={
+            "evidence_cutoff_at": revised_cutoff,
+            "event_assessment": event_assessment,
+        }
+    )
+    revised_plan_build = replace(
+        prior_plan_inputs,
+        candidate=revised_candidate,
+        run=revised_run,
+        event_assessment=event_assessment,
+        generated_at=revised_invoked_at,
+    )
+    revised_plan = build_trade_plan(
+        candidate=revised_plan_build.candidate,
+        run=revised_plan_build.run,
+        watchlist_item=revised_plan_build.watchlist_item,
+        regime=revised_plan_build.regime,
+        event_assessment=revised_plan_build.event_assessment,
+        gates=revised_plan_build.gates,
+        current_price=revised_plan_build.current_price,
+        capability_states=revised_plan_build.capability_states,
+        setup_policy=revised_plan_build.setup_policy,
+        risk_policy=revised_plan_build.risk_policy,
+        generated_at=revised_plan_build.generated_at,
+    )
+    prior_packet = build_research_packet(
+        run=prior_run,
+        evidence=(),
+        snapshots={},
+        events=(),
+        metrics=(),
+        gates=(),
+        candidates=(),
+        exclusions=(),
+        plans=(prior_plan,),
+        capabilities=(),
+        observations=(),
+        max_serialized_bytes=250_000,
+    )
+    revision_two_packet = build_research_packet(
+        run=revised_run,
+        evidence=(filing_evidence,),
+        snapshots={},
+        events=(filing_event,),
+        metrics=(),
+        gates=(),
+        candidates=(),
+        exclusions=(),
+        plans=(revised_plan,),
+        capabilities=(),
+        observations=(),
+        max_serialized_bytes=250_000,
+    )
+    return MaterialRevisionFixture(
+        revision_one_packet=prior_packet,
+        revision_two_packet=revision_two_packet,
+        material_filing_evidence_id=filing_evidence_id,
+        new_plan_expiry_at=plan_expires_at,
+        instrument=instrument,
+        source_health=source_health,
+        plan_build=revised_plan_build,
+        unverified_material_status=PlanStatus.REVIEW_REQUIRED,
+    )

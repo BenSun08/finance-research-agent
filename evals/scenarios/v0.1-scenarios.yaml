@@ -1064,6 +1064,11 @@ scenarios:
       plan_status: EXPIRED
       expiry_reasons:
       - NEW_MATERIAL_INFORMATION
+      filing_available_only_in_r2: true
+      new_plan_status: BLOCKED
+      new_plan_gate_reason_codes:
+      - UNSUPPORTED_INSTRUMENT
+      new_plan_matches_revision_2_packet: true
 - id: S09
   title: Conflicting official and media sources
   fixture_set: S09_SOURCE_CONFLICT

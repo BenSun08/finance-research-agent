@@ -533,33 +533,34 @@ def execute_evaluation_scenario(
     )
     if scenario.domain_assertions and harness.domain_fixtures is None:
         raise ValueError("scenario domain assertions require an explicit DomainFixtureBank")
-    checks_revision_immutability = (
-        ScenarioAssertionId.REVISION_BYTES_IMMUTABLE in scenario.assertions
+    shares_run_repository = any(
+        expectation.requested_revision is not None for expectation in expectations
     )
-    if checks_revision_immutability and (
-        len(expectations) != 2
-        or expectations[0].requested_revision is not None
-        or expectations[1].requested_revision != 2
-        or expectations[1].delivery_status is not DeliveryStatus.MANUAL
-    ):
-        raise ValueError("revision immutability requires scheduled r1 and manual r2 cases")
-    if checks_revision_immutability:
+    if shares_run_repository:
         dependencies = harness.dependencies_factory(scenario, expectations[0])
         current_scope_results: list[CurrentScopeServiceObservation] = []
-        for index, expectation in enumerate(expectations):
+        for expectation in expectations:
             observation = execute_current_scope_scenario(
                 scenario,
                 harness,
                 expectation,
                 dependencies=dependencies,
             )
-            if index == 1:
+            if expectation.requested_revision is not None and observation.run_revision is not None:
                 repository = cast(PublicationRepository, dependencies.run_repository)
+                older_revisions = tuple(
+                    previous
+                    for previous in current_scope_results
+                    if previous.run_revision is not None
+                    and previous.run_revision < observation.run_revision
+                )
                 observation = observation.model_copy(
                     update={
-                        "prior_revision_bytes_immutable": _prior_revision_is_unchanged(
-                            repository, current_scope_results[0]
-                        )
+                        "prior_revision_bytes_immutable": bool(older_revisions)
+                        and all(
+                            _prior_revision_is_unchanged(repository, previous)
+                            for previous in older_revisions
+                        ),
                     }
                 )
             current_scope_results.append(observation)

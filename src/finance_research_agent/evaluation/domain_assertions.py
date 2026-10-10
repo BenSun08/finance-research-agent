@@ -9,7 +9,7 @@ from decimal import Decimal
 from types import MappingProxyType
 
 from finance_research_agent.domain.eligibility import evaluate_instrument_eligibility
-from finance_research_agent.domain.enums import InvocationType, PlanStatus
+from finance_research_agent.domain.enums import GateStatus, InvocationType, PlanStatus
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.events import (
     EventAssessment,
@@ -22,6 +22,7 @@ from finance_research_agent.domain.models import (
     CapabilityState,
     CompletedDailyBar,
     EventRecord,
+    EvidenceItem,
     GateResult,
     InstrumentIdentity,
     MarketSnapshot,
@@ -30,6 +31,7 @@ from finance_research_agent.domain.models import (
     SourceHealth,
 )
 from finance_research_agent.domain.observations import observe_prior_plan
+from finance_research_agent.domain.packets import ResearchPacket
 from finance_research_agent.domain.plans import TradePlanDraft, build_trade_plan, expire_plan
 from finance_research_agent.domain.policies import RiskPolicy, SetupPolicy, WatchlistItem
 from finance_research_agent.domain.quality import DataQualityResult
@@ -173,6 +175,20 @@ class PlanExpiryFixture:
     incompatible_regime: bool
     stale_or_conflicting_data: bool
     eligibility_changed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MaterialRevisionFixture:
+    """Two frozen packets and deterministic inputs for one material revision."""
+
+    revision_one_packet: ResearchPacket
+    revision_two_packet: ResearchPacket
+    material_filing_evidence_id: str
+    new_plan_expiry_at: UtcDatetime
+    instrument: InstrumentIdentity
+    source_health: tuple[SourceHealth, ...]
+    plan_build: PlanBuildFixture
+    unverified_material_status: PlanStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,6 +482,97 @@ def execute_domain_assertion(
         )
     if isinstance(assertion, PlanExpiryAssertion):
         fixture = fixtures.get(assertion.fixture_id)
+        if assertion.fixture_id is FixtureSetId.S08_MATERIAL_REVISION:
+            if type(fixture) is not MaterialRevisionFixture:
+                raise TypeError("S08 PLAN_EXPIRY requires MaterialRevisionFixture")
+            prior_packet = fixture.revision_one_packet
+            revision_two_packet = fixture.revision_two_packet
+            target_filing_id = fixture.material_filing_evidence_id
+            prior_evidence_ids = {item.evidence_id for item in prior_packet.evidence}
+            revision_two_evidence = {
+                item.evidence_id: item for item in revision_two_packet.evidence
+            }
+            filing = revision_two_evidence.get(target_filing_id)
+            filing_event_present = any(
+                target_filing_id in event.supporting_evidence_ids
+                for event in revision_two_packet.events
+            )
+            filing_available_only_in_r2 = (
+                target_filing_id not in prior_evidence_ids
+                and filing is not None
+                and filing.source.provider == "sec_edgar"
+                and filing_event_present
+            )
+            prior_plan = next(
+                (
+                    plan
+                    for plan in prior_packet.deterministic_plan_inputs
+                    if plan.run_id == prior_packet.run.run_id
+                ),
+                None,
+            )
+            if prior_plan is None:
+                raise ValueError("S08 r1 fixture packet must retain its prior plan")
+            expired = expire_plan(
+                prior_plan,
+                now_utc=revision_two_packet.run.invoked_at,
+                current_price=None,
+                entry_trigger_satisfied=False,
+                invalidation_observed=False,
+                new_material_information=filing_available_only_in_r2,
+                earnings_blackout=False,
+                incompatible_regime=False,
+                stale_or_conflicting_data=False,
+                eligibility_changed=False,
+            )
+            event_projections = _event_evidence_projections(
+                revision_two_packet, revision_two_evidence
+            )
+            event_assessment = assess_event_risk(
+                instrument=fixture.instrument,
+                events=revision_two_packet.events,
+                plan_expires_at=fixture.new_plan_expiry_at,
+                evidence_cutoff_at=revision_two_packet.run.require_evidence_cutoff(),
+                source_health=fixture.source_health,
+                event_evidence=event_projections,
+                unverified_material_status=fixture.unverified_material_status,
+            )
+            candidate = fixture.plan_build.candidate.model_copy(
+                update={"event_assessment": event_assessment}
+            )
+            new_plan = build_trade_plan(
+                candidate=candidate,
+                run=fixture.plan_build.run,
+                watchlist_item=fixture.plan_build.watchlist_item,
+                regime=fixture.plan_build.regime,
+                event_assessment=event_assessment,
+                gates=fixture.plan_build.gates,
+                current_price=fixture.plan_build.current_price,
+                capability_states=fixture.plan_build.capability_states,
+                setup_policy=fixture.plan_build.setup_policy,
+                risk_policy=fixture.plan_build.risk_policy,
+                generated_at=fixture.plan_build.generated_at,
+            )
+            return _compare(
+                assertion,
+                {
+                    "plan_status": expired.plan_status,
+                    "expiry_reasons": expired.expiry_reasons,
+                    "filing_available_only_in_r2": filing_available_only_in_r2,
+                    "new_plan_status": new_plan.plan_status,
+                    "new_plan_gate_reason_codes": tuple(
+                        dict.fromkeys(
+                            gate.reason_code
+                            for gate in new_plan.gate_results
+                            if gate.status is GateStatus.BLOCK
+                        )
+                    ),
+                    "new_plan_matches_revision_2_packet": any(
+                        packet_plan == new_plan
+                        for packet_plan in revision_two_packet.deterministic_plan_inputs
+                    ),
+                },
+            )
         if type(fixture) is not PlanExpiryFixture:
             raise TypeError("PLAN_EXPIRY requires PlanExpiryFixture")
         expired = expire_plan(
@@ -554,6 +661,47 @@ def execute_domain_assertion(
     raise NotImplementedError(
         f"domain assertion operation {assertion.kind.value} is not registered"
     )
+
+
+def _event_evidence_projections(
+    packet: ResearchPacket,
+    evidence_by_id: Mapping[str, EvidenceItem],
+) -> tuple[EventEvidenceProjection, ...]:
+    projections: list[EventEvidenceProjection] = []
+    for event in packet.events:
+        missing_ids = tuple(
+            evidence_id
+            for evidence_id in (*event.supporting_evidence_ids, *event.conflict_evidence_ids)
+            if evidence_id not in evidence_by_id
+        )
+        if missing_ids:
+            raise ValueError(
+                f"event {event.event_id} references absent packet evidence: {missing_ids}"
+            )
+        supporting = tuple(
+            evidence_by_id[evidence_id]
+            for evidence_id in event.supporting_evidence_ids
+        )
+        conflicting = tuple(
+            evidence_by_id[evidence_id]
+            for evidence_id in event.conflict_evidence_ids
+        )
+        referenced = (*supporting, *conflicting)
+        if not referenced:
+            continue
+        projections.append(
+            EventEvidenceProjection(
+                event_id=event.event_id,
+                retrieved_at=max(item.source.retrieved_at for item in referenced),
+                supporting_authority_tier=(
+                    min(item.authority_tier for item in supporting) if supporting else 255
+                ),
+                conflicting_authority_tier=(
+                    max(item.authority_tier for item in conflicting) if conflicting else None
+                ),
+            )
+        )
+    return tuple(projections)
 
 
 def _compare(

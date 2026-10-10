@@ -7,6 +7,7 @@ from inspect import signature
 import pytest
 from pydantic import TypeAdapter
 
+from finance_research_agent.application.packet_service import build_research_packet
 from finance_research_agent.domain import (
     eligibility,
     events,
@@ -31,7 +32,6 @@ from finance_research_agent.evaluation.domain_assertions import (
     EventRiskFixture,
     InstrumentEligibilityFixture,
     PlanBuildFixture,
-    PlanExpiryFixture,
     PositionSizingFixture,
     PriorObservationFixture,
     RegimeCalculationFixture,
@@ -392,42 +392,104 @@ def test_candidate_ranking_assertion_calls_real_correlation_selection() -> None:
     )
 
 
-def test_plan_expiry_assertion_calls_real_expiry_rules() -> None:
-    assertion = TypeAdapter(DomainAssertion).validate_json(
-        json.dumps(
-            {
-                "kind": "PLAN_EXPIRY",
-                "fixture_id": "S08_MATERIAL_REVISION",
-                "expected_fields": {
-                    "plan_status": "EXPIRED",
-                    "expiry_reasons": ["NEW_MATERIAL_INFORMATION"],
-                },
-            }
-        )
-    )
-    plan_inputs = trade_plan_fixtures.inputs.__wrapped__()
-    plan = plans.build_trade_plan(**plan_inputs)
-    bank = DomainFixtureBank(
-        {
-            assertion.fixture_id: PlanExpiryFixture(
-                plan=plan,
-                now_utc=plan.generated_at + timedelta(minutes=5),
-                current_price=None,
-                entry_trigger_satisfied=False,
-                invalidation_observed=False,
-                new_material_information=True,
-                earnings_blackout=False,
-                incompatible_regime=False,
-                stale_or_conflicting_data=False,
-                eligibility_changed=False,
-            )
-        }
-    )
+def test_s08_material_revision_assertion_covers_filing_packet_and_new_plan_gate() -> None:
+    scenario = load_evaluation_scenarios()[7]
+    assertion = scenario.domain_assertions[0]
 
-    outcome = execute_domain_assertion(assertion, bank)
+    assert {
+        "filing_available_only_in_r2",
+        "new_plan_status",
+        "new_plan_gate_reason_codes",
+    } <= assertion.expected_fields.model_fields_set
+
+    outcome = execute_domain_assertion(assertion, build_domain_fixture_bank())
 
     assert outcome.status == "PASS"
-    assert outcome.matched_fields == ("plan_status", "expiry_reasons")
+    assert {
+        "filing_available_only_in_r2",
+        "plan_status",
+        "expiry_reasons",
+        "new_plan_status",
+        "new_plan_gate_reason_codes",
+        "new_plan_matches_revision_2_packet",
+    } == set(outcome.matched_fields)
+
+
+def test_s08_filing_missing_from_revision_two_fails_expiry_and_replacement_plan() -> None:
+    scenario = load_evaluation_scenarios()[7]
+    assertion = scenario.domain_assertions[0]
+    fixtures = build_domain_fixture_bank()
+    fixture = fixtures.get(assertion.fixture_id)
+    revision_two = fixture.revision_two_packet
+    without_filing = build_research_packet(
+        run=revision_two.run,
+        evidence=tuple(
+            item
+            for item in revision_two.evidence
+            if item.evidence_id != fixture.material_filing_evidence_id
+        ),
+        snapshots=revision_two.market,
+        events=(),
+        metrics=revision_two.metrics,
+        gates=revision_two.gates,
+        candidates=revision_two.candidates,
+        exclusions=revision_two.candidate_exclusions,
+        plans=revision_two.deterministic_plan_inputs,
+        capabilities=revision_two.capability_states,
+        observations=revision_two.prior_plan_observations,
+        max_serialized_bytes=revision_two.synthesis_constraints.max_serialized_bytes,
+    )
+    records = dict(fixtures.records)
+    records[assertion.fixture_id] = replace(
+        fixture,
+        revision_two_packet=without_filing,
+    )
+
+    outcome = execute_domain_assertion(assertion, DomainFixtureBank(records))
+
+    assert outcome.status == "FAIL"
+    assert outcome.mismatched_fields == (
+        "plan_status",
+        "expiry_reasons",
+        "filing_available_only_in_r2",
+        "new_plan_status",
+        "new_plan_gate_reason_codes",
+        "new_plan_matches_revision_2_packet",
+    )
+
+
+def test_s08_missing_event_evidence_reference_fails_closed() -> None:
+    scenario = load_evaluation_scenarios()[7]
+    assertion = scenario.domain_assertions[0]
+    fixtures = build_domain_fixture_bank()
+    fixture = fixtures.get(assertion.fixture_id)
+    revision_two = fixture.revision_two_packet
+    dangling_reference_packet = build_research_packet(
+        run=revision_two.run,
+        evidence=tuple(
+            item
+            for item in revision_two.evidence
+            if item.evidence_id != fixture.material_filing_evidence_id
+        ),
+        snapshots=revision_two.market,
+        events=revision_two.events,
+        metrics=revision_two.metrics,
+        gates=revision_two.gates,
+        candidates=revision_two.candidates,
+        exclusions=revision_two.candidate_exclusions,
+        plans=revision_two.deterministic_plan_inputs,
+        capabilities=revision_two.capability_states,
+        observations=revision_two.prior_plan_observations,
+        max_serialized_bytes=revision_two.synthesis_constraints.max_serialized_bytes,
+    )
+    records = dict(fixtures.records)
+    records[assertion.fixture_id] = replace(
+        fixture,
+        revision_two_packet=dangling_reference_packet,
+    )
+
+    with pytest.raises(ValueError, match="references absent packet evidence"):
+        execute_domain_assertion(assertion, DomainFixtureBank(records))
 
 
 def test_plan_build_assertion_calls_real_plan_builder() -> None:

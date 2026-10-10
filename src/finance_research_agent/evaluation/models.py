@@ -208,6 +208,10 @@ class PlanBuildExpected(_ExpectedProjection):
 class PlanExpiryExpected(_ExpectedProjection):
     plan_status: PlanStatus | None = None
     expiry_reasons: tuple[Identifier, ...] | None = None
+    filing_available_only_in_r2: bool | None = None
+    new_plan_status: PlanStatus | None = None
+    new_plan_gate_reason_codes: tuple[Identifier, ...] | None = None
+    new_plan_matches_revision_2_packet: bool | None = None
 
 
 class PositionSizingExpected(_ExpectedProjection):
@@ -502,6 +506,19 @@ class EvaluationScenario(StrictModel):
                         "gate_reason_codes",
                         "alternate_plan_status",
                         "alternate_gate_reason_codes",
+                    },
+                ),
+            ),
+            FixtureSetId.S08_MATERIAL_REVISION: (
+                (
+                    PlanExpiryAssertion,
+                    {
+                        "plan_status",
+                        "expiry_reasons",
+                        "filing_available_only_in_r2",
+                        "new_plan_status",
+                        "new_plan_gate_reason_codes",
+                        "new_plan_matches_revision_2_packet",
                     },
                 ),
             ),
