@@ -341,6 +341,10 @@ class ScenarioOutcomeExpectation(StrictModel):
     """Exact service outcome for one primary or explicitly named subcase."""
 
     case_id: Identifier
+    requested_revision: Annotated[
+        int,
+        Field(ge=2, description="Explicit manual revision; None selects scheduled revision 1."),
+    ] | None = None
     execution_status: ExecutionStatus
     data_quality_status: DataQualityStatus | None
     delivery_status: DeliveryStatus
@@ -357,6 +361,15 @@ class ScenarioOutcomeExpectation(StrictModel):
             "Brief origin: DETERMINISTIC_REDUCED"
         ):
             raise ValueError("a reduced report reason requires the deterministic-reduced banner")
+        return self
+
+    @model_validator(mode="after")
+    def _manual_revision_has_manual_delivery(self) -> ScenarioOutcomeExpectation:
+        if (
+            self.requested_revision is not None
+            and self.delivery_status is not DeliveryStatus.MANUAL
+        ):
+            raise ValueError("an explicit revision must use MANUAL delivery")
         return self
 
     @model_validator(mode="after")
@@ -418,6 +431,25 @@ class EvaluationScenario(StrictModel):
     @model_validator(mode="after")
     def _scenario_relations(self) -> EvaluationScenario:
         _require_exact_capabilities(self.expected_capabilities)
+        current_scope_cases = (
+            self.current_scope_expectation.primary,
+            *self.current_scope_expectation.subcases,
+        )
+        revision_case = ScenarioAssertionId.REVISION_BYTES_IMMUTABLE in self.assertions
+        if revision_case and (
+            self.id is not ScenarioId.S08
+            or len(current_scope_cases) != 2
+            or current_scope_cases[0].requested_revision is not None
+            or current_scope_cases[1].requested_revision != 2
+            or current_scope_cases[1].delivery_status is not DeliveryStatus.MANUAL
+        ):
+            raise ValueError(
+                "revision immutability requires S08 scheduled r1 and manual r2 cases"
+            )
+        if not revision_case and any(
+            case.requested_revision is not None for case in current_scope_cases
+        ):
+            raise ValueError("an explicit revision requires REVISION_BYTES_IMMUTABLE")
         if any(
             assertion.fixture_id is not self.fixture_set
             for assertion in self.domain_assertions
@@ -506,6 +538,8 @@ class CurrentScopeServiceObservation(StrictModel):
     """Actual current-scope service output and immutable publication evidence."""
 
     scenario_id: ScenarioId
+    run_id: Identifier | None = None
+    run_revision: Annotated[int, Field(ge=1)] | None = None
     current_scope: ScenarioOutcomeExpectation
     artifact_hashes: FrozenMap[Identifier, Sha256]
     replay_json_matches: bool | None
@@ -520,9 +554,14 @@ class CurrentScopeServiceObservation(StrictModel):
     repair_count: Annotated[int, Field(ge=0, le=2)] = 0
     invalid_draft_never_published: bool | None = None
     provider_calls_before_synthesis: Annotated[int, Field(ge=0)] | None = None
+    prior_revision_bytes_immutable: bool | None = None
 
     @model_validator(mode="after")
     def _coherent_synthesis_evidence(self) -> CurrentScopeServiceObservation:
+        if (self.run_id is None) != (self.run_revision is None):
+            raise ValueError("published run id and revision evidence must appear together")
+        if self.prior_revision_bytes_immutable is not None and self.run_revision != 2:
+            raise ValueError("prior revision immutability evidence belongs to manual r2")
         if self.validation_attempt_count > len(self.synthesis_packet_hashes):
             raise ValueError("every validation attempt must have a recorded synthesis request")
         if self.repair_count > max(0, len(self.synthesis_packet_hashes) - 1):

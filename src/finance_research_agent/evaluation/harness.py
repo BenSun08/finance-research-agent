@@ -20,6 +20,7 @@ from finance_research_agent.application.publication_service import (
     validate_staged_brief,
 )
 from finance_research_agent.application.replay_service import (
+    ArtifactNotFoundError,
     _recorded_versions,
     replay_published_artifact,
 )
@@ -98,6 +99,8 @@ def execute_current_scope_scenario(
     scenario: EvaluationScenario,
     harness: EvaluationHarness,
     expectation: ScenarioOutcomeExpectation | None = None,
+    *,
+    dependencies: RunDependencies | None = None,
 ) -> CurrentScopeServiceObservation:
     """Prepare, reduce, publish, read, and replay one offline scenario run."""
 
@@ -106,15 +109,20 @@ def execute_current_scope_scenario(
     selected_expectation = ScenarioOutcomeExpectation.model_validate(
         selected_expectation, strict=True
     )
-    dependencies = harness.dependencies_factory(scenario, selected_expectation)
+    dependencies = dependencies or harness.dependencies_factory(scenario, selected_expectation)
     if type(dependencies) is not RunDependencies:
         raise TypeError("dependencies_factory must return RunDependencies")
-    prepared = prepare_research_packet(
-        PreparePremarketRunRequest(
-            market_date=harness.market_date,
-            requested_revision=None,
-            invocation=InvocationType.SCHEDULED,
+    selected_request = PreparePremarketRunRequest(
+        market_date=harness.market_date,
+        requested_revision=selected_expectation.requested_revision,
+        invocation=(
+            InvocationType.MANUAL
+            if selected_expectation.requested_revision is not None
+            else InvocationType.SCHEDULED
         ),
+    )
+    prepared = prepare_research_packet(
+        selected_request,
         dependencies,
     )
     repository = cast(PublicationRepository, dependencies.run_repository)
@@ -267,6 +275,7 @@ def _observe_skipped_scenario(
     record = repository.get_missed_run(market_date)
     observed = ScenarioOutcomeExpectation(
         case_id=selected_expectation.case_id,
+        requested_revision=selected_expectation.requested_revision,
         execution_status=ExecutionStatus.SKIPPED,
         data_quality_status=None,
         delivery_status=delivery_status,
@@ -310,6 +319,9 @@ def _observe_published_scenario(
     report = repository.get_report(run_id)
     if bundle is None or report is None or report != bundle.report_markdown:
         raise ValueError("published scenario artifacts could not be read consistently")
+    expected_revision = selected_expectation.requested_revision or 1
+    if bundle.run.revision != expected_revision:
+        raise ValueError("published scenario revision differs from its declared case")
     replay = replay_published_artifact(
         repository,
         run_id,
@@ -343,6 +355,7 @@ def _observe_published_scenario(
         error_codes = tuple(dict.fromkeys((*error_codes, *synthesis_trace.error_codes)))
     observed = ScenarioOutcomeExpectation(
         case_id=selected_expectation.case_id,
+        requested_revision=selected_expectation.requested_revision,
         execution_status=bundle.run.execution_status,
         data_quality_status=bundle.run.data_quality_status,
         delivery_status=bundle.run.delivery_status,
@@ -387,6 +400,8 @@ def _observe_published_scenario(
     )
     return CurrentScopeServiceObservation(
         scenario_id=scenario.id,
+        run_id=run_id,
+        run_revision=bundle.run.revision,
         current_scope=observed,
         artifact_hashes=FrozenMap(artifact_hashes),
         replay_json_matches=replay.json_matches,
@@ -455,6 +470,46 @@ def _verify_synthesis_trace(
             raise ValueError("synthesized publication differs from the final validation trace")
 
 
+def _prior_revision_is_unchanged(
+    repository: PublicationRepository,
+    prior: CurrentScopeServiceObservation,
+) -> bool:
+    """Verify the first revision still has its original bytes after a later publish."""
+    run_id = prior.run_id
+    expected_bundle_hash = prior.artifact_hashes.get("published_bundle")
+    expected_report_hash = prior.artifact_hashes.get("report_markdown")
+    if (
+        run_id is None
+        or prior.run_revision is None
+        or expected_bundle_hash is None
+        or expected_report_hash is None
+    ):
+        return False
+    receipt = repository.get_published_artifact(run_id)
+    bundle = repository.load_published_bundle(run_id)
+    if (
+        receipt is None
+        or receipt.bundle_sha256 != expected_bundle_hash
+        or receipt.markdown_sha256 != expected_report_hash
+        or bundle is None
+        or bundle.run.revision != prior.run_revision
+        or repository.get_report(run_id) is None
+    ):
+        return False
+    try:
+        replay = replay_published_artifact(repository, run_id, _recorded_versions(bundle))
+    except (ArtifactNotFoundError, TypeError, ValueError):
+        return False
+    return (
+        replay.json_matches
+        and replay.markdown_matches
+        and replay.stored_json_sha256 == expected_bundle_hash
+        and replay.replayed_json_sha256 == expected_bundle_hash
+        and replay.stored_markdown_sha256 == expected_report_hash
+        and replay.replayed_markdown_sha256 == expected_report_hash
+    )
+
+
 def _canonical_json_bytes(value: object) -> bytes:
     return json.dumps(
         value,
@@ -478,10 +533,42 @@ def execute_evaluation_scenario(
     )
     if scenario.domain_assertions and harness.domain_fixtures is None:
         raise ValueError("scenario domain assertions require an explicit DomainFixtureBank")
-    current_scope_outcomes = tuple(
-        execute_current_scope_scenario(scenario, harness, expectation)
-        for expectation in expectations
+    checks_revision_immutability = (
+        ScenarioAssertionId.REVISION_BYTES_IMMUTABLE in scenario.assertions
     )
+    if checks_revision_immutability and (
+        len(expectations) != 2
+        or expectations[0].requested_revision is not None
+        or expectations[1].requested_revision != 2
+        or expectations[1].delivery_status is not DeliveryStatus.MANUAL
+    ):
+        raise ValueError("revision immutability requires scheduled r1 and manual r2 cases")
+    if checks_revision_immutability:
+        dependencies = harness.dependencies_factory(scenario, expectations[0])
+        current_scope_results: list[CurrentScopeServiceObservation] = []
+        for index, expectation in enumerate(expectations):
+            observation = execute_current_scope_scenario(
+                scenario,
+                harness,
+                expectation,
+                dependencies=dependencies,
+            )
+            if index == 1:
+                repository = cast(PublicationRepository, dependencies.run_repository)
+                observation = observation.model_copy(
+                    update={
+                        "prior_revision_bytes_immutable": _prior_revision_is_unchanged(
+                            repository, current_scope_results[0]
+                        )
+                    }
+                )
+            current_scope_results.append(observation)
+        current_scope_outcomes = tuple(current_scope_results)
+    else:
+        current_scope_outcomes = tuple(
+            execute_current_scope_scenario(scenario, harness, expectation)
+            for expectation in expectations
+        )
     domain_outcomes: tuple[DomainAssertionOutcome, ...]
     if harness.domain_fixtures is None:
         domain_outcomes = ()
@@ -510,6 +597,21 @@ def execute_evaluation_scenario(
             for outcome in current_scope_outcomes
         )
         (passed if matches else failed).append(ScenarioAssertionId.PACKET_HASH_STABLE)
+    if ScenarioAssertionId.REVISION_BYTES_IMMUTABLE in declared:
+        matches = (
+            len(current_scope_outcomes) == 2
+            and current_scope_outcomes[0].run_revision == 1
+            and current_scope_outcomes[1].run_revision == 2
+            and all(
+                outcome.replay_json_matches is True
+                and outcome.replay_markdown_matches is True
+                for outcome in current_scope_outcomes
+            )
+            and current_scope_outcomes[1].prior_revision_bytes_immutable is True
+        )
+        (passed if matches else failed).append(
+            ScenarioAssertionId.REVISION_BYTES_IMMUTABLE
+        )
     if ScenarioAssertionId.INVALID_DRAFT_NEVER_PUBLISHED in declared:
         matches = all(
             outcome.invalid_draft_never_published is True

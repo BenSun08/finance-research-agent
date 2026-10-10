@@ -6,12 +6,14 @@ import pytest
 import yaml
 from pydantic import TypeAdapter, ValidationError
 
-from finance_research_agent.domain.enums import DataQualityStatus, PlanStatus
+from finance_research_agent.domain.enums import DataQualityStatus, DeliveryStatus, PlanStatus
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.regime import Regime
+from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.evaluation.models import (
     CandidateRankingAssertion,
     CandidateScoreAssertion,
+    CurrentScopeServiceObservation,
     DomainAssertion,
     EvaluationScenario,
     EventRiskAssertion,
@@ -92,6 +94,70 @@ def test_loader_rejects_duplicate_scenario_ids(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="S01 through S25 in order"):
         load_evaluation_scenarios(path)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    (
+        ("remove_assertion", "explicit revision requires REVISION_BYTES_IMMUTABLE"),
+        ("change_revision", "scheduled r1 and manual r2 cases"),
+        ("change_delivery", "explicit revision must use MANUAL delivery"),
+    ),
+)
+def test_s08_revision_manifest_rejects_incoherent_case_contract(
+    change: str, message: str
+) -> None:
+    payload = load_evaluation_scenarios()[7].model_dump(mode="python")
+    if change == "remove_assertion":
+        payload["assertions"] = tuple(
+            assertion
+            for assertion in payload["assertions"]
+            if assertion is not ScenarioAssertionId.REVISION_BYTES_IMMUTABLE
+        )
+    elif change == "change_revision":
+        payload["current_scope_expectation"]["subcases"][0]["requested_revision"] = 3
+    else:
+        payload["current_scope_expectation"]["subcases"][0]["delivery_status"] = (
+            DeliveryStatus.ON_TIME
+        )
+
+    with pytest.raises(ValidationError, match=message):
+        EvaluationScenario.model_validate(payload, strict=True)
+
+
+@pytest.mark.parametrize(
+    ("run_revision", "prior_revision_bytes_immutable", "message"),
+    (
+        (None, None, "published run id and revision evidence must appear together"),
+        (1, True, "prior revision immutability evidence belongs to manual r2"),
+    ),
+)
+def test_current_scope_observation_rejects_incoherent_revision_evidence(
+    run_revision: int | None,
+    prior_revision_bytes_immutable: bool | None,
+    message: str,
+) -> None:
+    scenario = load_evaluation_scenarios()[0]
+    observation = CurrentScopeServiceObservation(
+        scenario_id=scenario.id,
+        current_scope=scenario.current_scope_expectation.primary,
+        artifact_hashes=FrozenMap({}),
+        replay_json_matches=None,
+        replay_markdown_matches=None,
+        source_limitations_adjacent=None,
+        watchlist_exclusions_visible=None,
+        provider_call_count=0,
+        missed_run_record_durable=False,
+    )
+    payload = observation.model_dump(mode="python")
+    payload.update(
+        run_id="20260928-r1",
+        run_revision=run_revision,
+        prior_revision_bytes_immutable=prior_revision_bytes_immutable,
+    )
+
+    with pytest.raises(ValidationError, match=message):
+        CurrentScopeServiceObservation.model_validate(payload, strict=True)
 
 
 def test_loader_rejects_unknown_scenario_fields(tmp_path: Path) -> None:

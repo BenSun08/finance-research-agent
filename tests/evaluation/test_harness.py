@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from hashlib import sha256
@@ -5,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from finance_research_agent.adapters.filesystem import FileSystemRunRepository
 from finance_research_agent.application.packet_service import build_research_packet
 from finance_research_agent.application.reduced_report import render_reduced_report_base
 from finance_research_agent.domain.enums import (
@@ -16,6 +18,8 @@ from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     CapabilityState,
     EvidenceItem,
+    PublishedArtifact,
+    PublishedRunBundle,
     SourceObservation,
 )
 from finance_research_agent.domain.regime import RegimePolicy
@@ -41,6 +45,7 @@ from finance_research_agent.evaluation.models import (
 )
 from finance_research_agent.evaluation.scenarios import load_evaluation_scenarios
 from tests.application.test_premarket_preparation import MarketData, dependencies
+from tests.evaluation.fixture_bank import build_domain_fixture_bank
 from tests.unit import test_setups as setup_fixtures
 
 
@@ -108,6 +113,75 @@ def test_evaluation_runner_records_current_scope_and_domain_results(tmp_path: Pa
     assert outcome.assertions_pending == ()
     assert outcome.artifact_hashes["PRIMARY.published_bundle"]
     assert outcome.current_scope_outcomes[0].source_limitations_adjacent is True
+
+
+def test_s08_runs_two_revisions_and_proves_the_first_publication_unchanged(
+    tmp_path: Path,
+) -> None:
+    scenario = load_evaluation_scenarios()[7]
+    harness = EvaluationHarness(
+        dependencies_factory=lambda current_scenario, expectation: dependencies(tmp_path),
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        domain_fixtures=build_domain_fixture_bank(),
+    )
+
+    outcome = execute_evaluation_scenario(scenario, harness)
+
+    assert len(outcome.current_scope_outcomes) == 2
+    first, second = outcome.current_scope_outcomes
+    assert first.run_revision == 1
+    assert second.run_revision == 2
+    assert first.current_scope == scenario.current_scope_expectation.primary
+    assert second.current_scope == scenario.current_scope_expectation.subcases[0]
+    assert first.replay_json_matches is True
+    assert first.replay_markdown_matches is True
+    assert second.replay_json_matches is True
+    assert second.replay_markdown_matches is True
+    assert second.prior_revision_bytes_immutable is True
+    assert ScenarioAssertionId.REVISION_BYTES_IMMUTABLE in outcome.assertions_passed
+    assert ScenarioAssertionId.REVISION_BYTES_IMMUTABLE not in outcome.assertions_pending
+    assert ScenarioAssertionId.REVISION_BYTES_IMMUTABLE not in outcome.assertions_failed
+
+
+def test_s08_fails_immutability_assertion_when_r1_receipt_disappears_after_r2(
+    tmp_path: Path,
+) -> None:
+    class HidingFirstRevisionReceipt(FileSystemRunRepository):
+        def __init__(self, data_root: Path) -> None:
+            super().__init__(data_root)
+            self.first_revision_id: str | None = None
+            self.hide_first_revision = False
+
+        def publish_atomically(self, bundle: PublishedRunBundle) -> PublishedArtifact:
+            receipt = super().publish_atomically(bundle)
+            if bundle.run.revision == 1:
+                self.first_revision_id = bundle.run.run_id
+            elif bundle.run.revision == 2:
+                self.hide_first_revision = True
+            return receipt
+
+        def get_published_artifact(self, run_id: str) -> PublishedArtifact | None:
+            if self.hide_first_revision and run_id == self.first_revision_id:
+                return None
+            return super().get_published_artifact(run_id)
+
+    scenario = load_evaluation_scenarios()[7]
+    deps = replace(
+        dependencies(tmp_path),
+        run_repository=HidingFirstRevisionReceipt(tmp_path),
+    )
+    harness = EvaluationHarness(
+        dependencies_factory=lambda current_scenario, expectation: deps,
+        market_date=date(2026, 9, 28),
+        reduced_report_reason=ReducedReportReason.SYNTHESIS_UNAVAILABLE,
+        domain_fixtures=build_domain_fixture_bank(),
+    )
+
+    outcome = execute_evaluation_scenario(scenario, harness)
+
+    assert outcome.current_scope_outcomes[1].prior_revision_bytes_immutable is False
+    assert outcome.assertions_failed == (ScenarioAssertionId.REVISION_BYTES_IMMUTABLE,)
 
 
 def test_current_scope_harness_checks_watchlist_exclusions_in_rendered_report(

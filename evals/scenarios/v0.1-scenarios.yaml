@@ -1006,7 +1006,57 @@ scenarios:
       error_codes: []
       recoverability: true
       reduced_report_reason: SYNTHESIS_UNAVAILABLE
-    subcases: []
+    subcases:
+    - case_id: REVISION_2
+      requested_revision: 2
+      execution_status: PUBLISHED
+      data_quality_status: DEGRADED
+      delivery_status: MANUAL
+      capabilities:
+      - capability: MARKET_SUMMARY_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids: []
+      - capability: REGIME_CLASSIFICATION_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids: []
+      - capability: WATCHLIST_METRICS_AVAILABLE
+        available: true
+        reason_codes: []
+        evidence_ids: []
+      - capability: EVENT_RISK_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
+      - capability: SETUP_DETECTION_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
+      - capability: PLAN_DRAFT_AVAILABLE
+        available: false
+        reason_codes:
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
+      - capability: POSITION_SIZING_AVAILABLE
+        available: false
+        reason_codes:
+        - SIZING_UNAVAILABLE
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
+      - capability: PORTFOLIO_HEAT_CHECK_AVAILABLE
+        available: false
+        reason_codes:
+        - PORTFOLIO_HEAT_UNAVAILABLE
+        - SOURCE_NOT_CONFIGURED
+        evidence_ids: []
+      plan_states: []
+      report_banner: 'Brief origin: DETERMINISTIC_REDUCED'
+      error_codes: []
+      recoverability: true
+      reduced_report_reason: SYNTHESIS_UNAVAILABLE
   domain_assertions:
   - kind: PLAN_EXPIRY
     fixture_id: S08_MATERIAL_REVISION
