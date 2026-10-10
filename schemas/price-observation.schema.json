@@ -54,7 +54,7 @@
     },
     "observed_at": {
       "format": "date-time",
-      "pattern": "(?:Z|\\+00:00)$",
+      "pattern": "(?:[Zz]|\\+00:00)$",
       "title": "Observed At",
       "type": "string"
     },
@@ -79,7 +79,7 @@
     },
     "retrieved_at": {
       "format": "date-time",
-      "pattern": "(?:Z|\\+00:00)$",
+      "pattern": "(?:[Zz]|\\+00:00)$",
       "title": "Retrieved At",
       "type": "string"
     },

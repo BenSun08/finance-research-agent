@@ -134,7 +134,7 @@ def test_schema_preserves_wire_decimal_and_provenance_constraints(tmp_path: Path
     for invalid in ("0", "0.0", "-1", "NaN", "Infinity", "price", "1e2"):
         assert not re.fullmatch(properties["value"]["pattern"], invalid)
     assert properties["observed_at"]["format"] == "date-time"
-    assert properties["observed_at"]["pattern"] == r"(?:Z|\+00:00)$"
+    assert properties["observed_at"]["pattern"] == r"(?:[Zz]|\+00:00)$"
     assert properties["quality_flags"]["uniqueItems"] is True
     assert schema["$defs"]["Coverage"]["enum"] == ["single_exchange", "consolidated", "unknown"]
     evidence_schema = json.loads((tmp_path / "evidence-item.schema.json").read_bytes())
@@ -173,7 +173,7 @@ def test_schema_preserves_wire_decimal_and_provenance_constraints(tmp_path: Path
         "type": "string",
     }
     assert metric_properties["calculated_at"]["format"] == "date-time"
-    assert metric_properties["calculated_at"]["pattern"] == r"(?:Z|\+00:00)$"
+    assert metric_properties["calculated_at"]["pattern"] == r"(?:[Zz]|\+00:00)$"
     assert "input_evidence_ids" in metric_schema["required"]
     market_schema = json.loads((tmp_path / "market-snapshot.schema.json").read_bytes())
     assert market_schema["properties"]["completed_daily_bars"]["type"] == "array"
@@ -245,6 +245,9 @@ def test_feedback_json_schemas_enforce_versioned_runtime_requirements() -> None:
         }
     )
     assert review_validator.is_valid(full_review)
+    assert review_validator.is_valid(
+        {**full_review, "reviewed_at": "2026-10-10t13:00:00z"}
+    )
     assert not review_validator.is_valid(
         {**full_review, "schema_version": "0.1"}
     )
@@ -286,6 +289,16 @@ def test_feedback_json_schemas_enforce_versioned_runtime_requirements() -> None:
             "schema_version": "0.2",
             "executive_review_duration_seconds": 30,
             "citation_reviews": [full_review],
+        }
+    )
+    assert request_validator.is_valid(
+        {
+            **legacy_request,
+            "schema_version": "0.2",
+            "executive_review_duration_seconds": 30,
+            "citation_reviews": [
+                {**full_review, "reviewed_at": "2026-10-10t13:00:00z"}
+            ],
         }
     )
     base_identification = {

@@ -193,7 +193,7 @@
           "anyOf": [
             {
               "format": "date-time",
-              "pattern": "(?:Z|\\+00:00)$",
+              "pattern": "(?:[Zz]|\\+00:00)$",
               "type": "string"
             },
             {
