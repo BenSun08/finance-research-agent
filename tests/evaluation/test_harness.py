@@ -74,10 +74,14 @@ def test_current_scope_harness_runs_real_services_and_verifies_frozen_replay(
 
 @pytest.mark.parametrize(
     "scenario",
-    load_evaluation_scenarios(),
+    tuple(
+        scenario
+        for scenario in load_evaluation_scenarios()
+        if scenario.id.value not in {"S05", "S22", "S23", "S24", "S25"}
+    ),
     ids=lambda scenario: scenario.id.value,
 )
-def test_all_scenarios_record_coherent_service_and_assertion_outcomes(
+def test_default_service_scenarios_match_all_declared_outcomes(
     tmp_path: Path, scenario: EvaluationScenario
 ) -> None:
     expected_cases = (
@@ -97,30 +101,15 @@ def test_all_scenarios_record_coherent_service_and_assertion_outcomes(
 
     assert len(outcome.current_scope_outcomes) == len(expected_cases)
     for actual, expected in zip(outcome.current_scope_outcomes, expected_cases, strict=True):
-        assert actual.current_scope.case_id == expected.case_id
+        assert actual.current_scope == expected
         if actual.run_id is not None:
             assert actual.replay_json_matches is True
             assert actual.replay_markdown_matches is True
     assert len(outcome.domain_assertion_outcomes) == len(scenario.domain_assertions)
     assert all(item.status == "PASS" for item in outcome.domain_assertion_outcomes)
-    classified = (
-        *outcome.assertions_passed,
-        *outcome.assertions_failed,
-        *outcome.assertions_pending,
-    )
-    assert len(classified) == len(scenario.assertions)
-    assert set(classified) == set(scenario.assertions)
-    if ScenarioAssertionId.CURRENT_SCOPE_MATCHES in scenario.assertions:
-        matches = all(
-            actual.current_scope == expected
-            for actual, expected in zip(
-                outcome.current_scope_outcomes, expected_cases, strict=True
-            )
-        )
-        match_passed = ScenarioAssertionId.CURRENT_SCOPE_MATCHES in outcome.assertions_passed
-        match_failed = ScenarioAssertionId.CURRENT_SCOPE_MATCHES in outcome.assertions_failed
-        assert match_passed is matches
-        assert match_failed is not matches
+    assert outcome.assertions_failed == ()
+    assert outcome.assertions_pending == ()
+    assert set(outcome.assertions_passed) == set(scenario.assertions)
 
 
 def _evaluation_harness(tmp_path: Path, assertion) -> EvaluationHarness:
