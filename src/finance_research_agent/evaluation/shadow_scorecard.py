@@ -3,26 +3,145 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated, Protocol
+from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field, computed_field, model_validator
 
-from finance_research_agent.domain.models import Identifier, PublishedRunBundle, Sha256, StrictModel
+from finance_research_agent.domain.models import (
+    Identifier,
+    PublishedArtifact,
+    PublishedRunBundle,
+    Sha256,
+    StoredRun,
+    StrictModel,
+)
 from finance_research_agent.domain.types import FrozenMap
 
 if TYPE_CHECKING:
     from finance_research_agent.application.feedback_service import RecordedFeedback
+    from finance_research_agent.application.replay_service import ArtifactReplayResult
     from finance_research_agent.domain.market_calendar import TradingCalendar
+    from finance_research_agent.evaluation.shadow_records import (
+        OperatorReleaseAttestation,
+        ReleaseCheckReceipt,
+        ShadowDayObservation,
+    )
 
 
-class ShadowEvaluationEvidence(Protocol):
-    """Marker for a snapshot returned by the verified evidence loader."""
+_SHADOW_EVIDENCE_FACTORY_TOKEN = object()
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedShadowRunEvidence:
+    """Run attempt together with its independently checked publication, if any."""
+
+    stored_run: StoredRun
+    published_bundle: PublishedRunBundle | None = None
+    published_artifact: PublishedArtifact | None = None
+    replay_result: ArtifactReplayResult | None = None
+
+    def __post_init__(self) -> None:
+        publication_values = (
+            self.published_bundle,
+            self.published_artifact,
+            self.replay_result,
+        )
+        if self.stored_run.published != all(value is not None for value in publication_values):
+            raise ValueError("published run evidence requires a complete verified publication")
+        if not self.stored_run.published and any(value is not None for value in publication_values):
+            raise ValueError("unpublished run evidence cannot include publication values")
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ShadowEvaluationEvidence:
+    """Immutable snapshot that can only be constructed by the verified loader."""
+
+    period: ShadowPeriod
+    origin: ShadowEvaluationOrigin | None
+    verified_runs: tuple[VerifiedShadowRunEvidence, ...]
+    feedback_records: tuple[RecordedFeedback, ...]
+    observations: tuple[ShadowDayObservation, ...]
+    operator_attestations: tuple[OperatorReleaseAttestation, ...]
+    release_check_receipts: tuple[ReleaseCheckReceipt, ...]
+    source_commit_sha256: Sha256 | None
+    source_tree_sha256: Sha256 | None
+    evidence_hashes: tuple[Sha256, ...]
+    _loader_token: object = field(repr=False, compare=False)
+
+    def __init__(
+        self,
+        *,
+        loader_token: object,
+        period: ShadowPeriod,
+        origin: ShadowEvaluationOrigin | None,
+        verified_runs: tuple[VerifiedShadowRunEvidence, ...],
+        feedback_records: tuple[RecordedFeedback, ...],
+        observations: tuple[ShadowDayObservation, ...],
+        operator_attestations: tuple[OperatorReleaseAttestation, ...],
+        release_check_receipts: tuple[ReleaseCheckReceipt, ...],
+        source_commit_sha256: Sha256 | None,
+        source_tree_sha256: Sha256 | None,
+        evidence_hashes: tuple[Sha256, ...],
+    ) -> None:
+        if loader_token is not _SHADOW_EVIDENCE_FACTORY_TOKEN:
+            raise ValueError("shadow evaluation evidence must come from its verified loader")
+        for name, value in (
+            ("verified_runs", verified_runs),
+            ("feedback_records", feedback_records),
+            ("observations", observations),
+            ("operator_attestations", operator_attestations),
+            ("release_check_receipts", release_check_receipts),
+            ("evidence_hashes", evidence_hashes),
+        ):
+            if type(value) is not tuple:
+                raise TypeError(f"{name} must be an immutable tuple")
+            object.__setattr__(self, name, value)
+        object.__setattr__(self, "period", period)
+        object.__setattr__(self, "origin", origin)
+        object.__setattr__(self, "source_commit_sha256", source_commit_sha256)
+        object.__setattr__(self, "source_tree_sha256", source_tree_sha256)
+        object.__setattr__(self, "_loader_token", loader_token)
 
     @property
-    def evidence_hashes(self) -> tuple[Sha256, ...]: ...
+    def published_runs(self) -> tuple[PublishedRunBundle, ...]:
+        return tuple(
+            item.published_bundle
+            for item in self.verified_runs
+            if item.published_bundle is not None
+        )
+
+
+def _create_shadow_evaluation_evidence(
+    *,
+    period: ShadowPeriod,
+    origin: ShadowEvaluationOrigin | None,
+    verified_runs: tuple[VerifiedShadowRunEvidence, ...],
+    feedback_records: tuple[RecordedFeedback, ...],
+    observations: tuple[ShadowDayObservation, ...],
+    operator_attestations: tuple[OperatorReleaseAttestation, ...],
+    release_check_receipts: tuple[ReleaseCheckReceipt, ...],
+    source_commit_sha256: Sha256 | None,
+    source_tree_sha256: Sha256 | None,
+    evidence_hashes: tuple[Sha256, ...],
+) -> ShadowEvaluationEvidence:
+    """Internal constructor reserved for the application evidence loader."""
+    return ShadowEvaluationEvidence(
+        loader_token=_SHADOW_EVIDENCE_FACTORY_TOKEN,
+        period=period,
+        origin=origin,
+        verified_runs=verified_runs,
+        feedback_records=feedback_records,
+        observations=observations,
+        operator_attestations=operator_attestations,
+        release_check_receipts=release_check_receipts,
+        source_commit_sha256=source_commit_sha256,
+        source_tree_sha256=source_tree_sha256,
+        evidence_hashes=evidence_hashes,
+    )
 
 
 NonNegativeCount = Annotated[int, Field(ge=0)]
@@ -213,5 +332,6 @@ __all__ = [
     "ShadowGateId",
     "ShadowPeriod",
     "ShadowScorecard",
+    "VerifiedShadowRunEvidence",
     "build_shadow_scorecard",
 ]

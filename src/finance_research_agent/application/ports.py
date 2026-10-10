@@ -252,8 +252,6 @@ class OperatorReleaseAttestationRepository(Protocol):
 
 
 class ReleaseEvidenceReader(Protocol):
-    """Read fixed-workflow CI receipts for one exact source revision."""
+    """Read receipts selected for the reader's configured fixed repository/workflow."""
 
-    def list_receipts_for_source(
-        self, source_commit_sha256: str, source_tree_sha256: str
-    ) -> tuple[ReleaseCheckReceipt, ...]: ...
+    def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]: ...
