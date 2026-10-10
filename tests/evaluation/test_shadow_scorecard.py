@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import ValidationError
 
+from finance_research_agent.application.feedback_service import RecordedFeedback
 from finance_research_agent.domain.models import (
     PublishedArtifact,
     PublishedRunBundle,
@@ -78,8 +79,11 @@ class _EmptyArtifacts:
 
 
 class _EmptyFeedback:
-    def list_feedback(self) -> tuple[()]:
-        return ()
+    def __init__(self, records: tuple[RecordedFeedback, ...] = ()) -> None:
+        self.records = records
+
+    def list_feedback(self) -> tuple[RecordedFeedback, ...]:
+        return self.records
 
 
 class _EmptyObservations:
@@ -362,6 +366,16 @@ def test_personal_research_publication_counts_once_inside_new_york_target_window
         session_id="session-publication-day",
         availability=ShadowDayAvailability.ONLINE,
     )
+    feedback_record = RecordedFeedback(
+        feedback_id="feedback-publication-day",
+        run_id=bundle.run.run_id,
+        bundle_sha256=artifact.bundle_sha256,
+        recorded_at=datetime(2026, 8, 26, 16, tzinfo=UTC),
+        clarity_score=4,
+        evidence_score=4,
+        usefulness_score=3,
+        citation_reviews=(),
+    )
     runs = _EmptyRuns((StoredRun(run=bundle.run, published=True),))
     artifacts = _EmptyArtifacts()
     artifacts.bundle = bundle
@@ -371,7 +385,7 @@ def test_personal_research_publication_counts_once_inside_new_york_target_window
         period,
         runs,  # type: ignore[arg-type]
         artifacts,  # type: ignore[arg-type]
-        _EmptyFeedback(),  # type: ignore[arg-type]
+        _EmptyFeedback((feedback_record,)),  # type: ignore[arg-type]
         _EmptyObservations((observation,)),  # type: ignore[arg-type]
         _EmptyAttestations(),  # type: ignore[arg-type]
         _EmptyReleaseEvidence(),  # type: ignore[arg-type]
@@ -394,6 +408,36 @@ def test_personal_research_publication_counts_once_inside_new_york_target_window
     )
     assert timely_gate.status is EvaluationGateStatus.PASS
     assert timely_gate.measured_value == 1
+    changed_bundle = bundle.model_copy(
+        update={"report_markdown": bundle.report_markdown + " changed"}
+    )
+    with pytest.raises(ValueError, match="published runs must exactly match verified evidence"):
+        build_shadow_scorecard(
+            (changed_bundle,), evidence.feedback_records, _Calendar(), evidence=evidence
+        )
+    with pytest.raises(ValueError, match="published runs must exactly match verified evidence"):
+        build_shadow_scorecard((), evidence.feedback_records, _Calendar(), evidence=evidence)
+    with pytest.raises(ValueError, match="published run identifiers must be unique"):
+        build_shadow_scorecard(
+            (bundle, bundle), evidence.feedback_records, _Calendar(), evidence=evidence
+        )
+    changed_feedback = evidence.feedback_records[0].model_copy(update={"usefulness_score": 4})
+    with pytest.raises(ValueError, match="feedback must exactly match verified evidence"):
+        build_shadow_scorecard(
+            evidence.published_runs,
+            (changed_feedback,),
+            _Calendar(),
+            evidence=evidence,
+        )
+    with pytest.raises(ValueError, match="feedback must exactly match verified evidence"):
+        build_shadow_scorecard(evidence.published_runs, (), _Calendar(), evidence=evidence)
+    with pytest.raises(ValueError, match="feedback identifiers must be unique"):
+        build_shadow_scorecard(
+            evidence.published_runs,
+            (feedback_record, feedback_record),
+            _Calendar(),
+            evidence=evidence,
+        )
 
 
 def test_verified_scorecard_can_end_on_last_representable_calendar_date() -> None:
@@ -469,3 +513,64 @@ def test_verified_scorecard_uses_latest_hash_linked_exclusion_correction() -> No
     )
     assert timely_gate.status is EvaluationGateStatus.PENDING
     assert timely_gate.reason_codes == ("NO_ELIGIBLE_TRADING_DAYS",)
+
+
+def test_verified_scorecard_rejects_publication_not_in_loader_snapshot(valid_packet) -> None:
+    from finance_research_agent.application.shadow_evidence_loader import (
+        load_shadow_evaluation_evidence,
+    )
+
+    period = ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 26))
+    evidence = load_shadow_evaluation_evidence(
+        period,
+        _EmptyRuns(),  # type: ignore[arg-type]
+        _EmptyArtifacts(),  # type: ignore[arg-type]
+        _EmptyFeedback(),  # type: ignore[arg-type]
+        _EmptyObservations(()),  # type: ignore[arg-type]
+        _EmptyAttestations(),  # type: ignore[arg-type]
+        _EmptyReleaseEvidence(),  # type: ignore[arg-type]
+    )
+    unverified_bundle = PublishedRunBundle(run=valid_packet.run)
+
+    with pytest.raises(ValueError, match="published runs must exactly match verified evidence"):
+        build_shadow_scorecard(
+            (unverified_bundle,),
+            (),
+            _Calendar(),
+            evidence=evidence,
+        )
+
+
+def test_verified_scorecard_rejects_feedback_not_in_loader_snapshot(valid_packet) -> None:
+    from finance_research_agent.application.shadow_evidence_loader import (
+        load_shadow_evaluation_evidence,
+    )
+
+    period = ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 26))
+    evidence = load_shadow_evaluation_evidence(
+        period,
+        _EmptyRuns(),  # type: ignore[arg-type]
+        _EmptyArtifacts(),  # type: ignore[arg-type]
+        _EmptyFeedback(),  # type: ignore[arg-type]
+        _EmptyObservations(()),  # type: ignore[arg-type]
+        _EmptyAttestations(),  # type: ignore[arg-type]
+        _EmptyReleaseEvidence(),  # type: ignore[arg-type]
+    )
+    unverified_feedback = RecordedFeedback(
+        feedback_id="feedback-unverified",
+        run_id=valid_packet.run.run_id,
+        bundle_sha256="a" * 64,
+        recorded_at=datetime(2026, 8, 26, 16, tzinfo=UTC),
+        clarity_score=3,
+        evidence_score=3,
+        usefulness_score=3,
+        citation_reviews=(),
+    )
+
+    with pytest.raises(ValueError, match="feedback must exactly match verified evidence"):
+        build_shadow_scorecard(
+            (),
+            (unverified_feedback,),
+            _Calendar(),
+            evidence=evidence,
+        )

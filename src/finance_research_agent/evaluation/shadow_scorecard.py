@@ -7,10 +7,11 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import StrEnum
+from hashlib import sha256
 from typing import TYPE_CHECKING, Annotated
 from zoneinfo import ZoneInfo
 
-from pydantic import Field, computed_field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from finance_research_agent.domain.enums import BriefOrigin
 from finance_research_agent.domain.models import (
@@ -22,7 +23,7 @@ from finance_research_agent.domain.models import (
     StoredRun,
     StrictModel,
 )
-from finance_research_agent.domain.types import FrozenMap
+from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 
 if TYPE_CHECKING:
     from finance_research_agent.application.feedback_service import RecordedFeedback
@@ -153,6 +154,34 @@ def _create_shadow_evaluation_evidence(
         source_tree_sha256=source_tree_sha256,
         evidence_hashes=evidence_hashes,
     )
+
+
+def _canonical_content_index(
+    records: Sequence[object], *, identity_field: str, record_kind: str
+) -> dict[str, str]:
+    content_by_id: dict[str, str] = {}
+    for record in records:
+        if not isinstance(record, BaseModel):
+            raise TypeError(f"{record_kind} entries must be validated model records")
+        identifier = getattr(record, identity_field, None)
+        if not isinstance(identifier, str):
+            raise TypeError(f"{record_kind} entries must expose {identity_field}")
+        if identifier in content_by_id:
+            raise ValueError(f"{record_kind} identifiers must be unique")
+        content_by_id[identifier] = sha256(canonical_bytes(record)).hexdigest()
+    return content_by_id
+
+
+def _published_content_index(records: Sequence[object]) -> dict[str, str]:
+    content_by_id: dict[str, str] = {}
+    for record in records:
+        if not isinstance(record, PublishedRunBundle):
+            raise TypeError("published runs must be PublishedRunBundle values")
+        identifier = record.run.run_id
+        if identifier in content_by_id:
+            raise ValueError("published run identifiers must be unique")
+        content_by_id[identifier] = sha256(canonical_bytes(record)).hexdigest()
+    return content_by_id
 
 
 NonNegativeCount = Annotated[int, Field(ge=0)]
@@ -330,6 +359,19 @@ def build_shadow_scorecard(
             period_end=dates[-1] if dates else None,
             gate_results=gates,
         )
+
+    if _published_content_index(published_runs) != _published_content_index(
+        evidence.published_runs
+    ):
+        raise ValueError("published runs must exactly match verified evidence")
+    if _canonical_content_index(
+        feedback, identity_field="feedback_id", record_kind="feedback"
+    ) != _canonical_content_index(
+        evidence.feedback_records,
+        identity_field="feedback_id",
+        record_kind="feedback",
+    ):
+        raise ValueError("feedback must exactly match verified evidence")
 
     del published_runs, feedback
     period = evidence.period
