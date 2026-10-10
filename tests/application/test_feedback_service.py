@@ -349,6 +349,33 @@ def test_full_review_rejects_packet_or_brief_from_another_run(
     assert store.records == []
 
 
+def test_full_review_rejects_duplicate_packet_metric_ids(
+    valid_packet, valid_brief_draft
+) -> None:
+    calculation = next(claim for claim in valid_brief_draft.claims if claim.claim_id == "claim-sma")
+    packet = _rebuild_packet(
+        valid_packet,
+        metrics=(*valid_packet.metrics, valid_packet.metrics[0]),
+    )
+    bundle = _published_bundle(packet, valid_brief_draft)
+    assert calculation.claim_id in select_citation_entailment_sample(bundle)
+    service, _, store = _service(
+        bundle=bundle, published_at=RECORDED_AT - timedelta(minutes=5)
+    )
+    request = _request(
+        run_id=bundle.run.run_id,
+        schema_version="0.2",
+        citation_reviews=(
+            _full_review("evidence-00", calculation.claim_id, RECORDED_AT),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="duplicate metric ids"):
+        service.record(request)
+
+    assert store.records == []
+
+
 def test_full_review_rejects_a_claim_outside_the_deterministic_sample(
     valid_packet, valid_brief_draft
 ) -> None:

@@ -234,6 +234,8 @@ class RunFeedbackService:
                 raise ValueError("published brief has duplicate claim ids")
             claims[brief_claim.claim_id] = brief_claim
         metrics = {metric.metric_id: metric for metric in packet.metrics}
+        if len(metrics) != len(packet.metrics):
+            raise ValueError("published packet has duplicate metric ids")
         allowed: set[tuple[str, str]] = set()
         for selected_claim_id in selected_claim_ids:
             pending = [selected_claim_id]
