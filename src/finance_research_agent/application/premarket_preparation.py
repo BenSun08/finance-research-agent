@@ -56,7 +56,12 @@ from finance_research_agent.domain.enums import (
 )
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.events import assess_event_risk
-from finance_research_agent.domain.market_calendar import NEW_YORK, RunWindowDecision, format_run_id
+from finance_research_agent.domain.market_calendar import (
+    NEW_YORK,
+    RunWindowDecision,
+    format_run_id,
+    resolve_run_window,
+)
 from finance_research_agent.domain.models import (
     CapabilityState,
     EvidenceItem,
@@ -353,8 +358,6 @@ def prepare_research_packet(
         day = request.market_date or dependencies.clock.now_utc().astimezone(NEW_YORK).date()
         existing = repository.load(format_run_id(day, request.requested_revision))
         if existing is not None and existing.published:
-            from finance_research_agent.domain.market_calendar import resolve_run_window
-
             decision = resolve_run_window(
                 existing.run.invoked_at,
                 dependencies.calendar,
@@ -369,6 +372,52 @@ def prepare_research_packet(
     initialized = prepare_premarket_run(request, dependencies)
     stored = initialized.stored_run
     decision = initialized.window_decision
+    if stored is not None and not stored.published:
+        retry_at = dependencies.clock.now_utc()
+        try:
+            current_decision = resolve_run_window(
+                retry_at,
+                dependencies.calendar,
+                stored.run.market_date,
+                InvocationType.MANUAL
+                if stored.run.delivery_status is DeliveryStatus.MANUAL
+                else InvocationType.SCHEDULED,
+            )
+        except RuntimeError as error:
+            if not str(error).startswith(f"{ErrorCode.MARKET_CALENDAR_UNAVAILABLE}:"):
+                raise
+            return _operational_failure(
+                repository,
+                stored,
+                decision,
+                ErrorCode.MARKET_CALENDAR_UNAVAILABLE,
+                retry_at,
+            )
+        if current_decision.missed_record_only:
+            regular_close_at = dependencies.calendar.session_open_close(
+                stored.run.market_date
+            )[1]
+            repository.record_missed_run(
+                MissedRunRecord(
+                    market_date=stored.run.market_date,
+                    detected_at=retry_at,
+                    regular_close_at=utc_datetime(regular_close_at),
+                    reason_code="MISSED_WINDOW",
+                )
+            )
+            return PreparedPremarketRunResult(
+                outcome="SKIPPED", window_decision=current_decision
+            )
+        if current_decision.publish_missed_report:
+            # Keep the run's first immutable window/context while ending its
+            # resumable preparation with an explicit missed-window report.
+            return _operational_failure(
+                repository,
+                stored,
+                decision,
+                ErrorCode.MISSED_WINDOW,
+                retry_at,
+            )
     if stored is None:
         if decision.missed_record_only:
             regular_close_at = dependencies.calendar.session_open_close(

@@ -548,6 +548,19 @@ class FileSystemRunRepository:
             name: digest for name, digest in previous.artifact_hashes.items()
             if name not in previous_telemetry_names
         }
+        staged_reason = self._staged_artifact_path(run_id, "operational_reason")
+        reason_payload = staged_reason.read_bytes() if staged_reason.is_file() else None
+        packet_path = self._staged_artifact_path(run_id, "research_packet")
+        packet_hash = self._stored_packet_hash(stored)
+        has_packet = any(
+            "research_packet" in item.artifact_hashes for item in stored.checkpoints
+        ) or packet_path.is_file()
+        verified_missed_window_packet = (
+            reason_payload == ErrorCode.MISSED_WINDOW.value.encode("ascii")
+            and packet_hash is not None
+            and packet_path.is_file()
+            and _sha256(packet_path.read_bytes()) == packet_hash
+        )
         if (
             checkpoint.stage != "PUBLISHED"
             or checkpoint.execution_status is not ExecutionStatus.PUBLISHED
@@ -563,8 +576,7 @@ class FileSystemRunRepository:
                 "QUALITY_EVALUATED", "ANALYZED", "PACKET_FROZEN",
                 "COLLECTING", "NORMALIZING", "ANALYZING", "PREPARATION_FAILED",
             }
-            or any("research_packet" in item.artifact_hashes for item in stored.checkpoints)
-            or self._staged_artifact_path(run_id, "research_packet").is_file()
+            or has_packet and not verified_missed_window_packet
             or set(business_hashes) != set(previous_business_hashes) | {"operational_reason"}
             or any(
                 business_hashes[name] != digest
@@ -582,13 +594,11 @@ class FileSystemRunRepository:
             )
         ):
             return False
-        staged = self._staged_artifact_path(run_id, "operational_reason")
-        if not staged.is_file():
+        if reason_payload is None:
             return False
-        payload = staged.read_bytes()
         return (
-            payload in {code.value.encode("ascii") for code in ErrorCode}
-            and checkpoint.artifact_hashes["operational_reason"] == _sha256(payload)
+            reason_payload in {code.value.encode("ascii") for code in ErrorCode}
+            and checkpoint.artifact_hashes["operational_reason"] == _sha256(reason_payload)
         )
 
     def load(self, run_id: str) -> StoredRun | None:
@@ -748,23 +758,40 @@ class FileSystemRunRepository:
             )
             previous = stored.checkpoints[-1] if stored.checkpoints else None
             failure_reason = self._staged_artifact_path(run_id, "operational_reason")
+            failure_reason_payload = (
+                failure_reason.read_bytes() if failure_reason.is_file() else None
+            )
+            staged_packet = self._staged_artifact_path(run_id, "research_packet")
+            frozen_packet_hash = self._stored_packet_hash(stored)
+            packetless_preparation_failure = (
+                frozen_packet_hash is None and not staged_packet.is_file()
+            )
+            missed_window_packet_failure = (
+                failure_reason_payload == ErrorCode.MISSED_WINDOW.value.encode("ascii")
+                and frozen_packet_hash is not None
+                and staged_packet.is_file()
+                and _sha256(staged_packet.read_bytes()) == frozen_packet_hash
+            )
             valid_preparation_failure = (
                 checkpoint.stage == "PREPARATION_FAILED"
                 and previous is not None
-                and previous.stage in {"EVIDENCE_FROZEN", "QUALITY_EVALUATED"}
+                and (
+                    previous.stage in {"EVIDENCE_FROZEN", "QUALITY_EVALUATED"}
+                    and packetless_preparation_failure
+                    or previous.stage in {"AWAITING_SYNTHESIS", "VALIDATING"}
+                    and missed_window_packet_failure
+                )
                 and checkpoint.execution_status is previous.execution_status
                 and checkpoint.data_quality_status is DataQualityStatus.FAIL
                 and checkpoint.delivery_status is previous.delivery_status
                 and not checkpoint.resumable
-                and self._stored_packet_hash(stored) is None
-                and not self._staged_artifact_path(run_id, "research_packet").exists()
+                and (packetless_preparation_failure or missed_window_packet_failure)
                 and set(checkpoint.artifact_hashes)
                 == set(previous.artifact_hashes) | {"operational_reason"}
                 and all(checkpoint.artifact_hashes[name] == digest
                         for name, digest in previous.artifact_hashes.items())
                 and staged_hashes_valid
-                and failure_reason.is_file()
-                and failure_reason.read_bytes() in {
+                and failure_reason_payload in {
                     code.value.encode("ascii") for code in ErrorCode
                 }
             )

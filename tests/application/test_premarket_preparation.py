@@ -260,6 +260,89 @@ def test_after_close_missed_run_is_durable_without_formal_publication_or_provide
     assert missed_run_reader(date(2026, 9, 28)) == record
 
 
+def test_late_resume_publishes_missed_window_without_reusing_staged_packet(tmp_path):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market = MarketData()
+    deps = dependencies(tmp_path, market=market)
+    first = prepare_research_packet(request(1), deps)
+    assert first.outcome == "PACKET_READY"
+    calls_before_retry = tuple(market.calls)
+
+    class MissedClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 13, 30, tzinfo=UTC)
+
+    retry = prepare_research_packet(request(1), replace(deps, clock=MissedClock()))
+
+    assert retry.outcome == "PUBLISHED"
+    assert retry.failure_code is ErrorCode.MISSED_WINDOW
+    assert retry.stored_run.run_id == first.stored_run.run_id
+    assert retry.stored_run.run.delivery_status is first.stored_run.run.delivery_status
+    assert retry.stored_run.published is True
+    assert tuple(market.calls) == calls_before_retry
+    published_bundle = deps.run_repository.load_published_bundle(retry.stored_run.run_id)
+    assert published_bundle is not None
+    assert published_bundle.bundle["brief_origin"] == "OPERATIONAL"
+    assert published_bundle.bundle["failure_code"] == "MISSED_WINDOW"
+    assert "research_packet" not in published_bundle.bundle
+    assert any(
+        checkpoint.artifact_hashes.get("research_packet")
+        for checkpoint in retry.stored_run.checkpoints
+    )
+    report = deps.run_repository.get_report(retry.stored_run.run_id)
+    assert "MISSED_WINDOW" in report
+
+
+def test_after_close_resume_records_miss_and_skips_staged_packet(tmp_path):
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market = MarketData()
+    deps = dependencies(tmp_path, market=market)
+    first = prepare_research_packet(request(1), deps)
+    assert first.outcome == "PACKET_READY"
+    calls_before_retry = tuple(market.calls)
+
+    class AfterCloseClock:
+        def now_utc(self):
+            return datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+
+    late_deps = replace(deps, clock=AfterCloseClock())
+    retry = prepare_research_packet(request(1), late_deps)
+
+    assert retry.outcome == "SKIPPED"
+    assert retry.window_decision.missed_record_only is True
+    assert retry.stored_run is None
+    assert deps.run_repository.load(first.stored_run.run_id) == first.stored_run
+    record = deps.run_repository.get_missed_run(date(2026, 9, 28))
+    assert record is not None
+    assert record.detected_at == datetime(2026, 9, 28, 20, 0, tzinfo=UTC)
+    assert deps.run_repository.get_latest(date(2026, 9, 28)) is None
+    assert tuple(market.calls) == calls_before_retry
+
+    repeated = prepare_research_packet(request(1), late_deps)
+
+    assert repeated.outcome == "SKIPPED"
+    assert deps.run_repository.get_missed_run(date(2026, 9, 28)) == record
+
+
+def test_unexpected_runtime_during_resume_window_check_propagates(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    from finance_research_agent.application import premarket_preparation
+
+    deps = dependencies(tmp_path)
+    first = premarket_preparation.prepare_research_packet(request(1), deps)
+    assert first.outcome == "PACKET_READY"
+
+    def fail_unexpectedly(*_args, **_kwargs):
+        raise RuntimeError("unexpected-window-check-error")
+
+    monkeypatch.setattr(premarket_preparation, "resolve_run_window", fail_unexpectedly)
+    with pytest.raises(RuntimeError, match="unexpected-window-check-error"):
+        premarket_preparation.prepare_research_packet(request(1), deps)
+
+
 def test_unknown_regime_disables_usable_classification_and_discloses_missing_evidence(
     tmp_path,
 ):
