@@ -18,6 +18,7 @@ from finance_research_agent.application.operations import (
     ExecutiveEventState,
     RecordRunFeedbackRequest,
 )
+from finance_research_agent.application.packet_service import build_research_packet
 from finance_research_agent.application.ports import Clock, PublishedArtifactReader
 from finance_research_agent.domain.enums import Capability, ClaimType
 from finance_research_agent.domain.models import PublishedArtifact, PublishedRunBundle, RunContext
@@ -114,9 +115,11 @@ def _service(
     return service, reader, store
 
 
-def _published_bundle(valid_packet, valid_brief_draft) -> PublishedRunBundle:
+def _published_bundle(
+    valid_packet, valid_brief_draft, *, outer_run: RunContext | None = None
+) -> PublishedRunBundle:
     return PublishedRunBundle.model_construct(
-        run=valid_packet.run,
+        run=outer_run or valid_packet.run,
         bundle=FrozenMap(
             {
                 "research_packet": valid_packet.model_dump(mode="json"),
@@ -125,6 +128,24 @@ def _published_bundle(valid_packet, valid_brief_draft) -> PublishedRunBundle:
         ),
         report_markdown="published report",
         markdown_sha256=None,
+    )
+
+
+def _rebuild_packet(valid_packet, *, run=None, metrics=None):
+    return build_research_packet(
+        run=run or valid_packet.run,
+        evidence=valid_packet.evidence,
+        snapshots=valid_packet.market,
+        events=valid_packet.events,
+        metrics=valid_packet.metrics if metrics is None else metrics,
+        gates=valid_packet.gates,
+        candidates=valid_packet.candidates,
+        exclusions=valid_packet.candidate_exclusions,
+        plans=valid_packet.deterministic_plan_inputs,
+        capabilities=valid_packet.capability_states,
+        observations=valid_packet.prior_plan_observations,
+        max_serialized_bytes=valid_packet.synthesis_constraints.max_serialized_bytes,
+        regime_result=valid_packet.regime_result,
     )
 
 
@@ -284,6 +305,48 @@ def test_full_review_accepts_metric_input_for_a_selected_claim(
 
     assert len(store.records) == 1
     assert store.records[0].citation_reviews == request.citation_reviews
+
+
+@pytest.mark.parametrize("mismatch", ("packet", "brief"))
+def test_full_review_rejects_packet_or_brief_from_another_run(
+    valid_packet, valid_brief_draft, mismatch: str
+) -> None:
+    other_run_data = valid_packet.run.model_dump(mode="python")
+    other_run_data.update(
+        run_id=f"premarket-{valid_packet.run.market_date.isoformat()}-r2",
+        revision=2,
+    )
+    other_run = RunContext.model_validate(other_run_data, strict=True)
+    packet = (
+        _rebuild_packet(valid_packet, run=other_run)
+        if mismatch == "packet"
+        else valid_packet
+    )
+    brief = (
+        type(valid_brief_draft).model_validate(
+            {
+                **valid_brief_draft.model_dump(mode="python"),
+                "run_id": other_run.run_id,
+            },
+            strict=True,
+        )
+        if mismatch == "brief"
+        else valid_brief_draft
+    )
+    bundle = _published_bundle(packet, brief, outer_run=valid_packet.run)
+    service, _, store = _service(
+        bundle=bundle, published_at=RECORDED_AT - timedelta(minutes=5)
+    )
+    request = _request(
+        run_id=bundle.run.run_id,
+        schema_version="0.2",
+        citation_reviews=(_full_review("evidence-00", "claim-headline", RECORDED_AT),),
+    )
+
+    with pytest.raises(ValueError, match="share one run id"):
+        service.record(request)
+
+    assert store.records == []
 
 
 def test_full_review_rejects_a_claim_outside_the_deterministic_sample(

@@ -225,6 +225,8 @@ class RunFeedbackService:
             raise ValueError(
                 "full citation review requires a valid published research bundle"
             ) from exc
+        if packet.run.run_id != bundle.run.run_id or brief.run_id != bundle.run.run_id:
+            raise ValueError("full citation review inputs must share one run id")
 
         claims: dict[str, Claim] = {}
         for brief_claim in brief.claims:
