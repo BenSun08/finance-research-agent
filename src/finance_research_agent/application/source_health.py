@@ -5,6 +5,7 @@ from finance_research_agent.application.ports import (
     MarketDataProvider,
 )
 from finance_research_agent.domain.enums import SourceRole
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import ProviderReadiness, SourceHealth
 from finance_research_agent.domain.policies import SourcePolicy
 
@@ -34,10 +35,26 @@ def read_configured_source_health(
     }
     health: list[SourceHealth] = []
     for role in source_policy.quality_source_roles:
-        readiness = readiness_ports[role].readiness()
+        expected_provider = _ROLE_PROVIDERS[role]
+        try:
+            readiness = readiness_ports[role].readiness()
+        except Exception:
+            error_code = (
+                ErrorCode.MARKET_CALENDAR_UNAVAILABLE
+                if role is SourceRole.MARKET_CALENDAR
+                else ErrorCode.PROVIDER_UNAVAILABLE
+            )
+            health.append(
+                SourceHealth(
+                    provider=expected_provider,
+                    available=False,
+                    required=True,
+                    error_code=error_code,
+                )
+            )
+            continue
         if not isinstance(readiness, ProviderReadiness):
             raise TypeError("source readiness must be ProviderReadiness")
-        expected_provider = _ROLE_PROVIDERS[role]
         if readiness.provider != expected_provider:
             raise ValueError("source readiness provider does not match its configured role")
         if not readiness.available and readiness.error_code is None:

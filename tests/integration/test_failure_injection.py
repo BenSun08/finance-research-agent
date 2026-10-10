@@ -22,6 +22,7 @@ from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import ProviderFailure
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 from tests.application.test_premarket_preparation import (
+    Calendar,
     MarketData,
     dependencies,
     request,
@@ -1266,3 +1267,51 @@ def test_f16_missed_window_cutoffs_publish_before_close_or_record_after_close(
         assert deps.run_repository.get_missed_run(market_date) is None
         assert deps.run_repository._existing_revision_ids(market_date) == (first.stored_run.run_id,)
         assert deps.run_repository.get_latest(market_date) == first.stored_run.run_id
+
+
+def test_m01_calendar_initializer_and_collection_readiness_failures_are_stable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from dataclasses import replace
+
+    import exchange_calendars
+
+    from finance_research_agent.adapters.exchange_calendar import ExchangeCalendarAdapter
+    from finance_research_agent.adapters.filesystem import FileSystemRunRepository
+    from finance_research_agent.application.premarket_preparation import prepare_research_packet
+
+    market_date = date(2026, 9, 28)
+    uninitialized_repository = FileSystemRunRepository(tmp_path / "initializer")
+
+    def fail_calendar_initialization(name: str) -> object:
+        raise RuntimeError("calendar secret must not escape")
+
+    monkeypatch.setattr(exchange_calendars, "get_calendar", fail_calendar_initialization)
+    with pytest.raises(RuntimeError) as caught:
+        ExchangeCalendarAdapter()
+
+    assert str(caught.value) == (
+        "MARKET_CALENDAR_UNAVAILABLE: market calendar unavailable"
+    )
+    assert "secret" not in str(caught.value)
+    assert uninitialized_repository.get_latest(market_date) is None
+
+    class ReadinessFailureCalendar(Calendar):
+        def readiness(self):
+            raise OSError("calendar health secret must not escape")
+
+    deps = replace(dependencies(tmp_path / "readiness"), calendar=ReadinessFailureCalendar())
+    result = prepare_research_packet(request(market_date=market_date), deps)
+
+    assert result.outcome == "PUBLISHED"
+    assert result.failure_code is ErrorCode.MARKET_CALENDAR_UNAVAILABLE
+    assert result.research_packet is None
+    assert result.data_quality is not None
+    assert result.data_quality.status is DataQualityStatus.FAIL
+    assert ErrorCode.MARKET_CALENDAR_UNAVAILABLE in result.data_quality.global_reason_codes
+    assert result.stored_run is not None and result.stored_run.published
+    report = deps.run_repository.get_report(result.stored_run.run_id)
+    assert report is not None
+    assert "Brief origin: OPERATIONAL" in report
+    assert "MARKET_CALENDAR_UNAVAILABLE" in report
+    assert "secret" not in report
