@@ -633,6 +633,8 @@ def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGat
     adverse_legacy_review = False
     invalid_context = False
     no_material_claims = False
+    artifact_failures: list[str] = []
+    artifact_missing: list[str] = []
 
     feedback_by_publication: dict[str, list[RecordedFeedback]] = {}
     for record in evidence.feedback_records:
@@ -644,6 +646,13 @@ def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGat
         assert bundle is not None and publication is not None
         run_id = verified_run.stored_run.run_id
         evidence_ids.add(run_id)
+        artifact_review = _review_deterministic_artifact(verified_run)
+        artifact_failures.extend(
+            reason
+            for reason in artifact_review.failures
+            if reason != "STALE_CURRENT_PRICE_SIZING_OBSERVED"
+        )
+        artifact_missing.extend(artifact_review.missing)
         matching_feedback = tuple(
             record
             for record in feedback_by_publication.get(run_id, ())
@@ -689,6 +698,13 @@ def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGat
                     continue
 
                 if (
+                    review.claim_id in selected_claim_ids
+                    and review.verdict is not None
+                    and review.verdict is not CitationVerdict.SUPPORTED
+                ):
+                    adverse_full_review = True
+
+                if (
                     review.claim_id not in selected_claim_ids
                     or review.citation_id
                     not in allowed_citations_by_claim.get(review.claim_id, set())
@@ -700,31 +716,34 @@ def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGat
                     continue
                 if review.verdict is CitationVerdict.SUPPORTED:
                     supported_claim_ids.add(review.claim_id)
-                else:
-                    adverse_full_review = True
 
         if selected_claim_ids - supported_claim_ids:
             incomplete_sample = True
 
-    if adverse_full_review or adverse_legacy_review or invalid_context:
-        reasons = tuple(
-            reason
-            for condition, reason in (
-                (adverse_full_review, "MATERIAL_CITATION_REVIEW_NOT_SUPPORTED"),
-                (adverse_legacy_review, "LEGACY_ADVERSE_CITATION_REVIEW"),
-                (invalid_context, "CITATION_CONTEXT_INVALID"),
-            )
-            if condition
+    failure_reasons = [
+        reason
+        for condition, reason in (
+            (adverse_full_review, "MATERIAL_CITATION_REVIEW_NOT_SUPPORTED"),
+            (adverse_legacy_review, "LEGACY_ADVERSE_CITATION_REVIEW"),
+            (invalid_context, "CITATION_CONTEXT_INVALID"),
         )
+        if condition
+    ]
+    failure_reasons.extend(artifact_failures)
+    failure_reasons = list(dict.fromkeys(failure_reasons))
+    if failure_reasons:
+        reasons = tuple(failure_reasons)
         status = EvaluationGateStatus.FAIL
-    elif incomplete_sample:
-        reasons = ("CITATION_ENTAILMENT_SAMPLE_INCOMPLETE",)
+    elif incomplete_sample or artifact_missing:
+        pending_reasons = []
+        if incomplete_sample:
+            pending_reasons.append("CITATION_ENTAILMENT_SAMPLE_INCOMPLETE")
+        pending_reasons.extend(artifact_missing)
+        reasons = tuple(dict.fromkeys(pending_reasons))
         status = EvaluationGateStatus.PENDING
     else:
-        # Other deterministic evidence checks are not yet represented by this
-        # scorecard input. A citation-only success cannot satisfy the full gate.
-        reasons = ("ADDITIONAL_EVIDENCE_CHECKS_NOT_AGGREGATED",)
-        status = EvaluationGateStatus.PENDING
+        reasons = ()
+        status = EvaluationGateStatus.PASS
     if legacy_incomplete:
         reasons = (*reasons, "LEGACY_REVIEW_INCOMPLETE")
     if no_material_claims:
@@ -735,6 +754,8 @@ def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGat
         status=status,
         evidence_ids=tuple(sorted(evidence_ids)),
         reason_codes=reasons,
+        measured_value=0 if status is EvaluationGateStatus.PASS else None,
+        required_value=0,
     )
 
 

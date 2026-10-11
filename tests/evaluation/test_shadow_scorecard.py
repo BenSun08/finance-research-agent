@@ -231,6 +231,8 @@ def _citation_evidence_snapshot(
     reviewed_revisions: tuple[int, ...] | None = None,
     additional_feedback_batches: tuple[tuple[tuple[object, ...], str], ...] = (),
     invalid_receipt: bool = False,
+    missing_validation: bool = False,
+    post_cutoff_evidence: bool = False,
 ):
     from finance_research_agent.application.packet_service import build_research_packet
     from finance_research_agent.application.replay_service import ArtifactReplayResult
@@ -270,21 +272,36 @@ def _citation_evidence_snapshot(
         if material_claims:
             brief = valid_brief_draft.model_copy(update={"run_id": run_id})
             bundle_data["brief_draft"] = brief.model_dump(mode="json")
-            bundle_data["validation_report"] = validate_research_brief(
-                packet,
-                brief,
-                validation_attempt=1,
-            ).model_dump(mode="json")
+            if not missing_validation:
+                bundle_data["validation_report"] = validate_research_brief(
+                    packet,
+                    brief,
+                    validation_attempt=1,
+                ).model_dump(mode="json")
         else:
             bundle_data["brief_origin"] = BriefOrigin.DETERMINISTIC_REDUCED.value
+        if first_bundle is None:
+            first_bundle = PublishedRunBundle.model_construct(
+                run=run,
+                bundle=FrozenMap(bundle_data),
+                report_markdown="verified report fixture",
+                markdown_sha256=None,
+            )
+        if post_cutoff_evidence:
+            packet_data = dict(bundle_data["research_packet"])
+            evidence_data = [dict(item) for item in packet_data["evidence"]]
+            source_data = dict(evidence_data[0]["source"])
+            source_data["retrieved_at"] = (
+                packet.run.require_evidence_cutoff() + timedelta(minutes=1)
+            ).isoformat()
+            evidence_data[0] = {**evidence_data[0], "source": source_data}
+            bundle_data["research_packet"] = {**packet_data, "evidence": evidence_data}
         bundle = PublishedRunBundle.model_construct(
             run=run,
             bundle=FrozenMap(bundle_data),
             report_markdown="verified report fixture",
             markdown_sha256=None,
         )
-        if first_bundle is None:
-            first_bundle = bundle
         bundle_hash = sha256(canonical_bytes(bundle)).hexdigest()
         published_at = run.invoked_at + timedelta(minutes=2)
         artifact = PublishedArtifact(
@@ -386,7 +403,7 @@ def _evidence_gate(scorecard):
     return next(gate for gate in scorecard.gate_results if gate.id is ShadowGateId.EVIDENCE)
 
 
-def test_evidence_gate_keeps_other_checks_pending_after_supported_citation_sample(
+def test_evidence_gate_passes_after_supported_citation_sample_and_artifact_checks(
     valid_packet, valid_brief_draft
 ) -> None:
     empty_evidence, selected_claim_ids = _citation_evidence_snapshot(
@@ -415,10 +432,37 @@ def test_evidence_gate_keeps_other_checks_pending_after_supported_citation_sampl
     assert len(selected_claim_ids) > 0
     assert _evidence_gate(pending).status is EvaluationGateStatus.PENDING
     assert _evidence_gate(pending).reason_codes == ("CITATION_ENTAILMENT_SAMPLE_INCOMPLETE",)
-    assert _evidence_gate(complete).status is EvaluationGateStatus.PENDING
-    assert _evidence_gate(complete).reason_codes == ("ADDITIONAL_EVIDENCE_CHECKS_NOT_AGGREGATED",)
+    assert _evidence_gate(complete).status is EvaluationGateStatus.PASS
+    assert _evidence_gate(complete).reason_codes == ()
+    assert _evidence_gate(complete).measured_value == 0
+    assert _evidence_gate(complete).required_value == 0
     assert "premarket-2026-08-26-r1" in _evidence_gate(complete).evidence_ids
     assert "feedback-citations" in _evidence_gate(complete).evidence_ids
+
+
+def test_evidence_gate_stays_pending_without_published_runs() -> None:
+    from finance_research_agent.evaluation.shadow_scorecard import (
+        _create_shadow_evaluation_evidence,
+    )
+
+    evidence = _create_shadow_evaluation_evidence(
+        period=ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 26)),
+        origin=ShadowEvaluationOrigin.PERSONAL_SHADOW,
+        verified_runs=(),
+        feedback_records=(),
+        observations=(),
+        operator_attestations=(),
+        release_check_receipts=(),
+        source_commit_sha256=None,
+        source_tree_sha256=None,
+        evidence_hashes=("d" * 64,),
+    )
+
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _evidence_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert gate.reason_codes == ("NO_PUBLISHED_RUNS",)
 
 
 @pytest.mark.parametrize("verdict", ["PARTIAL", "UNSUPPORTED"])
@@ -431,6 +475,31 @@ def test_evidence_gate_fails_on_any_material_adverse_full_review(
         for index, claim_id in enumerate(selected_claim_ids)
     )
     evidence, _ = _citation_evidence_snapshot(valid_packet, valid_brief_draft, reviews=reviews)
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _evidence_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert gate.reason_codes == ("MATERIAL_CITATION_REVIEW_NOT_SUPPORTED",)
+
+
+def test_evidence_gate_keeps_adverse_review_fail_when_its_citation_reference_is_invalid(
+    valid_packet, valid_brief_draft
+) -> None:
+    _, selected_claim_ids = _citation_evidence_snapshot(valid_packet, valid_brief_draft)
+    adverse_review = _citation_review(selected_claim_ids[0], verdict="PARTIAL").model_copy(
+        update={"citation_id": "unreferenced-evidence"}
+    )
+    evidence, _ = _citation_evidence_snapshot(
+        valid_packet,
+        valid_brief_draft,
+        reviews=(adverse_review,),
+    )
 
     scorecard = build_shadow_scorecard(
         evidence.published_runs,
@@ -493,7 +562,7 @@ def test_evidence_gate_never_treats_legacy_assertion_as_full_sample_review(
     assert gate.reason_codes == expected_reasons
 
 
-def test_evidence_gate_reports_a_structurally_empty_citation_sample(
+def test_evidence_gate_passes_a_structurally_empty_citation_sample_after_artifact_checks(
     valid_packet, valid_brief_draft
 ) -> None:
     evidence, claim_ids = _citation_evidence_snapshot(
@@ -508,11 +577,57 @@ def test_evidence_gate_reports_a_structurally_empty_citation_sample(
     )
 
     assert claim_ids == ()
-    assert _evidence_gate(scorecard).status is EvaluationGateStatus.PENDING
-    assert _evidence_gate(scorecard).reason_codes == (
-        "NO_MATERIAL_CLAIMS",
-        "ADDITIONAL_EVIDENCE_CHECKS_NOT_AGGREGATED",
+    assert _evidence_gate(scorecard).status is EvaluationGateStatus.PASS
+    assert _evidence_gate(scorecard).reason_codes == ("NO_MATERIAL_CLAIMS",)
+    assert _evidence_gate(scorecard).measured_value == 0
+
+
+def test_evidence_gate_stays_pending_when_numeric_validation_evidence_is_missing(
+    valid_packet, valid_brief_draft
+) -> None:
+    _, selected_claim_ids = _citation_evidence_snapshot(valid_packet, valid_brief_draft)
+    evidence, _ = _citation_evidence_snapshot(
+        valid_packet,
+        valid_brief_draft,
+        reviews=tuple(_citation_review(claim_id) for claim_id in selected_claim_ids),
+        missing_validation=True,
     )
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _evidence_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert gate.reason_codes == ("NUMERIC_VALIDATION_EVIDENCE_MISSING",)
+    assert gate.measured_value is None
+    assert gate.required_value == 0
+
+
+def test_evidence_gate_fails_for_post_cutoff_packet_evidence(
+    valid_packet, valid_brief_draft
+) -> None:
+    _, selected_claim_ids = _citation_evidence_snapshot(valid_packet, valid_brief_draft)
+    evidence, _ = _citation_evidence_snapshot(
+        valid_packet,
+        valid_brief_draft,
+        reviews=tuple(_citation_review(claim_id) for claim_id in selected_claim_ids),
+        post_cutoff_evidence=True,
+    )
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _evidence_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert "FROZEN_RESEARCH_PACKET_INVALID" in gate.reason_codes
 
 
 @pytest.mark.parametrize(
@@ -520,12 +635,8 @@ def test_evidence_gate_reports_a_structurally_empty_citation_sample(
     (
         (
             True,
-            EvaluationGateStatus.PENDING,
-            (
-                "NO_MATERIAL_CLAIMS",
-                "ADDITIONAL_EVIDENCE_CHECKS_NOT_AGGREGATED",
-                "LEGACY_REVIEW_INCOMPLETE",
-            ),
+            EvaluationGateStatus.PASS,
+            ("NO_MATERIAL_CLAIMS", "LEGACY_REVIEW_INCOMPLETE"),
         ),
         (
             False,
@@ -644,11 +755,8 @@ def test_evidence_gate_surfaces_legacy_positive_alongside_full_review(
     )
 
     gate = _evidence_gate(scorecard)
-    assert gate.status is EvaluationGateStatus.PENDING
-    assert gate.reason_codes == (
-        "ADDITIONAL_EVIDENCE_CHECKS_NOT_AGGREGATED",
-        "LEGACY_REVIEW_INCOMPLETE",
-    )
+    assert gate.status is EvaluationGateStatus.PASS
+    assert gate.reason_codes == ("LEGACY_REVIEW_INCOMPLETE",)
 
 
 @pytest.mark.parametrize("invalid_reference", ["claim_id", "citation_id", "reviewed_at"])
