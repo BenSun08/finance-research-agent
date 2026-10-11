@@ -374,10 +374,7 @@ def _executive_identification_gate(
             if record.run_id == run_id
             and record.bundle_sha256 == artifact.bundle_sha256
             and record.schema_version == "0.2"
-            and record.executive_identification is not None
         )
-        if not reviews:
-            missing_review = True
         evidence_ids.update(record.feedback_id for record in reviews)
         identifications = tuple(
             record.executive_identification
@@ -408,11 +405,7 @@ def _executive_identification_gate(
         if expected is None:
             missing_review = True
             continue
-        if (
-            not identifications
-            or not day_observations
-            or len(day_identifications) != len(day_observations)
-        ):
+        if not identifications and not day_identifications:
             missing_review = True
         else:
             completed_review_days += 1

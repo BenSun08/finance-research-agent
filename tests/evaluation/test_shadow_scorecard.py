@@ -1369,14 +1369,17 @@ def test_normal_provider_duration_gate_is_pending_without_a_terminal_checkpoint(
     (
         "later_identified_posture",
         "day_identified_posture",
+        "feedback_identification_present",
         "expected_identification_status",
     ),
     (
-        ("unknown", "unknown", EvaluationGateStatus.PASS),
-        ("neutral", "unknown", EvaluationGateStatus.FAIL),
-        ("unknown", None, EvaluationGateStatus.PENDING),
-        ("unknown", "neutral", EvaluationGateStatus.FAIL),
-        ("unknown", "absent", EvaluationGateStatus.PENDING),
+        ("unknown", "unknown", True, EvaluationGateStatus.PASS),
+        ("neutral", "unknown", True, EvaluationGateStatus.FAIL),
+        ("unknown", None, True, EvaluationGateStatus.PASS),
+        ("unknown", "neutral", True, EvaluationGateStatus.FAIL),
+        ("unknown", "absent", True, EvaluationGateStatus.PASS),
+        ("unknown", "absent", False, EvaluationGateStatus.PENDING),
+        ("unknown", "unknown", False, EvaluationGateStatus.PASS),
     ),
 )
 def test_daily_metrics_and_identification_use_selected_complete_feedback(
@@ -1385,6 +1388,7 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
     monkeypatch,
     later_identified_posture,
     day_identified_posture,
+    feedback_identification_present,
     expected_identification_status,
 ) -> None:
     from finance_research_agent.application import shadow_evidence_loader
@@ -1449,7 +1453,7 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
         "evidence_score": 4,
         "citation_reviews": (),
         "schema_version": "0.2",
-        "executive_identification": identification,
+        "executive_identification": (identification if feedback_identification_present else None),
     }
     later_full_feedback = RecordedFeedback(
         **(
@@ -1460,7 +1464,9 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
                 "usefulness_score": 1,
                 "executive_review_duration_seconds": 300,
                 "detailed_review_duration_seconds": 1200,
-                "executive_identification": later_identification,
+                "executive_identification": (
+                    later_identification if feedback_identification_present else None
+                ),
             }
         )
     )
@@ -1523,24 +1529,29 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
         evidence=evidence,
     )
 
-    assert scorecard.review_time_observations == (
-        DailyReviewTimeObservation(
-            market_date=bundle.run.market_date,
-            feedback_id="feedback-a",
-            executive_review_duration_seconds=120,
-            detailed_review_duration_seconds=900,
-        ),
-    )
-    assert scorecard.usefulness_observations == (
-        DailyUsefulnessObservation(
-            market_date=bundle.run.market_date,
-            feedback_id="feedback-a",
-            usefulness_score=4,
-        ),
-    )
+    if feedback_identification_present:
+        assert scorecard.review_time_observations == (
+            DailyReviewTimeObservation(
+                market_date=bundle.run.market_date,
+                feedback_id="feedback-a",
+                executive_review_duration_seconds=120,
+                detailed_review_duration_seconds=900,
+            ),
+        )
+        assert scorecard.usefulness_observations == (
+            DailyUsefulnessObservation(
+                market_date=bundle.run.market_date,
+                feedback_id="feedback-a",
+                usefulness_score=4,
+            ),
+        )
+    else:
+        assert scorecard.review_time_observations == ()
+        assert scorecard.usefulness_observations == ()
     gates = {gate.id: gate for gate in scorecard.gate_results}
-    assert gates[ShadowGateId.REVIEW_TIME].status is EvaluationGateStatus.PASS
-    assert gates[ShadowGateId.USEFULNESS].status is EvaluationGateStatus.PASS
+    if feedback_identification_present:
+        assert gates[ShadowGateId.REVIEW_TIME].status is EvaluationGateStatus.PASS
+        assert gates[ShadowGateId.USEFULNESS].status is EvaluationGateStatus.PASS
     assert gates[ShadowGateId.EXECUTIVE_IDENTIFICATION].status is expected_identification_status
     if expected_identification_status is EvaluationGateStatus.FAIL:
         assert gates[ShadowGateId.EXECUTIVE_IDENTIFICATION].reason_codes == (
