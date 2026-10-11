@@ -40,6 +40,10 @@ jobs:
           mkdir -p "$(dirname "$AI_MARKET_RESEARCH_DOTENV_PATH")"
           : > "$AI_MARKET_RESEARCH_DOTENV_PATH"
           chmod 600 "$AI_MARKET_RESEARCH_DOTENV_PATH"
+          mkdir -p "$AI_MARKET_RESEARCH_DATA_DIR/config"
+          chmod 700 "$AI_MARKET_RESEARCH_DATA_DIR" "$AI_MARKET_RESEARCH_DATA_DIR/config"
+          cp config/examples/*.yaml "$AI_MARKET_RESEARCH_DATA_DIR/config/"
+          chmod 600 "$AI_MARKET_RESEARCH_DATA_DIR/config/"*.yaml
 
       - name: Install locked dependencies
         run: |
@@ -48,6 +52,9 @@ jobs:
           uv export --locked --all-extras --no-emit-project --no-annotate --no-header \
             --format requirements.txt --output-file "$RUNNER_TEMP/requirements.lock"
           diff -u requirements.lock "$RUNNER_TEMP/requirements.lock"
+
+      - name: Check local doctor
+        run: bash scripts/doctor.sh
 
       - name: Check generated schemas and canonical documentation
         run: |

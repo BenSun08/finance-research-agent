@@ -41,6 +41,23 @@ def test_ci_uses_locked_dependencies_and_all_supported_interpreters() -> None:
     assert '["ruff", "format", "--check"' in formatting
 
 
+def test_ci_runs_bounded_doctor_with_private_synthetic_configuration() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["verify"]["steps"]
+    prepare = next(step for step in steps if step["name"] == "Prepare isolated configuration root")
+    doctor = next(step for step in steps if step["name"] == "Check local doctor")
+
+    assert '"$AI_MARKET_RESEARCH_DATA_DIR/config"' in prepare["run"]
+    assert "config/examples" in prepare["run"]
+    assert "chmod 700" in prepare["run"]
+    assert "chmod 600" in prepare["run"]
+    assert doctor["run"] == "bash scripts/doctor.sh"
+    assert "PYTHONDONTWRITEBYTECODE=1" in (ROOT / "scripts/doctor.sh").read_text()
+    assert steps.index(doctor) > steps.index(
+        next(step for step in steps if step["name"] == "Install locked dependencies")
+    )
+
+
 def test_offline_network_guard_is_inherited_by_child_python_processes() -> None:
     guard = ROOT / "tests" / "network_guard"
     environment = {
