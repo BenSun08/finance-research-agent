@@ -624,13 +624,18 @@ trade or evidence of general market performance.
 
 ## Release readiness
 
-The closeout audit found no production-code or public-export correction needed.
-Existing tests cover delegation, metric reuse, invalid inputs, temporal and
-evidence boundaries, error propagation, immutability, and regression tolerance;
-this documentation closeout adds no tests. Local verification at closeout:
-`pytest` (545 passed; one existing `websockets.legacy` deprecation warning),
-`ruff check .`, `mypy src` (23 source files), and `git diff --check`.
-These local checks do not imply automated CI enforcement.
+R11 adds locked offline CI and exact-head release evidence, the bounded local
+doctor, secret/network boundaries, and fresh-wheel checks. The workflow runs
+its named release gates on Python 3.12, 3.13, and 3.14. Missing exact-head
+evidence remains `PENDING`, failed exact-head checks remain `FAIL`, and only
+checks bound to the requested commit can satisfy the release reader.
+
+This establishes current-source-scope conformance only. It does not establish
+full-source conformance, personal release readiness, or shadow graduation.
+Schedule activation remains PAUSED, and live provider checks remain opt-in.
+See the [release-readiness and operator guide](docs/operations/release-readiness.md)
+for gate names, commands, receipt interpretation, live-smoke boundaries, and
+the compatibility consumer inventory.
 
 ### Package version alignment
 

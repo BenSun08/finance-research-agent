@@ -69,7 +69,9 @@ def validate_workflow(path: Path) -> tuple[str, ...]:
 def validate_product_a_contracts(root: Path) -> tuple[str, ...]:
     errors = list(validate_skill_contracts(root))
     if {path.parent.name for path in (root / "skills").glob("*/SKILL.md")} != {
-        "market-regime", "premarket-research", "watchlist-management",
+        "market-regime",
+        "premarket-research",
+        "watchlist-management",
     }:
         errors.append("Product A requires exactly three canonical skills")
     manifest = root / "skills/premarket-research/references/workflow-contract.yaml"
@@ -84,9 +86,11 @@ def validate_product_a_contracts(root: Path) -> tuple[str, ...]:
 def validate_documentation(root: Path) -> tuple[str, ...]:
     errors = []
     documents = (
-        root / "README.md", root / "skills/README.md",
+        root / "README.md",
+        root / "skills/README.md",
         root / "docs/architecture/v0.1-boundaries.md",
         root / "docs/operations/scheduling-and-recovery.md",
+        root / "docs/operations/release-readiness.md",
     )
     for path in documents:
         if not path.is_file():
@@ -98,9 +102,8 @@ def validate_documentation(root: Path) -> tuple[str, ...]:
                 continue
             link_path, _, anchor = target.partition("#")
             target_path = path.parent / link_path if link_path else path
-            if (
-                not target_path.is_file()
-                or not target_path.resolve().is_relative_to(root.resolve())
+            if not target_path.is_file() or not target_path.resolve().is_relative_to(
+                root.resolve()
             ):
                 errors.append(f"broken or unconfined link: {path.relative_to(root)} -> {target}")
             elif anchor:
@@ -123,9 +126,15 @@ def validate_documentation(root: Path) -> tuple[str, ...]:
     if architecture.is_file():
         text = architecture.read_text(encoding="utf-8")
         authorities = (
-            "Approved Product A specification", "Python typed domain", "Generated JSON Schemas",
-            "workflow-contract.yaml", "SKILL.md", "Canonical synthesis prompt",
-            "Canonical report template", "Immutable JSON run bundle", "Derived documentation",
+            "Approved Product A specification",
+            "Python typed domain",
+            "Generated JSON Schemas",
+            "workflow-contract.yaml",
+            "SKILL.md",
+            "Canonical synthesis prompt",
+            "Canonical report template",
+            "Immutable JSON run bundle",
+            "Derived documentation",
         )
         positions = [text.find(value) for value in authorities]
         if any(position < 0 for position in positions) or positions != sorted(positions):
@@ -135,12 +144,29 @@ def validate_documentation(root: Path) -> tuple[str, ...]:
     schedule = documents[3]
     if schedule.is_file():
         text = schedule.read_text(encoding="utf-8")
-        for required in ("PAUSED", "premarket-research", "frozen evidence", "deterministic truth",
-                         "human review", "no execution"):
+        for required in (
+            "PAUSED",
+            "premarket-research",
+            "frozen evidence",
+            "deterministic truth",
+            "human review",
+            "no execution",
+        ):
             if required not in text:
                 errors.append(f"schedule documentation missing {required}")
         if any(name in text for name in OPERATION_NAMES):
             errors.append("saved scheduling prompt must not duplicate MCP operation order")
+    release = documents[4]
+    if release.is_file():
+        text = release.read_text(encoding="utf-8")
+        release_facts = (
+            ("Schedule activation remains PAUSED.", "PAUSED schedule state"),
+            ("The local doctor does not call a provider.", "provider-free local doctor"),
+            ("Missing exact-head CI evidence is PENDING.", "pending missing exact-head evidence"),
+        )
+        for required, description in release_facts:
+            if required not in text:
+                errors.append(f"release readiness documentation missing {description}")
     return tuple(errors)
 
 
