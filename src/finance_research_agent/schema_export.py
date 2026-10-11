@@ -28,6 +28,8 @@ from finance_research_agent.domain.models import (
     SourceHealth,
     SourceObservation,
 )
+from finance_research_agent.evaluation.release_gates import MigrationReadiness
+from finance_research_agent.evaluation.shadow_scorecard import ShadowScorecard
 
 _SCHEMA_MODELS: dict[str, type[Any]] = {
     "capability-state.schema.json": CapabilityState,
@@ -40,10 +42,12 @@ _SCHEMA_MODELS: dict[str, type[Any]] = {
     "instrument-identity.schema.json": InstrumentIdentity,
     "market-snapshot.schema.json": MarketSnapshot,
     "metric-result.schema.json": MetricResult,
+    "migration-readiness.schema.json": MigrationReadiness,
     "price-observation.schema.json": PriceObservation,
     "run-context.schema.json": RunContext,
     "source-observation.schema.json": SourceObservation,
     "source-health.schema.json": SourceHealth,
+    "shadow-scorecard.schema.json": ShadowScorecard,
 }
 _SCHEMA_MODELS.update(OPERATION_SCHEMA_MODELS)
 SCHEMA_MODELS: Mapping[str, type[Any]] = MappingProxyType(_SCHEMA_MODELS)

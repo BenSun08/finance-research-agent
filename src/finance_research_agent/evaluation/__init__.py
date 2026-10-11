@@ -23,6 +23,13 @@ from finance_research_agent.evaluation.models import (
     ScenarioId,
     ScenarioOutcomeExpectation,
 )
+from finance_research_agent.evaluation.release_gates import (
+    MigrationReadiness,
+    MigrationReadinessGate,
+    MigrationReadinessSection,
+    MigrationReadinessStatus,
+    build_migration_readiness,
+)
 from finance_research_agent.evaluation.scenarios import DEFAULT_MANIFEST, load_evaluation_scenarios
 
 __all__ = [
@@ -37,6 +44,10 @@ __all__ = [
     "EvaluationOutcome",
     "EvaluationHarness",
     "FailureInjectionId",
+    "MigrationReadiness",
+    "MigrationReadinessGate",
+    "MigrationReadinessSection",
+    "MigrationReadinessStatus",
     "FixtureSetId",
     "ScenarioAssertionId",
     "ScenarioId",
@@ -44,5 +55,6 @@ __all__ = [
     "select_citation_entailment_sample",
     "load_evaluation_scenarios",
     "build_citation_entailment_review_sample",
+    "build_migration_readiness",
     "execute_evaluation_scenario",
 ]

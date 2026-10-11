@@ -151,6 +151,35 @@ def _scorecard(**changes: object) -> ShadowScorecard:
     return ShadowScorecard(**values)
 
 
+def test_shadow_scorecard_requires_source_commit_and_tree_together() -> None:
+    with pytest.raises(ValidationError, match="source identity requires both"):
+        _scorecard(source_commit_sha256="a" * 64)
+
+
+def test_shadow_scorecard_carries_verified_source_identity() -> None:
+    from finance_research_agent.evaluation.shadow_scorecard import (
+        _create_shadow_evaluation_evidence,
+    )
+
+    evidence = _create_shadow_evaluation_evidence(
+        period=ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 26)),
+        origin=ShadowEvaluationOrigin.PERSONAL_SHADOW,
+        verified_runs=(),
+        feedback_records=(),
+        observations=(),
+        operator_attestations=(),
+        release_check_receipts=(),
+        source_commit_sha256="a" * 64,
+        source_tree_sha256="b" * 64,
+        evidence_hashes=("c" * 64,),
+    )
+
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    assert scorecard.source_commit_sha256 == evidence.source_commit_sha256
+    assert scorecard.source_tree_sha256 == evidence.source_tree_sha256
+
+
 def _metric_feedback(
     feedback_id: str,
     *,

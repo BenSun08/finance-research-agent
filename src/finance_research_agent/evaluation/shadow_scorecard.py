@@ -621,6 +621,8 @@ class ShadowScorecard(StrictModel):
     period_start: date | None = None
     period_end: date | None = None
     origin: ShadowEvaluationOrigin | None = None
+    source_commit_sha256: Sha256 | None = None
+    source_tree_sha256: Sha256 | None = None
     valid_trading_days: NonNegativeCount = 0
     eligible_online_days: NonNegativeCount = 0
     published_in_target_window: NonNegativeCount = 0
@@ -650,6 +652,8 @@ class ShadowScorecard(StrictModel):
             raise ValueError("scorecard period requires both start and end dates")
         if period_start is not None and period_end is not None and period_start > period_end:
             raise ValueError("scorecard period_start must not follow period_end")
+        if (self.source_commit_sha256 is None) != (self.source_tree_sha256 is None):
+            raise ValueError("scorecard source identity requires both commit and tree digests")
         if tuple(gate.id for gate in self.gate_results) != tuple(ShadowGateId):
             raise ValueError("scorecard must contain every shadow gate exactly once in order")
         if self.valid_trading_days > self.eligible_online_days:
@@ -903,6 +907,8 @@ def build_shadow_scorecard(
         period_start=period.start_date,
         period_end=period.end_date,
         origin=evidence.origin,
+        source_commit_sha256=evidence.source_commit_sha256,
+        source_tree_sha256=evidence.source_tree_sha256,
         valid_trading_days=valid_trading_days,
         eligible_online_days=len(eligible_dates),
         published_in_target_window=published_in_target_window,
