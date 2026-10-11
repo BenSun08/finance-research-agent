@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from finance_research_agent.application.feedback_service import RecordedFeedback
 from finance_research_agent.domain.models import (
+    EventRecord,
     PublishedArtifact,
     PublishedRunBundle,
     RunContext,
@@ -27,11 +28,13 @@ from finance_research_agent.evaluation.shadow_scorecard import (
     EvaluationGate,
     EvaluationGateStatus,
     ShadowEvaluationOrigin,
+    ShadowExecutiveIdentification,
     ShadowGateId,
     ShadowPeriod,
     ShadowScorecard,
     _daily_review_time_gate,
     _daily_usefulness_gate,
+    _expected_executive_identification,
     _median,
     build_shadow_scorecard,
 )
@@ -1363,10 +1366,17 @@ def test_normal_provider_duration_gate_is_pending_without_a_terminal_checkpoint(
 
 
 @pytest.mark.parametrize(
-    ("later_identified_posture", "expected_identification_status"),
     (
-        ("unknown", EvaluationGateStatus.PASS),
-        ("neutral", EvaluationGateStatus.FAIL),
+        "later_identified_posture",
+        "day_identified_posture",
+        "expected_identification_status",
+    ),
+    (
+        ("unknown", "unknown", EvaluationGateStatus.PASS),
+        ("neutral", "unknown", EvaluationGateStatus.FAIL),
+        ("unknown", None, EvaluationGateStatus.PENDING),
+        ("unknown", "neutral", EvaluationGateStatus.FAIL),
+        ("unknown", "absent", EvaluationGateStatus.PENDING),
     ),
 )
 def test_daily_metrics_and_identification_use_selected_complete_feedback(
@@ -1374,6 +1384,7 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
     tmp_path,
     monkeypatch,
     later_identified_posture,
+    day_identified_posture,
     expected_identification_status,
 ) -> None:
     from finance_research_agent.application import shadow_evidence_loader
@@ -1388,6 +1399,7 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
     from finance_research_agent.domain.errors import ErrorCode
     from finance_research_agent.domain.models import CapabilityState
     from finance_research_agent.domain.regime import Regime
+    from finance_research_agent.evaluation.shadow_records import ShadowExecutiveEventState
 
     packet = valid_packet.model_copy(
         update={
@@ -1417,6 +1429,18 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
     later_identification = identification.model_copy(
         update={"market_posture": Regime(later_identified_posture)}
     )
+    day_identification = None
+    if day_identified_posture not in (None, "absent"):
+        day_identification = ShadowExecutiveIdentification(
+            market_posture=identification.market_posture,
+            event_state=ShadowExecutiveEventState(identification.event_state.value),
+            event_ids=identification.event_ids,
+            priority_symbols=identification.priority_symbols,
+            disabled_capabilities=identification.disabled_capabilities,
+        )
+        day_identification = day_identification.model_copy(
+            update={"market_posture": Regime(day_identified_posture)}
+        )
     common_feedback = {
         "run_id": bundle.run.run_id,
         "bundle_sha256": artifact.bundle_sha256,
@@ -1427,7 +1451,7 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
         "schema_version": "0.2",
         "executive_identification": identification,
     }
-    full_later_id = RecordedFeedback(
+    later_full_feedback = RecordedFeedback(
         **(
             common_feedback
             | {
@@ -1472,9 +1496,10 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
         observed_run_ids=(bundle.run.run_id,),
         observed_feedback_ids=(
             earlier_partial_feedback.feedback_id,
-            full_later_id.feedback_id,
+            later_full_feedback.feedback_id,
             selected_full_feedback.feedback_id,
         ),
+        executive_identification=day_identification,
     )
     runs = _EmptyRuns((StoredRun(run=bundle.run, published=True),))
     artifacts = _EmptyArtifacts()
@@ -1485,8 +1510,8 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
         ShadowPeriod(start_date=bundle.run.market_date, end_date=bundle.run.market_date),
         runs,  # type: ignore[arg-type]
         artifacts,  # type: ignore[arg-type]
-        _EmptyFeedback((full_later_id, earlier_partial_feedback, selected_full_feedback)),  # type: ignore[arg-type]
-        _EmptyObservations((observation,)),  # type: ignore[arg-type]
+        _EmptyFeedback((later_full_feedback, earlier_partial_feedback, selected_full_feedback)),  # type: ignore[arg-type]
+        _EmptyObservations(() if day_identified_posture == "absent" else (observation,)),  # type: ignore[arg-type]
         _EmptyAttestations(),  # type: ignore[arg-type]
         _EmptyReleaseEvidence(),  # type: ignore[arg-type]
     )
@@ -1523,11 +1548,132 @@ def test_daily_metrics_and_identification_use_selected_complete_feedback(
         )
     expected_daily_feedback_ids = {
         earlier_partial_feedback.feedback_id,
-        full_later_id.feedback_id,
+        later_full_feedback.feedback_id,
         selected_full_feedback.feedback_id,
     }
     assert expected_daily_feedback_ids.issubset(gates[ShadowGateId.REVIEW_TIME].evidence_ids)
     assert expected_daily_feedback_ids.issubset(gates[ShadowGateId.USEFULNESS].evidence_ids)
+
+
+def test_unavailable_event_capability_suppresses_retained_event_identifications(
+    valid_packet, tmp_path
+) -> None:
+    from finance_research_agent.domain.enums import Capability
+    from finance_research_agent.domain.errors import ErrorCode
+    from finance_research_agent.domain.models import CapabilityState
+    from finance_research_agent.evaluation.shadow_records import ShadowExecutiveEventState
+
+    packet = valid_packet.model_copy(
+        update={
+            "events": (
+                EventRecord(
+                    event_id="event-retained",
+                    event_type="EARNINGS",
+                    subject_symbol="AAPL",
+                    event_time=valid_packet.run.evidence_cutoff_at,
+                    verified=True,
+                    materiality="HIGH",
+                    supporting_evidence_ids=("evidence-00",),
+                    conflict_evidence_ids=(),
+                ),
+            ),
+            "capability_states": (
+                CapabilityState(
+                    capability=Capability.EVENT_RISK_CHECK_AVAILABLE,
+                    available=False,
+                    reason_codes=(ErrorCode.PROVIDER_UNAVAILABLE,),
+                    evidence_ids=(),
+                ),
+            ),
+        }
+    )
+    bundle, _ = personal_reduced_publication(packet, tmp_path)
+
+    expected = _expected_executive_identification(bundle)
+
+    assert expected is not None
+    assert expected.event_state is ShadowExecutiveEventState.UNAVAILABLE
+    assert expected.event_ids == ()
+
+
+@pytest.mark.parametrize(
+    ("materiality", "expected_state", "expected_ids"),
+    (
+        (
+            "HIGH",
+            "MATERIAL_EVENTS",
+            ("event-material",),
+        ),
+        (
+            "LOW",
+            "NO_MATERIAL_EVENTS",
+            (),
+        ),
+        (
+            None,
+            "NO_MATERIAL_EVENTS",
+            (),
+        ),
+    ),
+)
+def test_available_event_capability_derives_material_event_identification(
+    valid_packet, tmp_path, materiality, expected_state, expected_ids
+) -> None:
+    from finance_research_agent.domain.enums import Capability
+    from finance_research_agent.domain.models import CapabilityState
+    from finance_research_agent.evaluation.shadow_records import ShadowExecutiveEventState
+
+    events = (
+        (
+            EventRecord(
+                event_id="event-material",
+                event_type="EARNINGS",
+                subject_symbol="AAPL",
+                event_time=valid_packet.run.evidence_cutoff_at,
+                verified=True,
+                materiality=materiality,
+                supporting_evidence_ids=("evidence-00",),
+                conflict_evidence_ids=(),
+            ),
+        )
+        if materiality is not None
+        else ()
+    )
+    packet = valid_packet.model_copy(
+        update={
+            "events": events,
+            "capability_states": (
+                CapabilityState(
+                    capability=Capability.EVENT_RISK_CHECK_AVAILABLE,
+                    available=True,
+                    reason_codes=(),
+                    evidence_ids=(),
+                ),
+            ),
+        }
+    )
+    bundle, _ = personal_reduced_publication(packet, tmp_path)
+
+    expected = _expected_executive_identification(bundle)
+
+    assert expected is not None
+    assert expected.event_state is ShadowExecutiveEventState(expected_state)
+    assert expected.event_ids == expected_ids
+
+
+@pytest.mark.parametrize("packet_state", ("missing", "invalid", "without_event_capability"))
+def test_identification_context_is_unavailable_without_a_valid_event_capability_packet(
+    valid_packet, tmp_path, packet_state
+) -> None:
+    bundle, _ = personal_reduced_publication(valid_packet, tmp_path)
+    if packet_state == "missing":
+        bundle = bundle.model_copy(update={"bundle": FrozenMap({})})
+    elif packet_state == "invalid":
+        bundle = bundle.model_copy(
+            update={"bundle": FrozenMap({"research_packet": {"not_a_packet": True}})}
+        )
+
+    assert _expected_executive_identification(bundle) is None
 
 
 def test_daily_review_time_uses_exact_even_count_medians_and_fails_over_limit() -> None:

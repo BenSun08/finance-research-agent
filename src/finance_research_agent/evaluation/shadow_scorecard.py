@@ -378,7 +378,6 @@ def _executive_identification_gate(
         )
         if not reviews:
             missing_review = True
-            continue
         evidence_ids.update(record.feedback_id for record in reviews)
         identifications = tuple(
             record.executive_identification
@@ -386,12 +385,42 @@ def _executive_identification_gate(
             if record.executive_identification is not None
         )
 
+        superseded_observation_ids = {
+            item.corrects_observation_id
+            for item in evidence.observations
+            if item.corrects_observation_id is not None
+        }
+        day_observations = tuple(
+            item
+            for item in evidence.observations
+            if item.market_date == market_date
+            and run_id in item.observed_run_ids
+            and item.id not in superseded_observation_ids
+        )
+        evidence_ids.update(item.id for item in day_observations)
+        day_identifications = tuple(
+            item.executive_identification
+            for item in day_observations
+            if item.executive_identification is not None
+        )
+
         expected = _expected_executive_identification(bundle)
-        if expected is None or not identifications:
+        if expected is None:
             missing_review = True
             continue
-        completed_review_days += 1
+        if (
+            not identifications
+            or not day_observations
+            or len(day_identifications) != len(day_observations)
+        ):
+            missing_review = True
+        else:
+            completed_review_days += 1
         if any(not _executive_identification_matches(item, expected) for item in identifications):
+            mismatch = True
+        if any(
+            not _executive_identification_matches(item, expected) for item in day_identifications
+        ):
             mismatch = True
 
     if mismatch:
@@ -441,19 +470,22 @@ def _expected_executive_identification(
     if event_capability is None:
         return None
 
-    material_event_ids = tuple(
-        dict.fromkeys(
-            event.event_id
-            for event in packet.events
-            if event.materiality in {"MEDIUM", "HIGH", "UNKNOWN"}
-        )
-    )
-    if material_event_ids:
-        event_state = ShadowExecutiveEventState.MATERIAL_EVENTS
-    elif event_capability.available:
-        event_state = ShadowExecutiveEventState.NO_MATERIAL_EVENTS
-    else:
+    if not event_capability.available:
+        material_event_ids: tuple[str, ...] = ()
         event_state = ShadowExecutiveEventState.UNAVAILABLE
+    else:
+        material_event_ids = tuple(
+            dict.fromkeys(
+                event.event_id
+                for event in packet.events
+                if event.materiality in {"MEDIUM", "HIGH", "UNKNOWN"}
+            )
+        )
+        event_state = (
+            ShadowExecutiveEventState.MATERIAL_EVENTS
+            if material_event_ids
+            else ShadowExecutiveEventState.NO_MATERIAL_EVENTS
+        )
 
     return ShadowExecutiveIdentification(
         market_posture=(
@@ -475,7 +507,7 @@ def _expected_executive_identification(
 
 
 def _executive_identification_matches(
-    observed: ExecutiveIdentification,
+    observed: ExecutiveIdentification | ShadowExecutiveIdentification,
     expected: ShadowExecutiveIdentification,
 ) -> bool:
     return (
