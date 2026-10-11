@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import Field, computed_field, model_validator
 
+from finance_research_agent.domain.enums import BriefOrigin
 from finance_research_agent.domain.models import Identifier, Sha256, StrictModel
 from finance_research_agent.evaluation.models import (
     DomainAssertion,
@@ -26,6 +28,7 @@ from finance_research_agent.evaluation.shadow_records import (
     ReleaseCheckConclusion,
     ReleaseCheckId,
     ReleaseCheckReceipt,
+    ShadowDayAvailability,
 )
 from finance_research_agent.evaluation.shadow_scorecard import (
     EvaluationGate,
@@ -184,7 +187,7 @@ def build_migration_readiness(
             ),
         ),
     )
-    graduation = _shadow_graduation_section(scorecard)
+    graduation = _shadow_graduation_section(scorecard, evidence)
     return MigrationReadiness(
         current_scope_conformance=current_scope,
         supervised_shadow_readiness=supervised,
@@ -760,45 +763,123 @@ def _supervised_shadow_section(
     )
 
 
-def _shadow_graduation_section(scorecard: ShadowScorecard) -> MigrationReadinessSection:
+def _shadow_graduation_section(
+    scorecard: ShadowScorecard,
+    evidence: ShadowEvaluationEvidence,
+) -> MigrationReadinessSection:
     quality_gates = tuple(_from_scorecard_gate(gate) for gate in scorecard.gate_results)
+    verified_day_count, verified_day_ids = _verified_personal_shadow_days(evidence)
+    day_evidence_ids = _unique(evidence.evidence_hashes + verified_day_ids)
+    if scorecard.valid_trading_days != verified_day_count:
+        day_count_gate = _gate(
+            "VERIFIED_VALID_DAY_COUNT",
+            MigrationReadinessStatus.FAIL,
+            evidence_ids=day_evidence_ids,
+            reason_codes=("SCORECARD_VALID_DAY_COUNT_MISMATCH",),
+            measured_value=scorecard.valid_trading_days,
+            required_value=verified_day_count,
+        )
+    elif not day_evidence_ids:
+        day_count_gate = _gate(
+            "VERIFIED_VALID_DAY_COUNT",
+            MigrationReadinessStatus.PENDING,
+            reason_codes=("VERIFIED_PERSONAL_DAY_EVIDENCE_MISSING",),
+            measured_value=scorecard.valid_trading_days,
+            required_value=verified_day_count,
+        )
+    else:
+        day_count_gate = _gate(
+            "VERIFIED_VALID_DAY_COUNT",
+            MigrationReadinessStatus.PASS,
+            evidence_ids=day_evidence_ids,
+            measured_value=verified_day_count,
+            required_value=verified_day_count,
+        )
     if scorecard.origin is not ShadowEvaluationOrigin.PERSONAL_SHADOW:
         day_gate = _gate(
             "PERSONAL_SHADOW_DAYS",
             MigrationReadinessStatus.PENDING,
-            evidence_ids=tuple(
-                item for gate in scorecard.gate_results for item in gate.evidence_ids
-            ),
+            evidence_ids=day_evidence_ids,
             reason_codes=("PERSONAL_SHADOW_ORIGIN_REQUIRED",),
-            measured_value=scorecard.valid_trading_days,
+            measured_value=verified_day_count,
             required_value=20,
         )
-    elif scorecard.valid_trading_days < 20:
+    elif verified_day_count < 20:
         day_gate = _gate(
             "PERSONAL_SHADOW_DAYS",
             MigrationReadinessStatus.PENDING,
-            evidence_ids=tuple(
-                item for gate in scorecard.gate_results for item in gate.evidence_ids
-            ),
+            evidence_ids=day_evidence_ids,
             reason_codes=("TWENTY_VALID_PERSONAL_SHADOW_DAYS_REQUIRED",),
-            measured_value=scorecard.valid_trading_days,
+            measured_value=verified_day_count,
             required_value=20,
         )
     else:
         day_gate = _gate(
             "PERSONAL_SHADOW_DAYS",
             MigrationReadinessStatus.PASS,
-            evidence_ids=(
-                tuple(item for gate in scorecard.gate_results for item in gate.evidence_ids)
-                or scorecard.evidence_hashes
-            ),
-            measured_value=scorecard.valid_trading_days,
+            evidence_ids=day_evidence_ids,
+            measured_value=verified_day_count,
             required_value=20,
         )
     return MigrationReadinessSection(
         id="SHADOW_GRADUATION",
-        gate_results=(*quality_gates, day_gate),
+        gate_results=(*quality_gates, day_count_gate, day_gate),
     )
+
+
+def _verified_personal_shadow_days(
+    evidence: ShadowEvaluationEvidence,
+) -> tuple[int, tuple[str, ...]]:
+    if evidence.origin is not ShadowEvaluationOrigin.PERSONAL_SHADOW:
+        return 0, ()
+
+    superseded_ids = {
+        item.corrects_observation_id
+        for item in evidence.observations
+        if item.corrects_observation_id is not None
+    }
+    availability_by_date: dict[date, set[ShadowDayAvailability]] = {}
+    observation_ids_by_date: dict[date, list[str]] = {}
+    for observation in evidence.observations:
+        if observation.id in superseded_ids:
+            continue
+        availability_by_date.setdefault(observation.market_date, set()).add(
+            observation.availability
+        )
+        observation_ids_by_date.setdefault(observation.market_date, []).append(observation.id)
+
+    research_run_ids_by_date: dict[date, list[str]] = {}
+    for verified_run in evidence.verified_runs:
+        bundle = verified_run.published_bundle
+        artifact = verified_run.published_artifact
+        if bundle is None or artifact is None:
+            continue
+        if (
+            "brief_draft" not in bundle.bundle
+            and bundle.bundle.get("brief_origin") != BriefOrigin.DETERMINISTIC_REDUCED.value
+        ):
+            continue
+        research_run_ids_by_date.setdefault(bundle.run.market_date, []).append(
+            verified_run.stored_run.run.run_id
+        )
+
+    valid_dates = tuple(
+        market_date
+        for market_date, availability in availability_by_date.items()
+        if availability == {ShadowDayAvailability.ONLINE}
+        and market_date in research_run_ids_by_date
+    )
+    evidence_ids = tuple(
+        sorted(
+            identifier
+            for market_date in valid_dates
+            for identifier in (
+                *observation_ids_by_date[market_date],
+                *research_run_ids_by_date[market_date],
+            )
+        )
+    )
+    return len(valid_dates), evidence_ids
 
 
 def _from_scorecard_gate(gate: EvaluationGate) -> MigrationReadinessGate:

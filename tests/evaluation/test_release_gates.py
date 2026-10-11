@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from pydantic import ValidationError
 
-from finance_research_agent.domain.enums import DeliveryStatus
+from finance_research_agent.application.replay_service import ArtifactReplayResult
+from finance_research_agent.domain.enums import BriefOrigin, DeliveryStatus
+from finance_research_agent.domain.models import (
+    PublishedArtifact,
+    PublishedRunBundle,
+    RunContext,
+    StoredRun,
+)
 from finance_research_agent.domain.types import FrozenMap
 from finance_research_agent.evaluation import release_gates as release_gates_module
 from finance_research_agent.evaluation.models import (
@@ -36,6 +43,8 @@ from finance_research_agent.evaluation.shadow_records import (
     ReleaseCheckConclusion,
     ReleaseCheckId,
     ReleaseCheckReceipt,
+    ShadowDayAvailability,
+    ShadowDayObservation,
 )
 from finance_research_agent.evaluation.shadow_scorecard import (
     EvaluationGate,
@@ -45,6 +54,7 @@ from finance_research_agent.evaluation.shadow_scorecard import (
     ShadowGateId,
     ShadowPeriod,
     ShadowScorecard,
+    VerifiedShadowRunEvidence,
     _create_shadow_evaluation_evidence,
 )
 
@@ -103,6 +113,92 @@ def _evidence(
         source_commit_sha256=_COMMIT if receipts else None,
         source_tree_sha256=_TREE if receipts else None,
         evidence_hashes=evidence_hashes,
+    )
+
+
+def _personal_shadow_evidence_with_valid_days(
+    day_count: int,
+    base_run: RunContext,
+) -> ShadowEvaluationEvidence:
+    market_dates: list[date] = []
+    current_date = date(2026, 9, 1)
+    while len(market_dates) < day_count:
+        if current_date.weekday() < 5:
+            market_dates.append(current_date)
+        current_date = date.fromordinal(current_date.toordinal() + 1)
+
+    observations: list[ShadowDayObservation] = []
+    verified_runs: list[VerifiedShadowRunEvidence] = []
+    for market_date in market_dates:
+        run_id = f"premarket-{market_date.isoformat()}-r1"
+        run = base_run.model_copy(
+            update={"run_id": run_id, "market_date": market_date, "revision": 1}
+        )
+        bundle = PublishedRunBundle(
+            run=run,
+            bundle=FrozenMap({"brief_origin": BriefOrigin.DETERMINISTIC_REDUCED.value}),
+            report_markdown="verified reduced research publication",
+        )
+        artifact = PublishedArtifact(
+            run_id=run_id,
+            bundle_sha256="c" * 64,
+            markdown_sha256="d" * 64,
+            published_at=datetime(
+                market_date.year,
+                market_date.month,
+                market_date.day,
+                16,
+                tzinfo=UTC,
+            ),
+        )
+        replay = ArtifactReplayResult(
+            run_id=run_id,
+            bundle=bundle,
+            report_markdown=bundle.report_markdown,
+            json_matches=True,
+            markdown_matches=True,
+            stored_json_sha256="c" * 64,
+            replayed_json_sha256="c" * 64,
+            stored_markdown_sha256="d" * 64,
+            replayed_markdown_sha256="d" * 64,
+            component_version_mismatches=(),
+        )
+        verified_runs.append(
+            VerifiedShadowRunEvidence(
+                stored_run=StoredRun(run=run, published=True),
+                published_bundle=bundle,
+                published_artifact=artifact,
+                replay_result=replay,
+            )
+        )
+        observations.append(
+            ShadowDayObservation(
+                id=f"observation-{market_date.isoformat()}",
+                market_date=market_date,
+                recorded_at=datetime(
+                    market_date.year,
+                    market_date.month,
+                    market_date.day,
+                    16,
+                    tzinfo=UTC,
+                ),
+                session_id=f"session-{market_date.isoformat()}",
+                availability=ShadowDayAvailability.ONLINE,
+                observed_run_ids=(run_id,),
+            )
+        )
+
+    return _create_shadow_evaluation_evidence(
+        period=ShadowPeriod(start_date=market_dates[0], end_date=market_dates[-1]),
+        origin=ShadowEvaluationOrigin.PERSONAL_SHADOW,
+        verified_runs=tuple(verified_runs),
+        feedback_records=(),
+        observations=tuple(observations),
+        operator_attestations=(),
+        release_check_receipts=(),
+        source_commit_sha256=None,
+        source_tree_sha256=None,
+        evidence_hashes=("e" * 64,),
     )
 
 
@@ -948,24 +1044,79 @@ def test_builder_aggregates_domain_assertion_failure_and_missing_results(
     assert scenario.id is outcome.scenario_id
 
 
-def test_scorecard_day_gate_stays_pending_at_nineteen_personal_days() -> None:
-    evidence = _evidence(origin=ShadowEvaluationOrigin.PERSONAL_SHADOW)
+def test_scorecard_day_gate_stays_pending_at_nineteen_verified_personal_days(
+    valid_packet,
+) -> None:
+    evidence = _personal_shadow_evidence_with_valid_days(19, valid_packet.run)
     scorecard = _scorecard(
         evidence,
         status=EvaluationGateStatus.PASS,
         valid_trading_days=19,
     )
+    scorecard = scorecard.model_copy(
+        update={
+            "gate_results": tuple(
+                gate.model_copy(
+                    update={
+                        "status": EvaluationGateStatus.PENDING,
+                        "evidence_ids": (),
+                        "reason_codes": ("TWENTY_VALID_PERSONAL_SHADOW_DAYS_REQUIRED",),
+                    }
+                )
+                if gate.id is ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS
+                else gate
+                for gate in scorecard.gate_results
+            )
+        }
+    )
 
     result = build_migration_readiness((), evidence, scorecard)
 
+    verified_day_count_gate = next(
+        gate
+        for gate in result.shadow_graduation.gate_results
+        if gate.id == "VERIFIED_VALID_DAY_COUNT"
+    )
     day_gate = next(
         gate for gate in result.shadow_graduation.gate_results if gate.id == "PERSONAL_SHADOW_DAYS"
     )
+    assert verified_day_count_gate.status is MigrationReadinessStatus.PASS
+    assert verified_day_count_gate.measured_value == 19
     assert day_gate.status is MigrationReadinessStatus.PENDING
     assert "TWENTY_VALID_PERSONAL_SHADOW_DAYS_REQUIRED" in day_gate.reason_codes
+    assert result.shadow_graduation.status is MigrationReadinessStatus.PENDING
 
 
-def test_personal_shadow_graduation_can_pass_with_all_gate_evidence() -> None:
+def test_personal_shadow_graduation_passes_with_twenty_verified_days(valid_packet) -> None:
+    evidence = _personal_shadow_evidence_with_valid_days(20, valid_packet.run)
+    scorecard = _scorecard(
+        evidence,
+        status=EvaluationGateStatus.PASS,
+        valid_trading_days=20,
+    )
+
+    result = build_migration_readiness((), evidence, scorecard)
+
+    assert result.shadow_graduation.status is MigrationReadinessStatus.PASS
+    assert (
+        next(
+            gate
+            for gate in result.shadow_graduation.gate_results
+            if gate.id == "VERIFIED_VALID_DAY_COUNT"
+        ).status
+        is MigrationReadinessStatus.PASS
+    )
+    assert (
+        next(
+            gate
+            for gate in result.shadow_graduation.gate_results
+            if gate.id == "PERSONAL_SHADOW_DAYS"
+        ).measured_value
+        == 20
+    )
+
+
+def test_personal_shadow_graduation_rejects_unverified_twenty_day_claim() -> None:
     evidence = _evidence(
         receipts=_release_receipts(),
         origin=ShadowEvaluationOrigin.PERSONAL_SHADOW,
@@ -979,8 +1130,16 @@ def test_personal_shadow_graduation_can_pass_with_all_gate_evidence() -> None:
 
     result = build_migration_readiness((), evidence, scorecard)
 
-    assert result.shadow_graduation.status is MigrationReadinessStatus.PASS
-    assert scorecard.graduation_ready is True
+    day_count_gate = next(
+        gate
+        for gate in result.shadow_graduation.gate_results
+        if gate.id == "VERIFIED_VALID_DAY_COUNT"
+    )
+    assert day_count_gate.status is MigrationReadinessStatus.FAIL
+    assert day_count_gate.reason_codes == ("SCORECARD_VALID_DAY_COUNT_MISMATCH",)
+    assert day_count_gate.measured_value == 20
+    assert day_count_gate.required_value == 0
+    assert result.shadow_graduation.status is MigrationReadinessStatus.FAIL
 
 
 def test_release_gate_rejects_receipts_bound_to_a_different_commit() -> None:
