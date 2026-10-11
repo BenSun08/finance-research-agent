@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 import tomllib
 from datetime import date, datetime, time, timedelta
@@ -37,14 +38,16 @@ def _configuration(root):
     copytree(PROJECT / "config/examples", root / "config")
     path = root / "config/source-policy.yaml"
     source = yaml.safe_load(path.read_text())
-    source.update({
-        "allowed_adapters": ["alpaca"],
-        "allowed_https_domains": ["api.alpaca.markets", "data.alpaca.markets"],
-        "allowed_hosts_by_adapter": {
-            "alpaca": ["api.alpaca.markets", "data.alpaca.markets"],
-        },
-        "retry_attempts": 0,
-    })
+    source.update(
+        {
+            "allowed_adapters": ["alpaca"],
+            "allowed_https_domains": ["api.alpaca.markets", "data.alpaca.markets"],
+            "allowed_hosts_by_adapter": {
+                "alpaca": ["api.alpaca.markets", "data.alpaca.markets"],
+            },
+            "retry_attempts": 0,
+        }
+    )
     path.write_text(yaml.safe_dump(source))
 
 
@@ -60,19 +63,32 @@ class OfflineHttp:
         from finance_research_agent.adapters.yaml_config import YamlConfigurationRepository
 
         configuration = YamlConfigurationRepository(root / "config").load()
-        self.symbols = tuple(sorted({
-            *configuration.regime.radar_universe,
-            *(item.symbol for item in configuration.watchlist.items),
-        }))
+        self.symbols = tuple(
+            sorted(
+                {
+                    *configuration.regime.radar_universe,
+                    *(item.symbol for item in configuration.watchlist.items),
+                }
+            )
+        )
 
     def payload(self, request):
         if request.url.path == "/v2/assets":
             assert request.url.host == "api.alpaca.markets"
-            return [{
-                "id": f"id-{symbol}", "symbol": symbol, "name": symbol,
-                "exchange": "NASDAQ", "class": "us_equity", "type": "stock",
-                "status": "active", "tradable": True, "fractionable": True,
-            } for symbol in self.symbols]
+            return [
+                {
+                    "id": f"id-{symbol}",
+                    "symbol": symbol,
+                    "name": symbol,
+                    "exchange": "NASDAQ",
+                    "class": "us_equity",
+                    "type": "stock",
+                    "status": "active",
+                    "tradable": True,
+                    "fractionable": True,
+                }
+                for symbol in self.symbols
+            ]
         assert request.url.host == "data.alpaca.markets"
         symbols = request.url.params["symbols"].split(",")
         if request.url.path == "/v2/stocks/bars":
@@ -82,15 +98,35 @@ class OfflineHttp:
                 if start.weekday() < 5:
                     days.append(start)
                 start += timedelta(days=1)
-            return {"bars": {symbol: [{
-                "t": datetime.combine(day, time(20), NOW.tzinfo).isoformat(),
-                "o": 100 + index / 10, "h": 102 + index / 10,
-                "l": 99 + index / 10, "c": 101 + index / 10, "v": 1_000_000,
-            } for index, day in enumerate(days)] for symbol in symbols}, "next_page_token": None}
+            return {
+                "bars": {
+                    symbol: [
+                        {
+                            "t": datetime.combine(day, time(20), NOW.tzinfo).isoformat(),
+                            "o": 100 + index / 10,
+                            "h": 102 + index / 10,
+                            "l": 99 + index / 10,
+                            "c": 101 + index / 10,
+                            "v": 1_000_000,
+                        }
+                        for index, day in enumerate(days)
+                    ]
+                    for symbol in symbols
+                },
+                "next_page_token": None,
+            }
         assert request.url.path == "/v2/stocks/trades/latest"
-        return {"trades": {symbol: {
-            "p": 126.0, "s": 10, "t": (NOW - timedelta(minutes=1)).isoformat(), "x": "V",
-        } for symbol in symbols}}
+        return {
+            "trades": {
+                symbol: {
+                    "p": 126.0,
+                    "s": 10,
+                    "t": (NOW - timedelta(minutes=1)).isoformat(),
+                    "x": "V",
+                }
+                for symbol in symbols
+            }
+        }
 
     def factory(self, policy, deadline, clock):
         owner = self
@@ -115,7 +151,9 @@ class OfflineHttp:
                 raise owner.error("private-canary provider detail")
             content = json.dumps(owner.payload(request)).encode()
             return httpx.Response(
-                200, headers={"content-type": "application/json"}, stream=Stream(content),
+                200,
+                headers={"content-type": "application/json"},
+                stream=Stream(content),
             )
 
         class Transport(httpx.MockTransport):
@@ -124,20 +162,31 @@ class OfflineHttp:
                 super().close()
 
         client = SafeHttpClient(
-            policy, transport=Transport(respond), resolver=lambda host, port: ("93.184.216.34",),
-            clock=clock.now_utc, run_deadline=deadline, sleeper=lambda delay: None,
+            policy,
+            transport=Transport(respond),
+            resolver=lambda host, port: ("93.184.216.34",),
+            clock=clock.now_utc,
+            run_deadline=deadline,
+            sleeper=lambda delay: None,
         )
         self.clients.append(client)
         return client
 
     def services(self, *, settings_factory=None, versions=synthetic_component_versions, clock=None):
         return bootstrap.create_default_services(
-            data_root=self.root, clock=clock or Clock(), calendar_factory=Calendar,
-            settings_factory=settings_factory or (lambda: Settings(
-                data_dir=self.root, alpaca_api_key="offline-key",
-                alpaca_api_secret="offline-secret",
-            )),
-            http_client_factory=self.factory, component_versions=versions,
+            data_root=self.root,
+            clock=clock or Clock(),
+            calendar_factory=Calendar,
+            settings_factory=settings_factory
+            or (
+                lambda: Settings(
+                    data_dir=self.root,
+                    alpaca_api_key="offline-key",
+                    alpaca_api_secret="offline-secret",
+                )
+            ),
+            http_client_factory=self.factory,
+            component_versions=versions,
         )
 
 
@@ -151,20 +200,33 @@ def test_console_entrypoint_uses_authoritative_command_and_importable_main():
 
 
 def test_real_stdio_initialize_list_ignores_invalid_secret_dotenv_and_leaves_tree_unchanged(
-    tmp_path, capfd,
+    tmp_path,
+    capfd,
 ):
     dotenv = tmp_path / ".env"
     dotenv.write_text("private-canary-field=secret-canary\n")
     dotenv.chmod(0o644)
-    before = {path.relative_to(tmp_path).as_posix(): path.read_bytes()
-              for path in tmp_path.rglob("*") if path.is_file()}
+    before = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
     parameters = StdioServerParameters(
-        command=sys.executable, args=["-m", "finance_research_agent.adapters.mcp_bootstrap"],
+        command=sys.executable,
+        args=["-m", "finance_research_agent.adapters.mcp_bootstrap"],
         cwd=tmp_path,
         env={
-            "PYTHONPATH": str(PROJECT / "src"), "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": os.pathsep.join(
+                (
+                    str(PROJECT / "tests" / "network_guard"),
+                    str(PROJECT / "src"),
+                )
+            ),
+            "FINANCE_RESEARCH_AGENT_OFFLINE_TESTS": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
             "AI_MARKET_RESEARCH_DATA_DIR": str(tmp_path / "missing"),
-            "ALPACA_API_KEY": "", "ALPACA_API_SECRET": "",
+            "ALPACA_API_KEY": "",
+            "ALPACA_API_SECRET": "",
         },
     )
 
@@ -178,9 +240,62 @@ def test_real_stdio_initialize_list_ignores_invalid_secret_dotenv_and_leaves_tre
     captured = capfd.readouterr()
     assert captured.out == captured.err == ""
     assert not (tmp_path / "missing").exists()
-    after = {path.relative_to(tmp_path).as_posix(): path.read_bytes()
-             for path in tmp_path.rglob("*") if path.is_file()}
+    after = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
     assert after == before
+
+
+def test_stdio_child_environment_blocks_external_dns_for_mcp_process(tmp_path):
+    marker = tmp_path / "network-probe.txt"
+    probe = tmp_path / "mcp_network_probe.py"
+    probe.write_text(
+        "import os, runpy, socket, sys\n"
+        "from pathlib import Path\n"
+        "marker = Path(os.environ['FINANCE_TEST_NETWORK_PROBE'])\n"
+        "if os.environ.get('FINANCE_RESEARCH_AGENT_OFFLINE_TESTS') != '1' "
+        "or 'sitecustomize' not in sys.modules:\n"
+        "    marker.write_text('guard missing', encoding='utf-8')\n"
+        "else:\n"
+        "    try:\n"
+        "        socket.getaddrinfo('api.example.test', 443)\n"
+        "    except OSError as exc:\n"
+        "        marker.write_text(str(exc), encoding='utf-8')\n"
+        "    else:\n"
+        "        marker.write_text('network call returned', encoding='utf-8')\n"
+        "runpy.run_module('finance_research_agent.adapters.mcp_bootstrap', run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=[str(probe)],
+        cwd=tmp_path,
+        env={
+            "PYTHONPATH": os.pathsep.join(
+                (
+                    str(PROJECT / "tests" / "network_guard"),
+                    str(PROJECT / "src"),
+                )
+            ),
+            "FINANCE_RESEARCH_AGENT_OFFLINE_TESTS": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "AI_MARKET_RESEARCH_DATA_DIR": str(tmp_path / "missing"),
+            "ALPACA_API_KEY": "",
+            "ALPACA_API_SECRET": "",
+            "FINANCE_TEST_NETWORK_PROBE": str(marker),
+        },
+    )
+
+    async def scenario():
+        async with Client(parameters) as client:
+            tools = await client.list_tools()
+            assert tuple(tool.name for tool in tools.tools) == OPERATION_NAMES
+
+    asyncio.run(scenario())
+
+    assert "offline test network guard" in marker.read_text(encoding="utf-8").lower()
 
 
 def test_real_offline_bootstrap_prepares_packet_with_trusted_versions_and_closes_http(tmp_path):
@@ -201,12 +316,15 @@ def test_real_offline_bootstrap_prepares_packet_with_trusted_versions_and_closes
     assert result.research_packet.candidate_exclusions
     assert len(offline.requests) == 3
     assert [request.url.path for request in offline.requests] == [
-        "/v2/assets", "/v2/stocks/bars", "/v2/stocks/trades/latest",
+        "/v2/assets",
+        "/v2/stocks/bars",
+        "/v2/stocks/trades/latest",
     ]
     assert offline.clients[0]._run_deadline == NOW + timedelta(minutes=15)
     assert len(offline.transport_closes) == len(offline.stream_closes) == 3
     payload = FileSystemRunRepository(tmp_path, create_layout=False).read_staged_artifact(
-        result.stored_run.run_id, "research_packet",
+        result.stored_run.run_id,
+        "research_packet",
     )
     assert payload == canonical_bytes(result.research_packet)
     assert "offline-secret" not in payload.decode()
@@ -238,7 +356,9 @@ def test_transport_failures_publish_closed_operational_and_close_clients(tmp_pat
 
 @pytest.mark.parametrize("stage", ["packet", "quality", "published"])
 def test_frozen_resume_does_not_construct_settings_or_current_provider(
-    tmp_path, monkeypatch, stage,
+    tmp_path,
+    monkeypatch,
+    stage,
 ):
     import finance_research_agent.application.premarket_preparation as preparation
 
@@ -258,15 +378,20 @@ def test_frozen_resume_does_not_construct_settings_or_current_provider(
         first = None
     elif stage == "published":
         first = offline.services(settings_factory=lambda: Settings(data_dir=tmp_path)).dispatch(
-            "prepare_premarket_run", PREPARE,
+            "prepare_premarket_run",
+            PREPARE,
         )
     else:
         first = services.dispatch("prepare_premarket_run", PREPARE)
     request_count = len(offline.requests)
     rmtree(tmp_path / "config")
     restored = bootstrap.create_default_services(
-        data_root=tmp_path, clock=Clock(), calendar_factory=Calendar,
-        settings_factory=forbidden, http_client_factory=forbidden, component_versions=forbidden,
+        data_root=tmp_path,
+        clock=Clock(),
+        calendar_factory=Calendar,
+        settings_factory=forbidden,
+        http_client_factory=forbidden,
+        component_versions=forbidden,
     ).dispatch("prepare_premarket_run", RESUME)
     assert len(offline.requests) == request_count
     assert restored.outcome == ("PUBLISHED" if stage == "published" else "PACKET_READY")
@@ -282,7 +407,8 @@ def test_environment_locator_never_reads_dotenv_or_settings(monkeypatch, tmp_pat
     root = tmp_path / "environment-root"
     monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(root))
     services = bootstrap.create_default_services(
-        settings_factory=forbidden, calendar_factory=forbidden,
+        settings_factory=forbidden,
+        calendar_factory=forbidden,
     )
     assert services._run_repository.root == root
     assert not root.exists()
@@ -310,8 +436,11 @@ def test_provider_body_reaching_run_cap_closes_stream_and_publishes_deadline(tmp
 
 def test_actual_provider_status_is_read_only_and_never_sends_requests(tmp_path):
     _configuration(tmp_path)
-    before = {path.relative_to(tmp_path).as_posix(): path.read_bytes()
-              for path in tmp_path.rglob("*") if path.is_file()}
+    before = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
     offline = OfflineHttp(tmp_path)
     status = offline.services().dispatch("get_system_status", "{}")
     assert status.configuration_ready is True
@@ -320,6 +449,9 @@ def test_actual_provider_status_is_read_only_and_never_sends_requests(tmp_path):
     assert len(offline.clients) == 1
     assert offline.clients[0]._run_deadline is None
     assert offline.requests == offline.transport_closes == offline.stream_closes == []
-    after = {path.relative_to(tmp_path).as_posix(): path.read_bytes()
-             for path in tmp_path.rglob("*") if path.is_file()}
+    after = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
     assert after == before

@@ -83,7 +83,14 @@ class Settings(BaseModel):
         dotenv_path: Path | None = None,
     ) -> Settings:
         env = dict(os.environ if environment is None else environment)
-        path = Path(".env") if dotenv_path is None else dotenv_path
+        configured_dotenv = env.get("AI_MARKET_RESEARCH_DOTENV_PATH")
+        path = (
+            dotenv_path
+            if dotenv_path is not None
+            else Path(configured_dotenv)
+            if configured_dotenv
+            else Path(".env")
+        )
         dotenv = _read_dotenv(path) if path.is_symlink() or path.exists() else {}
         provider = secret_provider if secret_provider is not None else MacOSKeychainSecretProvider()
         provider_adapter: SecretProvider = (

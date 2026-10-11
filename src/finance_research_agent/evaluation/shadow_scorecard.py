@@ -1454,6 +1454,11 @@ def build_shadow_scorecard(
 
     research_publications: dict[date, list[VerifiedShadowRunEvidence]] = {}
     for verified_run in evidence.verified_runs:
+        if (
+            evidence.origin is ShadowEvaluationOrigin.PERSONAL_SHADOW
+            and verified_run.normal_provider is not True
+        ):
+            continue
         bundle = verified_run.published_bundle
         artifact = verified_run.published_artifact
         if bundle is None or artifact is None:

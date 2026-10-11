@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from finance_research_agent import __version__
 from finance_research_agent.application.replay_service import ArtifactReplayResult
+from finance_research_agent.application.skill_bundle import compute_skill_version
 from finance_research_agent.domain.enums import BriefOrigin, DeliveryStatus
 from finance_research_agent.domain.models import (
     PublishedArtifact,
@@ -56,11 +59,21 @@ from finance_research_agent.evaluation.shadow_scorecard import (
     ShadowScorecard,
     VerifiedShadowRunEvidence,
     _create_shadow_evaluation_evidence,
+    build_shadow_scorecard,
 )
 
 _COMMIT = "a" * 64
 _TREE = "b" * 64
 _STAMP = datetime(2026, 10, 11, 16, tzinfo=UTC)
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+_CURRENT_SKILL_VERSION = compute_skill_version(
+    {
+        "SKILL.md": (_REPOSITORY_ROOT / "skills/premarket-research/SKILL.md").read_bytes(),
+        "references/workflow-contract.yaml": (
+            _REPOSITORY_ROOT / "skills/premarket-research/references/workflow-contract.yaml"
+        ).read_bytes(),
+    }
+)
 
 
 def _scorecard(
@@ -119,6 +132,8 @@ def _evidence(
 def _personal_shadow_evidence_with_valid_days(
     day_count: int,
     base_run: RunContext,
+    *,
+    real_provider_day_count: int | None = None,
 ) -> ShadowEvaluationEvidence:
     market_dates: list[date] = []
     current_date = date(2026, 9, 1)
@@ -129,7 +144,7 @@ def _personal_shadow_evidence_with_valid_days(
 
     observations: list[ShadowDayObservation] = []
     verified_runs: list[VerifiedShadowRunEvidence] = []
-    for market_date in market_dates:
+    for day_index, market_date in enumerate(market_dates):
         run_id = f"premarket-{market_date.isoformat()}-r1"
         run = base_run.model_copy(
             update={"run_id": run_id, "market_date": market_date, "revision": 1}
@@ -169,6 +184,9 @@ def _personal_shadow_evidence_with_valid_days(
                 published_bundle=bundle,
                 published_artifact=artifact,
                 replay_result=replay,
+                normal_provider=(
+                    real_provider_day_count is None or day_index < real_provider_day_count
+                ),
             )
         )
         observations.append(
@@ -236,18 +254,22 @@ def _attestations(
     result: OperatorReleaseResult = OperatorReleaseResult.PASS,
     *,
     source_commit_sha256: str = _COMMIT,
+    source_tree_sha256: str = _TREE,
+    package_version: str = __version__,
+    skill_version: str = _CURRENT_SKILL_VERSION,
+    id_prefix: str = "",
 ) -> tuple[OperatorReleaseAttestation, ...]:
     return tuple(
         OperatorReleaseAttestation(
-            id=f"attestation-{check_id.value.lower()}",
+            id=f"{id_prefix}attestation-{check_id.value.lower()}",
             check_id=check_id,
             result=result,
             operator_id="operator-1",
             recorded_at=_STAMP,
-            package_version="0.5.0.dev0",
-            skill_version="0.1.0",
+            package_version=package_version,
+            skill_version=skill_version,
             source_commit_sha256=source_commit_sha256,
-            source_tree_sha256=_TREE,
+            source_tree_sha256=source_tree_sha256,
             evidence_sha256="d" * 64,
         )
         for check_id in OperatorReleaseCheckId
@@ -1116,6 +1138,51 @@ def test_personal_shadow_graduation_passes_with_twenty_verified_days(valid_packe
     )
 
 
+def test_synthetic_publications_do_not_count_as_personal_shadow_days(valid_packet) -> None:
+    evidence = _personal_shadow_evidence_with_valid_days(
+        20,
+        valid_packet.run,
+        real_provider_day_count=1,
+    )
+
+    class WeekdayCalendar:
+        def is_trading_day(self, market_date: date) -> bool:
+            return market_date.weekday() < 5
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        WeekdayCalendar(),  # type: ignore[arg-type]
+        evidence=evidence,
+    )
+
+    assert scorecard.origin is ShadowEvaluationOrigin.PERSONAL_SHADOW
+    assert scorecard.valid_trading_days == 1
+
+
+def test_migration_readiness_reverifies_only_real_personal_shadow_days(valid_packet) -> None:
+    evidence = _personal_shadow_evidence_with_valid_days(
+        20,
+        valid_packet.run,
+        real_provider_day_count=1,
+    )
+    scorecard = _scorecard(
+        evidence,
+        status=EvaluationGateStatus.PASS,
+        valid_trading_days=1,
+    )
+
+    result = build_migration_readiness((), evidence, scorecard)
+
+    day_count_gate = next(
+        gate
+        for gate in result.shadow_graduation.gate_results
+        if gate.id == "VERIFIED_VALID_DAY_COUNT"
+    )
+    assert day_count_gate.status is MigrationReadinessStatus.PASS
+    assert day_count_gate.measured_value == 1
+
+
 def test_personal_shadow_graduation_rejects_unverified_twenty_day_claim() -> None:
     evidence = _evidence(
         receipts=_release_receipts(),
@@ -1176,7 +1243,9 @@ def test_supervised_readiness_requires_all_source_bound_operator_attestations(mo
     assert result.supervised_shadow_readiness.status is MigrationReadinessStatus.PASS
 
 
-def test_wrong_source_operator_attestation_fails_supervised_readiness(monkeypatch) -> None:
+def test_stale_source_operator_attestations_leave_supervised_readiness_pending(
+    monkeypatch,
+) -> None:
     _patch_complete_failure_manifest(monkeypatch)
     evidence = _evidence(
         receipts=_release_receipts(),
@@ -1186,13 +1255,126 @@ def test_wrong_source_operator_attestation_fails_supervised_readiness(monkeypatc
 
     result = build_migration_readiness(_passing_outcomes(), evidence, scorecard)
 
-    assert result.supervised_shadow_readiness.status is MigrationReadinessStatus.FAIL
+    assert result.supervised_shadow_readiness.status is MigrationReadinessStatus.PENDING
     attestation_gate = next(
         gate
         for gate in result.supervised_shadow_readiness.gate_results
         if gate.id == "OPERATOR_ATTESTATIONS"
     )
-    assert attestation_gate.status is MigrationReadinessStatus.FAIL
+    assert attestation_gate.status is MigrationReadinessStatus.PENDING
+
+
+def test_current_operator_attestations_are_not_failed_by_retained_stale_history(
+    monkeypatch,
+) -> None:
+    _patch_complete_failure_manifest(monkeypatch)
+    stale = _attestations(source_commit_sha256="9" * 64, id_prefix="stale-")
+    current = _attestations(id_prefix="current-")
+    evidence = _evidence(
+        receipts=_release_receipts(),
+        attestations=(*stale, *current),
+    )
+    scorecard = _scorecard(evidence)
+
+    result = build_migration_readiness(_passing_outcomes(), evidence, scorecard)
+
+    assert result.supervised_shadow_readiness.status is MigrationReadinessStatus.PASS
+    attestation_gate = next(
+        gate
+        for gate in result.supervised_shadow_readiness.gate_results
+        if gate.id == "OPERATOR_ATTESTATIONS"
+    )
+    assert attestation_gate.evidence_ids == tuple(item.id for item in current)
+
+
+@pytest.mark.parametrize(
+    ("version_field", "stale_value"),
+    (("package_version", "0.4.0"), ("skill_version", "sha256:" + "0" * 64)),
+)
+def test_operator_attestations_with_stale_package_or_skill_version_are_pending(
+    monkeypatch,
+    version_field: str,
+    stale_value: str,
+) -> None:
+    _patch_complete_failure_manifest(monkeypatch)
+    evidence = _evidence(
+        receipts=_release_receipts(),
+        attestations=_attestations(**{version_field: stale_value}),
+    )
+    scorecard = _scorecard(evidence)
+
+    result = build_migration_readiness(_passing_outcomes(), evidence, scorecard)
+
+    attestation_gate = next(
+        gate
+        for gate in result.supervised_shadow_readiness.gate_results
+        if gate.id == "OPERATOR_ATTESTATIONS"
+    )
+    assert attestation_gate.status is MigrationReadinessStatus.PENDING
+
+
+def test_current_premarket_skill_version_is_pending_when_a_source_file_is_missing(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        release_gates_module, "_read_confined_skill_source", lambda _root, _path: None
+    )
+
+    assert release_gates_module._current_premarket_skill_version() is None
+
+
+def test_current_premarket_skill_version_is_pending_when_source_is_unsafe(
+    monkeypatch,
+) -> None:
+    def reject_source(_root: Path, _path: Path) -> bytes:
+        raise ValueError("unsafe skill source")
+
+    monkeypatch.setattr(release_gates_module, "_read_confined_skill_source", reject_source)
+
+    assert release_gates_module._current_premarket_skill_version() is None
+
+
+def test_current_premarket_skill_version_is_pending_when_packaged_skill_cannot_load(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fake_module = tmp_path / "src/finance_research_agent/evaluation/release_gates.py"
+    fake_module.parent.mkdir(parents=True)
+    fake_module.touch()
+    monkeypatch.setattr(release_gates_module, "__file__", str(fake_module))
+
+    def reject_installed_skill() -> str:
+        raise RuntimeError("installed skill is unavailable")
+
+    monkeypatch.setattr(
+        release_gates_module,
+        "load_installed_premarket_skill_version",
+        reject_installed_skill,
+    )
+
+    assert release_gates_module._current_premarket_skill_version() is None
+
+
+def test_confined_skill_source_rejects_paths_outside_the_source_root(tmp_path: Path) -> None:
+    assert (
+        release_gates_module._read_confined_skill_source(tmp_path, tmp_path.parent / "outside")
+        is None
+    )
+
+
+def test_confined_skill_source_rejects_symlinked_or_missing_files(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    outside = tmp_path / "outside-skill.md"
+    outside.write_text("untrusted skill", encoding="utf-8")
+    linked = source_root / "linked.md"
+    linked.symlink_to(outside)
+
+    assert release_gates_module._read_confined_skill_source(source_root, linked) is None
+    assert (
+        release_gates_module._read_confined_skill_source(source_root, source_root / "missing.md")
+        is None
+    )
 
 
 def test_shadow_graduation_uses_scorecard_failure_and_real_day_evidence() -> None:
