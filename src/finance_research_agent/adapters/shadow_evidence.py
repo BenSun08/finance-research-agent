@@ -80,7 +80,7 @@ class FileSystemOperatorReleaseAttestationRepository:
 
 
 class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
-    """Read private, canonical receipt batches written by the release collector."""
+    """Read the newest private, canonical batch written by the release collector."""
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
@@ -88,11 +88,19 @@ class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
     def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]:
         if not _private_directory_available_or_missing(self._root):
             return ()
-        batches = tuple(
-            _read_release_batch(path)
+        candidates = tuple(
+            (path, _release_batch_filename_parts(path))
             for path in sorted(self._root.glob("release-checks-*.json"), key=lambda item: item.name)
         )
-        return tuple(receipt for batch in batches for receipt in batch)
+        if not candidates:
+            return ()
+        latest_order = max((int(parts[2]), int(parts[3])) for _path, parts in candidates)
+        latest = tuple(
+            path for path, parts in candidates if (int(parts[2]), int(parts[3])) == latest_order
+        )
+        if len(latest) != 1:
+            raise ValueError("multiple release evidence batches share the latest Actions attempt")
+        return _read_release_batch(latest[0])
 
 
 def _append(
@@ -199,9 +207,7 @@ def _private_directory_available_or_missing(root: Path) -> bool:
 
 
 def _read_release_batch(path: Path) -> tuple[ReleaseCheckReceipt, ...]:
-    match = _RELEASE_BATCH_NAME.fullmatch(path.name)
-    if match is None:
-        raise ValueError("release evidence filename is invalid")
+    commit_sha256, tree_sha256, run_id, attempt = _release_batch_filename_parts(path)
     if path.is_symlink() or not path.is_file():
         raise ValueError("release evidence batch must be a regular local file")
     if stat.S_IMODE(path.stat().st_mode) & 0o077:
@@ -215,7 +221,6 @@ def _read_release_batch(path: Path) -> tuple[ReleaseCheckReceipt, ...]:
         raise ValueError("release evidence batch must contain at least one receipt")
     if _release_batch_bytes(receipts) != payload:
         raise ValueError("release evidence batch is not in canonical form")
-    commit_sha256, tree_sha256, run_id, attempt = match.groups()
     if any(
         receipt.source_commit_sha256 != commit_sha256
         or receipt.source_tree_sha256 != tree_sha256
@@ -225,6 +230,13 @@ def _read_release_batch(path: Path) -> tuple[ReleaseCheckReceipt, ...]:
     ):
         raise ValueError("release evidence receipt does not match its batch identity")
     return receipts
+
+
+def _release_batch_filename_parts(path: Path) -> tuple[str, str, str, str]:
+    match = _RELEASE_BATCH_NAME.fullmatch(path.name)
+    if match is None:
+        raise ValueError("release evidence filename is invalid")
+    return cast(tuple[str, str, str, str], match.groups())
 
 
 def _release_step_matches_batch(receipt: ReleaseCheckReceipt, run_id: str, attempt: str) -> bool:

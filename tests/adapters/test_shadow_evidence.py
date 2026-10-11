@@ -256,14 +256,14 @@ def test_release_evidence_reader_loads_canonical_private_receipt_batch(tmp_path:
     assert reader.list_receipts() == (receipt,)
 
 
-def test_release_evidence_reader_orders_batches_and_ignores_other_diagnostics(
+def test_release_evidence_reader_selects_latest_run_and_ignores_other_diagnostics(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "release-evidence"
     root.mkdir(mode=0o700)
     root.chmod(0o700)
-    later_name_receipt = _release_receipt()
-    earlier_name_receipt = later_name_receipt.model_copy(
+    earlier_run_receipt = _release_receipt()
+    latest_run_receipt = earlier_run_receipt.model_copy(
         update={
             "id": "gha:124:457:1:3",
             "source_commit_sha256": "0" * 64,
@@ -273,20 +273,51 @@ def test_release_evidence_reader_orders_batches_and_ignores_other_diagnostics(
             "response_sha256": "d" * 64,
         }
     )
-    _write_release_receipt_batch(root, (later_name_receipt,))
-    _write_release_receipt_batch(root, (earlier_name_receipt,))
+    latest_attempt_receipt = latest_run_receipt.model_copy(
+        update={
+            "id": "gha:124:457:2:3",
+            "actions_step_id": "2:3",
+            "response_sha256": "e" * 64,
+        }
+    )
+    _write_release_receipt_batch(root, (latest_run_receipt,))
+    _write_release_receipt_batch(root, (earlier_run_receipt,))
+    _write_release_receipt_batch(root, (latest_attempt_receipt,))
     (root / "other-diagnostic.txt").write_text("leave outside reader contract", encoding="utf-8")
 
-    assert FileSystemReleaseEvidenceReader(root).list_receipts() == (
-        earlier_name_receipt,
-        later_name_receipt,
+    assert FileSystemReleaseEvidenceReader(root).list_receipts() == (latest_attempt_receipt,)
+
+
+def test_release_evidence_reader_rejects_ambiguous_latest_attempt(tmp_path: Path) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    first = _release_receipt()
+    conflicting = first.model_copy(
+        update={
+            "source_commit_sha256": "f" * 64,
+            "response_sha256": "d" * 64,
+        }
     )
+    _write_release_receipt_batch(root, (first,))
+    _write_release_receipt_batch(root, (conflicting,))
+
+    with pytest.raises(ValueError, match="multiple release evidence batches share"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
 
 
 def test_release_evidence_reader_returns_empty_for_a_missing_root(tmp_path: Path) -> None:
     reader = FileSystemReleaseEvidenceReader(tmp_path / "missing-release-evidence")
 
     assert reader.list_receipts() == ()
+
+
+def test_release_evidence_reader_returns_empty_for_a_private_empty_root(tmp_path: Path) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+
+    assert FileSystemReleaseEvidenceReader(root).list_receipts() == ()
 
 
 def test_release_evidence_reader_rejects_an_empty_collector_batch(tmp_path: Path) -> None:
