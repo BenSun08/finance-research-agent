@@ -56,6 +56,7 @@ from finance_research_agent.evaluation.shadow_scorecard import (
     ShadowScorecard,
     VerifiedShadowRunEvidence,
     _create_shadow_evaluation_evidence,
+    build_shadow_scorecard,
 )
 
 _COMMIT = "a" * 64
@@ -119,6 +120,8 @@ def _evidence(
 def _personal_shadow_evidence_with_valid_days(
     day_count: int,
     base_run: RunContext,
+    *,
+    real_provider_day_count: int | None = None,
 ) -> ShadowEvaluationEvidence:
     market_dates: list[date] = []
     current_date = date(2026, 9, 1)
@@ -129,7 +132,7 @@ def _personal_shadow_evidence_with_valid_days(
 
     observations: list[ShadowDayObservation] = []
     verified_runs: list[VerifiedShadowRunEvidence] = []
-    for market_date in market_dates:
+    for day_index, market_date in enumerate(market_dates):
         run_id = f"premarket-{market_date.isoformat()}-r1"
         run = base_run.model_copy(
             update={"run_id": run_id, "market_date": market_date, "revision": 1}
@@ -169,6 +172,9 @@ def _personal_shadow_evidence_with_valid_days(
                 published_bundle=bundle,
                 published_artifact=artifact,
                 replay_result=replay,
+                normal_provider=(
+                    real_provider_day_count is None or day_index < real_provider_day_count
+                ),
             )
         )
         observations.append(
@@ -1114,6 +1120,51 @@ def test_personal_shadow_graduation_passes_with_twenty_verified_days(valid_packe
         ).measured_value
         == 20
     )
+
+
+def test_synthetic_publications_do_not_count_as_personal_shadow_days(valid_packet) -> None:
+    evidence = _personal_shadow_evidence_with_valid_days(
+        20,
+        valid_packet.run,
+        real_provider_day_count=1,
+    )
+
+    class WeekdayCalendar:
+        def is_trading_day(self, market_date: date) -> bool:
+            return market_date.weekday() < 5
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        WeekdayCalendar(),  # type: ignore[arg-type]
+        evidence=evidence,
+    )
+
+    assert scorecard.origin is ShadowEvaluationOrigin.PERSONAL_SHADOW
+    assert scorecard.valid_trading_days == 1
+
+
+def test_migration_readiness_reverifies_only_real_personal_shadow_days(valid_packet) -> None:
+    evidence = _personal_shadow_evidence_with_valid_days(
+        20,
+        valid_packet.run,
+        real_provider_day_count=1,
+    )
+    scorecard = _scorecard(
+        evidence,
+        status=EvaluationGateStatus.PASS,
+        valid_trading_days=1,
+    )
+
+    result = build_migration_readiness((), evidence, scorecard)
+
+    day_count_gate = next(
+        gate
+        for gate in result.shadow_graduation.gate_results
+        if gate.id == "VERIFIED_VALID_DAY_COUNT"
+    )
+    assert day_count_gate.status is MigrationReadinessStatus.PASS
+    assert day_count_gate.measured_value == 1
 
 
 def test_personal_shadow_graduation_rejects_unverified_twenty_day_claim() -> None:

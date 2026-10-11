@@ -850,6 +850,8 @@ def _verified_personal_shadow_days(
 
     research_run_ids_by_date: dict[date, list[str]] = {}
     for verified_run in evidence.verified_runs:
+        if verified_run.normal_provider is not True:
+            continue
         bundle = verified_run.published_bundle
         artifact = verified_run.published_artifact
         if bundle is None or artifact is None:
