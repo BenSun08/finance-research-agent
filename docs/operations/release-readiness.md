@@ -101,6 +101,11 @@ commit. A failed exact-head step produces `FAIL`.
 access, an incomplete run, or a missing exact-head step also stays `PENDING`;
 do not reuse a receipt from an older commit.
 
+The exact-head workflow and each declared matrix job must also complete
+successfully. If every named receipt step passes but the enclosing workflow or
+job does not, the collector keeps release evidence `PENDING` until a successful
+run is available. A failed named receipt step remains `FAIL`.
+
 Receipt batches, the current status pointer, and the interprocess collection
 lock are written only below
 `$AI_MARKET_RESEARCH_DATA_DIR/diagnostics/evaluation`, in private directories

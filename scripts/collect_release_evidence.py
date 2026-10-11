@@ -454,12 +454,24 @@ def collect_release_evidence(
                 missing.append((check_id, python_version))
             else:
                 receipts.append(receipt)
+    matrix_jobs_succeeded = all(
+        len(version_jobs) == 1
+        and version_jobs[0].get("status") == "completed"
+        and version_jobs[0].get("conclusion") == "success"
+        for version_jobs in jobs_by_version.values()
+    )
+    workflow_succeeded = run.get("conclusion") == "success" and matrix_jobs_succeeded
     return ReleaseCollection(
         source=source,
         actions_run_id=identity.run_id,
         run_attempt=attempt,
         receipts=tuple(receipts),
         missing=tuple(missing),
+        pending_reason=(
+            None
+            if workflow_succeeded
+            else "exact-head workflow or matrix job did not complete successfully"
+        ),
     )
 
 

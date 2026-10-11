@@ -288,6 +288,35 @@ def test_release_evidence_collection_uses_an_injected_reader_for_exact_head_matr
     assert reader.calls[1][0] == ("repos/BenSun08/finance-research-agent/actions/runs/91001/jobs")
 
 
+def test_unmapped_failed_workflow_step_cannot_make_release_evidence_pass() -> None:
+    source_commit = _head_commit()
+    responses = _fake_actions_responses(source_commit)
+    workflow_route = "repos/BenSun08/finance-research-agent/actions/workflows/ci.yml/runs"
+    run_route = "repos/BenSun08/finance-research-agent/actions/runs/91001/jobs"
+    run = responses[workflow_route][0]["workflow_runs"][0]
+    run["conclusion"] = "failure"
+    for job in responses[run_route][0]["jobs"]:
+        job["conclusion"] = "failure"
+        job["steps"].append(
+            {
+                "number": len(job["steps"]) + 1,
+                "name": "Unmapped post-check",
+                "status": "completed",
+                "conclusion": "failure",
+                "completed_at": "2026-10-10T16:31:00Z",
+            }
+        )
+
+    collection = collect_release_evidence(
+        source_commit,
+        _FakeActionsApiReader(responses),
+    )
+
+    assert collection.status == "PENDING"
+    assert collection.missing == ()
+    assert len(collection.receipts) == 42
+
+
 def test_release_evidence_collection_marks_duplicate_exact_steps_pending() -> None:
     source_commit = _head_commit()
     responses = _fake_actions_responses(source_commit)
