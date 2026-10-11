@@ -17,7 +17,7 @@ from finance_research_agent.application.ports import (
     ReleaseEvidenceReader,
     RunRepository,
 )
-from finance_research_agent.domain.models import Identifier
+from finance_research_agent.domain.models import Identifier, Sha256
 from finance_research_agent.domain.types import canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
     OperatorReleaseAttestation,
@@ -26,6 +26,7 @@ from finance_research_agent.evaluation.shadow_records import (
 )
 
 _IDENTIFIER_ADAPTER = TypeAdapter(Identifier)
+_SHA256_ADAPTER = TypeAdapter(Sha256)
 _RELEASE_RECEIPTS_ADAPTER = TypeAdapter(tuple[ReleaseCheckReceipt, ...])
 _RELEASE_BATCH_NAME = re.compile(
     r"^release-checks-([0-9a-f]{64})-([0-9a-f]{64})-([1-9][0-9]*)-([1-9][0-9]*)\.json$"
@@ -80,10 +81,28 @@ class FileSystemOperatorReleaseAttestationRepository:
 
 
 class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
-    """Read the newest private, canonical batch written by the release collector."""
+    """Read the newest private batch for one configured source commit and tree."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        source_commit_sha256: Sha256,
+        source_tree_sha256: Sha256,
+    ) -> None:
         self._root = Path(root)
+        try:
+            self._source_commit_sha256 = _SHA256_ADAPTER.validate_python(
+                source_commit_sha256, strict=True
+            )
+        except ValidationError as exc:
+            raise ValueError("release evidence source commit hash is invalid") from exc
+        try:
+            self._source_tree_sha256 = _SHA256_ADAPTER.validate_python(
+                source_tree_sha256, strict=True
+            )
+        except ValidationError as exc:
+            raise ValueError("release evidence source tree hash is invalid") from exc
 
     def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]:
         if not _private_directory_available_or_missing(self._root):
@@ -94,13 +113,20 @@ class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
         )
         if not candidates:
             return ()
-        latest_order = max((int(parts[2]), int(parts[3])) for _path, parts in candidates)
-        latest = tuple(
-            path for path, parts in candidates if (int(parts[2]), int(parts[3])) == latest_order
+        matching_source = tuple(
+            (path, parts)
+            for path, parts in candidates
+            if parts[0] == self._source_commit_sha256 and parts[1] == self._source_tree_sha256
         )
-        if len(latest) != 1:
-            raise ValueError("multiple release evidence batches share the latest Actions attempt")
-        return _read_release_batch(latest[0])
+        if not matching_source:
+            return ()
+        latest_order = max((int(parts[2]), int(parts[3])) for _path, parts in matching_source)
+        latest = next(
+            path
+            for path, parts in matching_source
+            if (int(parts[2]), int(parts[3])) == latest_order
+        )
+        return _read_release_batch(latest)
 
 
 def _append(

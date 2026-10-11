@@ -14,6 +14,7 @@ from finance_research_agent.adapters.shadow_evidence import (
     FileSystemShadowObservationRepository,
 )
 from finance_research_agent.domain.enums import Capability
+from finance_research_agent.domain.models import Sha256
 from finance_research_agent.domain.regime import Regime
 from finance_research_agent.domain.types import canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
@@ -28,6 +29,9 @@ from finance_research_agent.evaluation.shadow_records import (
     ShadowExecutiveEventState,
     ShadowExecutiveIdentification,
 )
+
+_SOURCE_COMMIT_SHA256 = "a" * 64
+_SOURCE_TREE_SHA256 = "b" * 64
 
 
 class _Runs:
@@ -84,8 +88,8 @@ def _release_receipt() -> ReleaseCheckReceipt:
     return ReleaseCheckReceipt(
         id="gha:123:456:1:2",
         check_id=ReleaseCheckId.LINT,
-        source_commit_sha256="a" * 64,
-        source_tree_sha256="b" * 64,
+        source_commit_sha256=_SOURCE_COMMIT_SHA256,
+        source_tree_sha256=_SOURCE_TREE_SHA256,
         repository_id="789",
         workflow_id="101",
         actions_run_id="123",
@@ -95,6 +99,19 @@ def _release_receipt() -> ReleaseCheckReceipt:
         completed_at=datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
         conclusion=ReleaseCheckConclusion.SUCCESS,
         response_sha256="c" * 64,
+    )
+
+
+def _release_reader(
+    root: Path,
+    *,
+    source_commit_sha256: Sha256 = _SOURCE_COMMIT_SHA256,
+    source_tree_sha256: Sha256 = _SOURCE_TREE_SHA256,
+) -> FileSystemReleaseEvidenceReader:
+    return FileSystemReleaseEvidenceReader(
+        root,
+        source_commit_sha256=source_commit_sha256,
+        source_tree_sha256=source_tree_sha256,
     )
 
 
@@ -251,12 +268,12 @@ def test_release_evidence_reader_loads_canonical_private_receipt_batch(tmp_path:
     root.chmod(0o700)
     receipt = _release_receipt()
     _write_release_receipt_batch(root, (receipt,))
-    reader = FileSystemReleaseEvidenceReader(root)
+    reader = _release_reader(root)
 
     assert reader.list_receipts() == (receipt,)
 
 
-def test_release_evidence_reader_selects_latest_run_and_ignores_other_diagnostics(
+def test_release_evidence_reader_selects_latest_attempt_for_requested_source(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "release-evidence"
@@ -265,9 +282,8 @@ def test_release_evidence_reader_selects_latest_run_and_ignores_other_diagnostic
     earlier_run_receipt = _release_receipt()
     latest_run_receipt = earlier_run_receipt.model_copy(
         update={
-            "id": "gha:124:457:1:3",
-            "source_commit_sha256": "0" * 64,
-            "actions_run_id": "124",
+            "id": "gha:125:457:1:3",
+            "actions_run_id": "125",
             "actions_job_id": "457",
             "actions_step_id": "1:3",
             "response_sha256": "d" * 64,
@@ -275,39 +291,69 @@ def test_release_evidence_reader_selects_latest_run_and_ignores_other_diagnostic
     )
     latest_attempt_receipt = latest_run_receipt.model_copy(
         update={
-            "id": "gha:124:457:2:3",
+            "id": "gha:125:457:2:3",
             "actions_step_id": "2:3",
             "response_sha256": "e" * 64,
+        }
+    )
+    newer_other_source = earlier_run_receipt.model_copy(
+        update={
+            "id": "gha:999:458:1:4",
+            "source_commit_sha256": "0" * 64,
+            "actions_run_id": "999",
+            "actions_job_id": "458",
+            "actions_step_id": "1:4",
+            "response_sha256": "f" * 64,
         }
     )
     _write_release_receipt_batch(root, (latest_run_receipt,))
     _write_release_receipt_batch(root, (earlier_run_receipt,))
     _write_release_receipt_batch(root, (latest_attempt_receipt,))
+    _write_release_receipt_batch(root, (newer_other_source,))
     (root / "other-diagnostic.txt").write_text("leave outside reader contract", encoding="utf-8")
 
-    assert FileSystemReleaseEvidenceReader(root).list_receipts() == (latest_attempt_receipt,)
+    assert _release_reader(root).list_receipts() == (latest_attempt_receipt,)
 
 
-def test_release_evidence_reader_rejects_ambiguous_latest_attempt(tmp_path: Path) -> None:
+def test_release_evidence_reader_returns_empty_when_requested_source_is_absent(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "release-evidence"
     root.mkdir(mode=0o700)
     root.chmod(0o700)
-    first = _release_receipt()
-    conflicting = first.model_copy(
+    other_source = _release_receipt().model_copy(
         update={
             "source_commit_sha256": "f" * 64,
             "response_sha256": "d" * 64,
         }
     )
-    _write_release_receipt_batch(root, (first,))
-    _write_release_receipt_batch(root, (conflicting,))
+    _write_release_receipt_batch(root, (other_source,))
 
-    with pytest.raises(ValueError, match="multiple release evidence batches share"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+    assert _release_reader(root).list_receipts() == ()
+
+
+def test_release_evidence_reader_rejects_invalid_source_hash_configuration(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+
+    with pytest.raises(ValueError, match="source commit hash is invalid"):
+        FileSystemReleaseEvidenceReader(
+            root,
+            source_commit_sha256="not-a-sha256",
+            source_tree_sha256=_SOURCE_TREE_SHA256,
+        )
+
+    with pytest.raises(ValueError, match="source tree hash is invalid"):
+        FileSystemReleaseEvidenceReader(
+            root,
+            source_commit_sha256=_SOURCE_COMMIT_SHA256,
+            source_tree_sha256="not-a-sha256",
+        )
 
 
 def test_release_evidence_reader_returns_empty_for_a_missing_root(tmp_path: Path) -> None:
-    reader = FileSystemReleaseEvidenceReader(tmp_path / "missing-release-evidence")
+    reader = _release_reader(tmp_path / "missing-release-evidence")
 
     assert reader.list_receipts() == ()
 
@@ -317,7 +363,7 @@ def test_release_evidence_reader_returns_empty_for_a_private_empty_root(tmp_path
     root.mkdir(mode=0o700)
     root.chmod(0o700)
 
-    assert FileSystemReleaseEvidenceReader(root).list_receipts() == ()
+    assert _release_reader(root).list_receipts() == ()
 
 
 def test_release_evidence_reader_rejects_an_empty_collector_batch(tmp_path: Path) -> None:
@@ -333,7 +379,7 @@ def test_release_evidence_reader_rejects_an_empty_collector_batch(tmp_path: Path
     path.chmod(0o600)
 
     with pytest.raises(ValueError, match="must contain at least one receipt"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(root).list_receipts()
 
 
 def test_release_evidence_reader_rejects_malformed_and_noncanonical_batches(
@@ -346,11 +392,11 @@ def test_release_evidence_reader_rejects_malformed_and_noncanonical_batches(
 
     path.write_bytes(b" " + path.read_bytes())
     with pytest.raises(ValueError, match="not in canonical form"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(root).list_receipts()
 
     path.write_bytes(b"{not json}")
     with pytest.raises(ValueError, match="malformed"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(root).list_receipts()
 
 
 def test_release_evidence_reader_binds_receipt_identity_to_batch_filename(
@@ -374,7 +420,11 @@ def test_release_evidence_reader_binds_receipt_identity_to_batch_filename(
     path.chmod(0o600)
 
     with pytest.raises(ValueError, match="does not match its batch identity"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(
+            root,
+            source_commit_sha256="f" * 64,
+            source_tree_sha256=receipt.source_tree_sha256,
+        ).list_receipts()
 
 
 def test_release_evidence_reader_rejects_permissive_roots_and_batch_files(
@@ -384,18 +434,18 @@ def test_release_evidence_reader_rejects_permissive_roots_and_batch_files(
     root.mkdir(mode=0o700)
     root.chmod(0o750)
     with pytest.raises(ValueError, match="root must be a private local directory"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(root).list_receipts()
 
     root.chmod(0o700)
     path = _write_release_receipt_batch(root, (_release_receipt(),))
     path.chmod(0o640)
     with pytest.raises(ValueError, match="batch must be private"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(root).list_receipts()
 
     file_root = tmp_path / "release-evidence-file"
     file_root.write_text("not a directory", encoding="utf-8")
     with pytest.raises(ValueError, match="root must be a private local directory"):
-        FileSystemReleaseEvidenceReader(file_root).list_receipts()
+        _release_reader(file_root).list_receipts()
 
 
 def test_release_evidence_reader_rejects_symlink_roots_and_batches(tmp_path: Path) -> None:
@@ -405,7 +455,7 @@ def test_release_evidence_reader_rejects_symlink_roots_and_batches(tmp_path: Pat
     root_link = tmp_path / "root-link"
     root_link.symlink_to(target, target_is_directory=True)
     with pytest.raises(ValueError, match="root must be a private local directory"):
-        FileSystemReleaseEvidenceReader(root_link).list_receipts()
+        _release_reader(root_link).list_receipts()
 
     receipt = _release_receipt()
     real_batch = _write_release_receipt_batch(target, (receipt,))
@@ -415,7 +465,7 @@ def test_release_evidence_reader_rejects_symlink_roots_and_batches(tmp_path: Pat
     batch_link = root_batch / real_batch.name
     batch_link.symlink_to(real_batch)
     with pytest.raises(ValueError, match="regular local file"):
-        FileSystemReleaseEvidenceReader(root_batch).list_receipts()
+        _release_reader(root_batch).list_receipts()
 
 
 def test_release_evidence_reader_rejects_invalid_names_and_nonfile_batches(
@@ -428,7 +478,7 @@ def test_release_evidence_reader_rejects_invalid_names_and_nonfile_batches(
     invalid_name.write_bytes(b"[]")
     invalid_name.chmod(0o600)
     with pytest.raises(ValueError, match="filename is invalid"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(root).list_receipts()
 
     invalid_name.unlink()
     receipt = _release_receipt()
@@ -438,7 +488,7 @@ def test_release_evidence_reader_rejects_invalid_names_and_nonfile_batches(
     )
     batch_directory.mkdir(mode=0o700)
     with pytest.raises(ValueError, match="regular local file"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(root).list_receipts()
 
 
 def test_release_evidence_reader_rejects_a_receipt_with_malformed_step_identity(
@@ -453,7 +503,7 @@ def test_release_evidence_reader_rejects_a_receipt_with_malformed_step_identity(
     _write_release_receipt_batch(root, (receipt,))
 
     with pytest.raises(ValueError, match="does not match its batch identity"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(root).list_receipts()
 
 
 def test_release_evidence_reader_reports_unreadable_batch_as_malformed(
@@ -473,7 +523,7 @@ def test_release_evidence_reader_reports_unreadable_batch_as_malformed(
     monkeypatch.setattr(Path, "read_bytes", fail_batch_read)
 
     with pytest.raises(ValueError, match="batch is malformed"):
-        FileSystemReleaseEvidenceReader(root).list_receipts()
+        _release_reader(root).list_receipts()
 
 
 def test_repositories_return_empty_when_fixed_data_directories_do_not_exist(
