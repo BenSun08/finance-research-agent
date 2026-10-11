@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -62,9 +63,6 @@ def test_ci_uses_locked_dependencies_and_all_supported_interpreters() -> None:
 
     assert set(events) == {"pull_request", "push"}
     job = workflow["jobs"]["verify"]
-    assert job["env"]["AI_MARKET_RESEARCH_DOTENV_PATH"] == (
-        "${{ runner.temp }}/finance-research-agent-config/.env"
-    )
     assert any(
         step["name"] == "Prepare isolated configuration root" and "chmod 600" in step["run"]
         for step in job["steps"]
@@ -105,7 +103,10 @@ def test_ci_runs_bounded_doctor_with_private_synthetic_configuration() -> None:
     prepare = next(step for step in steps if step["name"] == "Prepare isolated configuration root")
     doctor = next(step for step in steps if step["name"] == "Check local doctor")
 
-    assert '"$AI_MARKET_RESEARCH_DATA_DIR/config"' in prepare["run"]
+    assert 'data_dir="$RUNNER_TEMP/finance-research-agent-data"' in prepare["run"]
+    assert 'dotenv_path="$RUNNER_TEMP/finance-research-agent-config/.env"' in prepare["run"]
+    assert '>> "$GITHUB_ENV"' in prepare["run"]
+    assert '"$data_dir/config"' in prepare["run"]
     assert "config/examples" in prepare["run"]
     assert "chmod 700" in prepare["run"]
     assert "chmod 600" in prepare["run"]
@@ -114,6 +115,46 @@ def test_ci_runs_bounded_doctor_with_private_synthetic_configuration() -> None:
     assert steps.index(doctor) > steps.index(
         next(step for step in steps if step["name"] == "Install locked dependencies")
     )
+
+
+def test_ci_preparation_exports_private_runner_roots_for_later_steps(tmp_path: Path) -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["verify"]["steps"]
+    prepare = next(step for step in steps if step["name"] == "Prepare isolated configuration root")
+    runner_temp = tmp_path / "runner-temp"
+    github_env = tmp_path / "github-env"
+
+    for environment in (workflow.get("env", {}), workflow["jobs"]["verify"].get("env", {})):
+        assert all(
+            not (isinstance(value, str) and "${{ runner." in value)
+            for value in environment.values()
+        )
+
+    subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-c", prepare["run"]],
+        cwd=ROOT,
+        env={
+            "PATH": os.environ["PATH"],
+            "RUNNER_TEMP": str(runner_temp),
+            "GITHUB_ENV": str(github_env),
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    data_dir = runner_temp / "finance-research-agent-data"
+    dotenv_path = runner_temp / "finance-research-agent-config/.env"
+    assert github_env.read_text(encoding="utf-8").splitlines() == [
+        f"AI_MARKET_RESEARCH_DATA_DIR={data_dir}",
+        f"AI_MARKET_RESEARCH_DOTENV_PATH={dotenv_path}",
+    ]
+    assert stat.S_IMODE(data_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE((data_dir / "config").stat().st_mode) == 0o700
+    assert stat.S_IMODE(dotenv_path.stat().st_mode) == 0o600
+    config_files = list((data_dir / "config").glob("*.yaml"))
+    assert config_files
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in config_files)
 
 
 def test_offline_network_guard_is_inherited_by_child_python_processes() -> None:

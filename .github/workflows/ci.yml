@@ -19,8 +19,6 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
     env:
-      AI_MARKET_RESEARCH_DATA_DIR: ${{ runner.temp }}/finance-research-agent-data
-      AI_MARKET_RESEARCH_DOTENV_PATH: ${{ runner.temp }}/finance-research-agent-config/.env
       ALPACA_API_KEY: ""
       ALPACA_API_SECRET: ""
       OPENAI_API_KEY: ""
@@ -37,13 +35,17 @@ jobs:
 
       - name: Prepare isolated configuration root
         run: |
-          mkdir -p "$(dirname "$AI_MARKET_RESEARCH_DOTENV_PATH")"
-          : > "$AI_MARKET_RESEARCH_DOTENV_PATH"
-          chmod 600 "$AI_MARKET_RESEARCH_DOTENV_PATH"
-          mkdir -p "$AI_MARKET_RESEARCH_DATA_DIR/config"
-          chmod 700 "$AI_MARKET_RESEARCH_DATA_DIR" "$AI_MARKET_RESEARCH_DATA_DIR/config"
-          cp config/examples/*.yaml "$AI_MARKET_RESEARCH_DATA_DIR/config/"
-          chmod 600 "$AI_MARKET_RESEARCH_DATA_DIR/config/"*.yaml
+          data_dir="$RUNNER_TEMP/finance-research-agent-data"
+          dotenv_path="$RUNNER_TEMP/finance-research-agent-config/.env"
+          printf 'AI_MARKET_RESEARCH_DATA_DIR=%s\n' "$data_dir" >> "$GITHUB_ENV"
+          printf 'AI_MARKET_RESEARCH_DOTENV_PATH=%s\n' "$dotenv_path" >> "$GITHUB_ENV"
+          mkdir -p "$(dirname "$dotenv_path")"
+          : > "$dotenv_path"
+          chmod 600 "$dotenv_path"
+          mkdir -p "$data_dir/config"
+          chmod 700 "$data_dir" "$data_dir/config"
+          cp config/examples/*.yaml "$data_dir/config/"
+          chmod 600 "$data_dir/config/"*.yaml
 
       - name: Install locked dependencies
         run: |
