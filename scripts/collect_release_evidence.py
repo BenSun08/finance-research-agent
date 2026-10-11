@@ -585,6 +585,33 @@ def _store_receipts(collection: ReleaseCollection) -> Path:
     return destination
 
 
+def _rewrite_existing_pending_watermark(destination: Path, payload: bytes) -> None:
+    try:
+        descriptor = os.open(destination, os.O_WRONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise CollectionUnavailable("could not update previous private release status") from exc
+    try:
+        existing = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(existing.st_mode)
+            or existing.st_nlink != 1
+            or stat.S_IMODE(existing.st_mode) & 0o077
+        ):
+            raise CollectionUnavailable("release status destination is unsafe")
+        os.ftruncate(descriptor, 0)
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise OSError("short write while updating private release status")
+            offset += written
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise CollectionUnavailable("could not update previous private release status") from exc
+    finally:
+        os.close(descriptor)
+
+
 def _store_collection_watermark(
     collection: ReleaseCollection,
     *,
@@ -617,6 +644,9 @@ def _store_collection_watermark(
         destination.unlink(missing_ok=True)
         _fsync_directory(root)
     except OSError as exc:
+        if status == "PENDING" and destination.is_file() and not destination.is_symlink():
+            _rewrite_existing_pending_watermark(destination, payload)
+            return destination
         raise CollectionUnavailable("could not invalidate previous private release status") from exc
 
     descriptor, temporary_name = tempfile.mkstemp(
@@ -651,7 +681,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     try:
-        _source_identity(arguments.source_commit)
+        source_identity = _source_identity(arguments.source_commit)
     except CollectionUnavailable:
         print("Release evidence: PENDING (source identity is unavailable)")
         return 0
@@ -659,10 +689,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         root = _evaluation_root()
         with _release_collection_lock(root):
+            pending_collection = ReleaseCollection(
+                source=source_identity,
+                actions_run_id=None,
+                run_attempt=None,
+                receipts=(),
+                missing=(),
+                pending_reason="exact-head collection is in progress",
+            )
+            _store_collection_watermark(pending_collection, status="PENDING")
             try:
                 collection = collect_release_evidence(arguments.source_commit, _GhApiReader())
             except CollectionUnavailable:
-                print("Release evidence: PENDING (source identity is unavailable)")
+                print("Release evidence: PENDING (exact-head collection is unavailable)")
                 return 0
             _store_collection_watermark(collection, status="PENDING")
             if collection.receipts:

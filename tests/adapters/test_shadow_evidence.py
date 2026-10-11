@@ -130,6 +130,9 @@ def _write_release_watermark(
     run_attempt: int | None = 1,
     status: str = "PASS",
 ) -> Path:
+    lock_path = root / ".release-evidence.lock"
+    lock_path.touch(mode=0o600, exist_ok=True)
+    lock_path.chmod(0o600)
     path = root / f"release-status-{source_commit_sha256}-{source_tree_sha256}.json"
     payload = json.dumps(
         {
@@ -385,6 +388,21 @@ def test_release_evidence_reader_ignores_retained_receipts_without_a_current_wat
     receipt = _release_receipt()
     _write_release_receipt_batch(root, (receipt,))
     (root / f"release-status-{_SOURCE_COMMIT_SHA256}-{_SOURCE_TREE_SHA256}.json").unlink()
+
+    assert _release_reader(root).list_receipts() == ()
+
+
+def test_release_evidence_reader_ignores_watermarks_without_collection_lock(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    receipt = _release_receipt()
+    _write_release_receipt_batch(root, (receipt,))
+    lock_path = root / ".release-evidence.lock"
+    lock_path.touch(mode=0o600)
+    lock_path.unlink()
 
     assert _release_reader(root).list_receipts() == ()
 

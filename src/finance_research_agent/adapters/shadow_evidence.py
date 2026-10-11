@@ -7,6 +7,9 @@ import os
 import re
 import stat
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from fcntl import LOCK_SH, LOCK_UN, flock
 from pathlib import Path
 from typing import Literal, cast
 
@@ -129,6 +132,12 @@ class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
     def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]:
         if not _private_directory_available_or_missing(self._root):
             return ()
+        with _release_evidence_read_lock(self._root) as locked:
+            if not locked:
+                return ()
+            return self._list_receipts_locked()
+
+    def _list_receipts_locked(self) -> tuple[ReleaseCheckReceipt, ...]:
         watermark_path = _release_collection_watermark_path(
             self._root,
             self._source_commit_sha256,
@@ -267,6 +276,38 @@ def _release_collection_watermark_path(
     root: Path, source_commit_sha256: str, source_tree_sha256: str
 ) -> Path:
     return root / f"release-status-{source_commit_sha256}-{source_tree_sha256}.json"
+
+
+@contextmanager
+def _release_evidence_read_lock(root: Path) -> Iterator[bool]:
+    lock_path = root / ".release-evidence.lock"
+    try:
+        descriptor = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        yield False
+        return
+    except OSError as exc:
+        raise ValueError("release evidence collection lock is unavailable") from exc
+
+    with os.fdopen(descriptor, "rb") as lock_file:
+        lock_stat = os.fstat(lock_file.fileno())
+        if (
+            not stat.S_ISREG(lock_stat.st_mode)
+            or lock_stat.st_nlink != 1
+            or stat.S_IMODE(lock_stat.st_mode) & 0o077
+        ):
+            raise ValueError("release evidence collection lock is unsafe")
+        if not stat.S_IMODE(lock_stat.st_mode) & stat.S_IWUSR or not os.access(lock_path, os.W_OK):
+            yield False
+            return
+        try:
+            flock(lock_file.fileno(), LOCK_SH)
+        except OSError as exc:
+            raise ValueError("release evidence collection lock is unavailable") from exc
+        try:
+            yield True
+        finally:
+            flock(lock_file.fileno(), LOCK_UN)
 
 
 def _read_release_collection_watermark(
