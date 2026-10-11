@@ -10,9 +10,11 @@ import re
 import stat
 import subprocess
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -505,6 +507,34 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+@contextmanager
+def _release_collection_lock(root: Path) -> Iterator[None]:
+    lock_path = root / ".release-evidence.lock"
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            lock_path,
+            os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW,
+            0o600,
+        )
+        lock_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_nlink != 1:
+            raise CollectionUnavailable("release evidence lock is unsafe")
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "r+b") as lock_file:
+            descriptor = -1
+            flock(lock_file.fileno(), LOCK_EX)
+            try:
+                yield
+            finally:
+                flock(lock_file.fileno(), LOCK_UN)
+    except OSError as exc:
+        raise CollectionUnavailable("release evidence collection is unavailable") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def _existing_receipt_matches(destination: Path, payload: bytes) -> bool:
     return (
         not destination.is_symlink()
@@ -621,17 +651,24 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     try:
-        collection = collect_release_evidence(arguments.source_commit, _GhApiReader())
+        _source_identity(arguments.source_commit)
     except CollectionUnavailable:
         print("Release evidence: PENDING (source identity is unavailable)")
         return 0
 
     try:
-        _store_collection_watermark(collection, status="PENDING")
-        if collection.receipts:
-            _store_receipts(collection)
-        if collection.status != "PENDING":
-            _store_collection_watermark(collection, status=collection.status)
+        root = _evaluation_root()
+        with _release_collection_lock(root):
+            try:
+                collection = collect_release_evidence(arguments.source_commit, _GhApiReader())
+            except CollectionUnavailable:
+                print("Release evidence: PENDING (source identity is unavailable)")
+                return 0
+            _store_collection_watermark(collection, status="PENDING")
+            if collection.receipts:
+                _store_receipts(collection)
+            if collection.status != "PENDING":
+                _store_collection_watermark(collection, status=collection.status)
     except (CollectionUnavailable, OSError, ValueError):
         print("Release evidence: PENDING (private receipt storage is unavailable)")
         return 0

@@ -7,7 +7,9 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, Lock
 
 import pytest
 import yaml
@@ -456,6 +458,7 @@ def test_release_evidence_storage_is_private_canonical_and_idempotent(
         allow_nan=False,
     ).encode("utf-8")
     assert status_paths[0].stat().st_mode & 0o777 == 0o600
+    assert (evidence_root / ".release-evidence.lock").stat().st_mode & 0o777 == 0o600
     assert evidence_root.stat().st_mode & 0o777 == 0o700
 
     assert collector_main(["--source-commit", source_commit]) == 0
@@ -499,14 +502,30 @@ def test_release_evidence_storage_rejects_permissive_file_from_atomic_write_race
 
 
 def test_release_evidence_main_reports_pending_without_leaking_errors(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    data_root = tmp_path / "private-data"
+    data_root.mkdir(mode=0o700)
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(data_root))
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DOTENV_PATH", str(tmp_path / "missing.env"))
+
     def unavailable(_source: str, _reader: ActionsApiReader) -> ReleaseCollection:
         raise CollectionUnavailable("private bearer token")
 
     monkeypatch.setattr(release_collector, "collect_release_evidence", unavailable)
 
     result = collector_main(["--source-commit", "HEAD"])
+
+    assert result == 0
+    assert capsys.readouterr().out == "Release evidence: PENDING (source identity is unavailable)\n"
+
+
+def test_release_evidence_main_reports_an_invalid_source_as_pending(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = collector_main(["--source-commit", "HEAD~1"])
 
     assert result == 0
     assert capsys.readouterr().out == "Release evidence: PENDING (source identity is unavailable)\n"
@@ -743,6 +762,85 @@ def test_watermark_refresh_failure_invalidates_an_older_pass_pointer(
     assert reader.list_receipts() == ()
 
 
+def test_overlapping_collections_preserve_the_later_pending_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_commit = _head_commit()
+    complete = collect_release_evidence(
+        source_commit,
+        _FakeActionsApiReader(_fake_actions_responses(source_commit)),
+    )
+    receipt = complete.receipts[0]
+    pending = ReleaseCollection(
+        source=complete.source,
+        actions_run_id=None,
+        run_attempt=None,
+        receipts=(),
+        missing=((ReleaseCheckId.FORMAT, "3.12"),),
+        pending_reason="newest exact-head run is incomplete",
+    )
+    data_root = tmp_path / "private-data"
+    data_root.mkdir(mode=0o700)
+    evidence_root = data_root / "diagnostics" / "evaluation"
+    reader = FileSystemReleaseEvidenceReader(
+        evidence_root,
+        source_commit_sha256=receipt.source_commit_sha256,
+        source_tree_sha256=receipt.source_tree_sha256,
+        repository_id=receipt.repository_id,
+        workflow_id=receipt.workflow_id,
+    )
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(data_root))
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DOTENV_PATH", str(tmp_path / "missing.env"))
+    first_collection_started = Event()
+    release_first_collection = Event()
+    second_invocation_started = Event()
+    second_collection_started = Event()
+    second_invocation_finished = Event()
+    counter_lock = Lock()
+    collection_count = 0
+
+    def overlapping_collection(*_args: object) -> ReleaseCollection:
+        nonlocal collection_count
+        with counter_lock:
+            collection_number = collection_count
+            collection_count += 1
+        if collection_number == 0:
+            first_collection_started.set()
+            if not release_first_collection.wait(timeout=5):
+                raise TimeoutError("test did not release the first collection")
+            return complete
+        second_collection_started.set()
+        return pending
+
+    monkeypatch.setattr(release_collector, "collect_release_evidence", overlapping_collection)
+
+    def run_second_collection() -> int:
+        second_invocation_started.set()
+        try:
+            return collector_main(["--source-commit", source_commit])
+        finally:
+            second_invocation_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(collector_main, ["--source-commit", source_commit])
+        assert first_collection_started.wait(timeout=2)
+        second = executor.submit(run_second_collection)
+        assert second_invocation_started.wait(timeout=2)
+        pending_ran_while_older_collection_was_blocked = second_collection_started.wait(timeout=0.2)
+        if pending_ran_while_older_collection_was_blocked:
+            assert second_invocation_finished.wait(timeout=2)
+        release_first_collection.set()
+        assert first.result(timeout=5) == 0
+        assert second.result(timeout=5) == 0
+
+    assert not pending_ran_while_older_collection_was_blocked
+    assert collection_count == 2
+    assert reader.list_receipts() == ()
+    capsys.readouterr()
+
+
 def test_release_evidence_main_rejects_a_symlink_watermark_destination(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -780,6 +878,67 @@ def test_release_evidence_main_rejects_a_symlink_watermark_destination(
     assert watermark.is_symlink()
     assert external.read_bytes() == b"outside private data root"
     assert tuple(evidence_root.glob("release-checks-*.json")) == ()
+
+
+def test_release_evidence_main_rejects_a_symlink_collection_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_commit = _head_commit()
+    data_root = tmp_path / "private-data"
+    data_root.mkdir(mode=0o700)
+    diagnostics_root = data_root / "diagnostics"
+    diagnostics_root.mkdir(mode=0o700)
+    diagnostics_root.chmod(0o700)
+    evidence_root = diagnostics_root / "evaluation"
+    evidence_root.mkdir(mode=0o700)
+    evidence_root.chmod(0o700)
+    external = tmp_path / "external-lock"
+    external.write_bytes(b"outside private data root")
+    (evidence_root / ".release-evidence.lock").symlink_to(external)
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(data_root))
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DOTENV_PATH", str(tmp_path / "missing.env"))
+
+    result = collector_main(["--source-commit", source_commit])
+
+    assert result == 0
+    assert capsys.readouterr().out == (
+        "Release evidence: PENDING (private receipt storage is unavailable)\n"
+    )
+    assert external.read_bytes() == b"outside private data root"
+    assert tuple(evidence_root.glob("release-status-*.json")) == ()
+
+
+def test_release_evidence_main_rejects_a_hard_linked_collection_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_commit = _head_commit()
+    data_root = tmp_path / "private-data"
+    data_root.mkdir(mode=0o700)
+    diagnostics_root = data_root / "diagnostics"
+    diagnostics_root.mkdir(mode=0o700)
+    diagnostics_root.chmod(0o700)
+    evidence_root = diagnostics_root / "evaluation"
+    evidence_root.mkdir(mode=0o700)
+    evidence_root.chmod(0o700)
+    external = tmp_path / "external-lock"
+    external.write_bytes(b"outside private data root")
+    (evidence_root / ".release-evidence.lock").hardlink_to(external)
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(data_root))
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DOTENV_PATH", str(tmp_path / "missing.env"))
+
+    result = collector_main(["--source-commit", source_commit])
+
+    assert result == 0
+    assert capsys.readouterr().out == (
+        "Release evidence: PENDING (private receipt storage is unavailable)\n"
+    )
+    assert external.read_bytes() == b"outside private data root"
+    assert external.stat().st_nlink == 2
+    assert tuple(evidence_root.glob("release-status-*.json")) == ()
 
 
 def test_release_evidence_main_reports_storage_failure_as_pending(
