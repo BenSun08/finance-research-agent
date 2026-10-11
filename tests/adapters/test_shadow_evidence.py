@@ -8,10 +8,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from finance_research_agent.adapters import shadow_evidence as shadow_evidence_module
 from finance_research_agent.adapters.shadow_evidence import (
     FileSystemOperatorReleaseAttestationRepository,
     FileSystemReleaseEvidenceReader,
     FileSystemShadowObservationRepository,
+    _release_batch_filename_parts,
 )
 from finance_research_agent.domain.enums import Capability
 from finance_research_agent.domain.models import Sha256
@@ -433,6 +435,94 @@ def test_release_evidence_reader_fails_closed_on_interrupted_empty_lock_state(
     lock_path.chmod(0o600)
 
     assert _release_reader(root).list_receipts() == ()
+
+
+def test_release_evidence_reader_fails_closed_when_collection_lock_cannot_be_opened(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_receipt_batch(root, (_release_receipt(),))
+    lock_path = root / ".release-evidence.lock"
+    real_open = shadow_evidence_module.os.open
+
+    def reject_lock(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if Path(path) == lock_path:
+            raise PermissionError("private lock")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(shadow_evidence_module.os, "open", reject_lock)
+
+    with pytest.raises(ValueError, match="collection lock is unavailable"):
+        _release_reader(root).list_receipts()
+
+
+def test_release_evidence_reader_rejects_a_hardlinked_collection_lock(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_receipt_batch(root, (_release_receipt(),))
+    lock_path = root / ".release-evidence.lock"
+    lock_alias = root / "lock-alias"
+    lock_alias.hardlink_to(lock_path)
+
+    with pytest.raises(ValueError, match="collection lock is unsafe"):
+        _release_reader(root).list_receipts()
+
+
+def test_release_evidence_reader_ignores_a_nonwritable_collection_lock(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_receipt_batch(root, (_release_receipt(),))
+    (root / ".release-evidence.lock").chmod(0o400)
+
+    assert _release_reader(root).list_receipts() == ()
+
+
+def test_release_evidence_reader_fails_closed_when_shared_locking_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_receipt_batch(root, (_release_receipt(),))
+
+    def reject_shared_lock(_descriptor: int, _operation: int) -> None:
+        raise OSError("lock unavailable")
+
+    monkeypatch.setattr(shadow_evidence_module, "flock", reject_shared_lock)
+
+    with pytest.raises(ValueError, match="collection lock is unavailable"):
+        _release_reader(root).list_receipts()
+
+
+def test_release_evidence_reader_ignores_noncanonical_collection_lock_state(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_receipt_batch(root, (_release_receipt(),))
+    lock_path = root / ".release-evidence.lock"
+    lock_path.write_bytes(lock_path.read_bytes() + b"\n")
+    lock_path.chmod(0o600)
+
+    assert _release_reader(root).list_receipts() == ()
+
+
+def test_release_evidence_batch_name_parser_rejects_noncontract_filename(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="filename is invalid"):
+        _release_batch_filename_parts(tmp_path / "release-checks-invalid.json")
 
 
 def test_release_evidence_reader_uses_pending_watermark_over_retained_receipts(

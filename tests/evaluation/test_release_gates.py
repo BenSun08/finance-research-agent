@@ -1313,6 +1313,70 @@ def test_operator_attestations_with_stale_package_or_skill_version_are_pending(
     assert attestation_gate.status is MigrationReadinessStatus.PENDING
 
 
+def test_current_premarket_skill_version_is_pending_when_a_source_file_is_missing(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        release_gates_module, "_read_confined_skill_source", lambda _root, _path: None
+    )
+
+    assert release_gates_module._current_premarket_skill_version() is None
+
+
+def test_current_premarket_skill_version_is_pending_when_source_is_unsafe(
+    monkeypatch,
+) -> None:
+    def reject_source(_root: Path, _path: Path) -> bytes:
+        raise ValueError("unsafe skill source")
+
+    monkeypatch.setattr(release_gates_module, "_read_confined_skill_source", reject_source)
+
+    assert release_gates_module._current_premarket_skill_version() is None
+
+
+def test_current_premarket_skill_version_is_pending_when_packaged_skill_cannot_load(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fake_module = tmp_path / "src/finance_research_agent/evaluation/release_gates.py"
+    fake_module.parent.mkdir(parents=True)
+    fake_module.touch()
+    monkeypatch.setattr(release_gates_module, "__file__", str(fake_module))
+
+    def reject_installed_skill() -> str:
+        raise RuntimeError("installed skill is unavailable")
+
+    monkeypatch.setattr(
+        release_gates_module,
+        "load_installed_premarket_skill_version",
+        reject_installed_skill,
+    )
+
+    assert release_gates_module._current_premarket_skill_version() is None
+
+
+def test_confined_skill_source_rejects_paths_outside_the_source_root(tmp_path: Path) -> None:
+    assert (
+        release_gates_module._read_confined_skill_source(tmp_path, tmp_path.parent / "outside")
+        is None
+    )
+
+
+def test_confined_skill_source_rejects_symlinked_or_missing_files(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    outside = tmp_path / "outside-skill.md"
+    outside.write_text("untrusted skill", encoding="utf-8")
+    linked = source_root / "linked.md"
+    linked.symlink_to(outside)
+
+    assert release_gates_module._read_confined_skill_source(source_root, linked) is None
+    assert (
+        release_gates_module._read_confined_skill_source(source_root, source_root / "missing.md")
+        is None
+    )
+
+
 def test_shadow_graduation_uses_scorecard_failure_and_real_day_evidence() -> None:
     gates = tuple(
         EvaluationGate(
