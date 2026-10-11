@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field, computed_field, model_validator
 
 from finance_research_agent.domain.enums import BriefOrigin, Capability
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     Identifier,
     PerformanceTelemetry,
@@ -38,6 +39,7 @@ from finance_research_agent.evaluation.shadow_records import (
     ReleaseCheckReceipt,
     ShadowExecutiveEventState,
     ShadowExecutiveIdentification,
+    ShadowFailureOperationsCoverage,
 )
 
 if TYPE_CHECKING:
@@ -838,6 +840,134 @@ def _safety_gate(
     )
 
 
+def _failure_operations_gate(
+    evidence: ShadowEvaluationEvidence,
+    eligible_dates: tuple[date, ...],
+) -> EvaluationGate:
+    superseded_ids = {
+        item.corrects_observation_id
+        for item in evidence.observations
+        if item.corrects_observation_id is not None
+    }
+    current_observations = tuple(
+        sorted(
+            (
+                item
+                for item in evidence.observations
+                if item.id not in superseded_ids
+                and evidence.period.start_date <= item.market_date <= evidence.period.end_date
+            ),
+            key=lambda item: (item.market_date, item.recorded_at, item.id),
+        )
+    )
+    observations_by_date: dict[date, list[ShadowDayObservation]] = {}
+    for item in current_observations:
+        observations_by_date.setdefault(item.market_date, []).append(item)
+
+    evidence_ids = set(evidence.evidence_hashes)
+    known_failure_refs: set[str] = set()
+    failure_records: dict[str, tuple[ErrorCode, frozenset[Capability]]] = {}
+    missing_detail = False
+    recovery_not_actionable = False
+    recovery_reference_missing = False
+    missing_capability = False
+    conflicting_records = False
+    missing_coverage = False
+    incomplete_coverage = False
+
+    for item in current_observations:
+        evidence_ids.add(item.id)
+        known_failure_refs.update(item.production_failure_refs)
+        evidence_ids.update(item.production_failure_refs)
+        evidence_ids.update(item.actionable_recovery_refs)
+        observation = item.failure_operations_observation
+        if observation is None:
+            if item.market_date in eligible_dates:
+                missing_coverage = True
+            continue
+        if observation.coverage is ShadowFailureOperationsCoverage.INCOMPLETE:
+            if item.market_date in eligible_dates:
+                incomplete_coverage = True
+        for failure in observation.failures:
+            evidence_ids.add(failure.failure_ref)
+            known_failure_refs.add(failure.failure_ref)
+            stable_identity = (
+                failure.failure_code,
+                frozenset(failure.affected_capabilities),
+            )
+            prior = failure_records.get(failure.failure_ref)
+            if prior is not None and prior != stable_identity:
+                conflicting_records = True
+            else:
+                failure_records[failure.failure_ref] = stable_identity
+            if not failure.affected_capabilities:
+                missing_capability = True
+            recovery = failure.recovery
+            if recovery is None:
+                recovery_not_actionable = True
+                continue
+            evidence_ids.add(recovery.recovery_ref)
+            if (
+                not recovery.action
+                or not recovery.validation_plan
+                or not recovery.action.strip()
+                or not recovery.validation_plan.strip()
+            ):
+                recovery_not_actionable = True
+            if recovery.recovery_ref not in item.actionable_recovery_refs:
+                recovery_reference_missing = True
+
+    for market_date in eligible_dates:
+        day_observations = observations_by_date.get(market_date, [])
+        if not day_observations:
+            missing_coverage = True
+            continue
+        if any(item.failure_operations_observation is None for item in day_observations):
+            missing_coverage = True
+        if any(
+            item.failure_operations_observation is not None
+            and item.failure_operations_observation.coverage
+            is ShadowFailureOperationsCoverage.INCOMPLETE
+            for item in day_observations
+        ):
+            incomplete_coverage = True
+
+    operation_refs = set(failure_records)
+    missing_detail = bool(known_failure_refs - operation_refs)
+    reasons: list[str] = []
+    if missing_detail:
+        reasons.append("FAILURE_OPERATION_DETAILS_MISSING")
+    if missing_capability:
+        reasons.append("FAILURE_OPERATION_CAPABILITY_MISSING")
+    if recovery_not_actionable:
+        reasons.append("FAILURE_RECOVERY_NOT_ACTIONABLE")
+    if recovery_reference_missing:
+        reasons.append("FAILURE_RECOVERY_REFERENCE_MISSING")
+    if conflicting_records:
+        reasons.append("CONFLICTING_FAILURE_OPERATION_RECORDS")
+    if reasons:
+        status = EvaluationGateStatus.FAIL
+    else:
+        if missing_coverage:
+            reasons.append("FAILURE_OPERATIONS_COVERAGE_UNKNOWN")
+        if incomplete_coverage:
+            reasons.append("FAILURE_OPERATIONS_COVERAGE_INCOMPLETE")
+        if not eligible_dates:
+            reasons.append("NO_ELIGIBLE_TRADING_DAYS")
+        status = EvaluationGateStatus.PENDING if reasons else EvaluationGateStatus.PASS
+
+    return EvaluationGate(
+        id=ShadowGateId.FAILURE_OPERATIONS,
+        status=status,
+        evidence_ids=tuple(sorted(evidence_ids)),
+        reason_codes=tuple(reasons),
+        measured_value=(
+            len(known_failure_refs) if not (missing_coverage or incomplete_coverage) else None
+        ),
+        required_value="all observed failures have an actionable recovery record",
+    )
+
+
 def _release_check_evidence(
     evidence: ShadowEvaluationEvidence,
     required_checks: tuple[ReleaseCheckId, ...],
@@ -1418,6 +1548,7 @@ def build_shadow_scorecard(
     specific_gates = {
         ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS: day_gate,
         ShadowGateId.SAFETY: _safety_gate(evidence, eligible_dates),
+        ShadowGateId.FAILURE_OPERATIONS: _failure_operations_gate(evidence, eligible_dates),
         ShadowGateId.DETERMINISTIC_CORRECTNESS: _deterministic_correctness_gate(evidence),
         ShadowGateId.EVIDENCE: _citation_evidence_gate(evidence),
         ShadowGateId.REVIEW_TIME: review_time_gate,

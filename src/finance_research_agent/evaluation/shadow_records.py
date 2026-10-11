@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from pydantic import ConfigDict, Field, model_validator
 
 from finance_research_agent.domain.enums import Capability
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     Identifier,
     Sha256,
@@ -71,6 +72,64 @@ class ShadowSafetyIncidentObservation(StrictModel):
         return self
 
 
+class ShadowFailureOperationStatus(StrEnum):
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"
+
+
+class ShadowFailureOperationsCoverage(StrEnum):
+    COMPLETE = "COMPLETE"
+    INCOMPLETE = "INCOMPLETE"
+
+
+class ShadowFailureRecoveryRecord(StrictModel):
+    """Bounded recovery action and validation plan for one known failure."""
+
+    recovery_ref: Identifier
+    action: Annotated[str, Field(max_length=500, pattern=r"^[\x20-\x7E]*$")] | None = None
+    validation_plan: Annotated[str, Field(max_length=500, pattern=r"^[\x20-\x7E]*$")] | None = None
+
+    @model_validator(mode="after")
+    def text_is_nonblank_when_present(self) -> ShadowFailureRecoveryRecord:
+        for name, value in (
+            ("recovery action", self.action),
+            ("validation plan", self.validation_plan),
+        ):
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must be printable English text")
+        return self
+
+
+class ShadowFailureOperation(StrictModel):
+    """Typed operator record for one failure and its recovery state."""
+
+    failure_ref: Identifier
+    failure_code: ErrorCode
+    status: ShadowFailureOperationStatus
+    affected_capabilities: tuple[Capability, ...] = Field(default=(), max_length=8)
+    recovery: ShadowFailureRecoveryRecord | None = None
+
+    @model_validator(mode="after")
+    def capabilities_are_unique(self) -> ShadowFailureOperation:
+        if len(set(self.affected_capabilities)) != len(self.affected_capabilities):
+            raise ValueError("affected capabilities must be unique")
+        return self
+
+
+class ShadowFailureOperationsObservation(StrictModel):
+    """Operator declaration of whether all failures for a day were reviewed."""
+
+    coverage: ShadowFailureOperationsCoverage
+    failures: tuple[ShadowFailureOperation, ...] = Field(default=(), max_length=128)
+
+    @model_validator(mode="after")
+    def failure_references_are_unique(self) -> ShadowFailureOperationsObservation:
+        if len({item.failure_ref for item in self.failures}) != len(self.failures):
+            raise ValueError("failure references must be unique")
+        return self
+
+
 class ShadowExecutiveEventState(StrEnum):
     UNAVAILABLE = "UNAVAILABLE"
     NO_MATERIAL_EVENTS = "NO_MATERIAL_EVENTS"
@@ -116,14 +175,28 @@ class ShadowDayObservation(StrictModel):
                         "required": ["schema_version"],
                     },
                     "then": {
-                        "properties": {"safety_incident_observation": {"type": "null"}}
+                        "properties": {
+                            "safety_incident_observation": {"type": "null"},
+                            "failure_operations_observation": {"type": "null"},
+                        }
                     },
-                }
+                },
+                {
+                    "if": {
+                        "properties": {"schema_version": {"const": "0.2"}},
+                        "required": ["schema_version"],
+                    },
+                    "then": {
+                        "properties": {
+                            "failure_operations_observation": {"type": "null"}
+                        }
+                    },
+                },
             ]
         }
     )
 
-    schema_version: Literal["0.1", "0.2"] = "0.2"  # type: ignore[assignment]
+    schema_version: Literal["0.1", "0.2", "0.3"] = "0.3"  # type: ignore[assignment]
     id: Identifier
     market_date: date
     recorded_at: UtcDatetime
@@ -138,6 +211,7 @@ class ShadowDayObservation(StrictModel):
     detailed_review_duration_seconds: NonNegativeReviewSeconds | None = None
     executive_identification: ShadowExecutiveIdentification | None = None
     safety_incident_observation: ShadowSafetyIncidentObservation | None = None
+    failure_operations_observation: ShadowFailureOperationsObservation | None = None
     corrects_observation_id: Identifier | None = None
     corrects_observation_sha256: Sha256 | None = None
 
@@ -145,6 +219,13 @@ class ShadowDayObservation(StrictModel):
     def observation_is_consistent(self) -> ShadowDayObservation:
         if self.schema_version == "0.1" and self.safety_incident_observation is not None:
             raise ValueError("schema 0.1 cannot include a safety incident observation")
+        if (
+            self.schema_version in {"0.1", "0.2"}
+            and self.failure_operations_observation is not None
+        ):
+            raise ValueError(
+                f"schema {self.schema_version} cannot include failure operations observation"
+            )
         if (
             self.availability is ShadowDayAvailability.EXCLUDED
             and self.exclusion_reason is None
@@ -263,6 +344,11 @@ __all__ = [
     "ShadowDayObservation",
     "ShadowExecutiveEventState",
     "ShadowExecutiveIdentification",
+    "ShadowFailureOperation",
+    "ShadowFailureOperationStatus",
+    "ShadowFailureOperationsCoverage",
+    "ShadowFailureOperationsObservation",
+    "ShadowFailureRecoveryRecord",
     "ShadowSafetyIncident",
     "ShadowSafetyIncidentCategory",
     "ShadowSafetyIncidentObservation",

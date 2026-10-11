@@ -14,6 +14,8 @@ from finance_research_agent.application.shadow_evidence_service import (
     record_operator_release_attestation,
     record_shadow_day_observation,
 )
+from finance_research_agent.domain.enums import Capability
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.types import canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
     OperatorReleaseAttestation,
@@ -21,6 +23,11 @@ from finance_research_agent.evaluation.shadow_records import (
     OperatorReleaseResult,
     ShadowDayAvailability,
     ShadowDayObservation,
+    ShadowFailureOperation,
+    ShadowFailureOperationsCoverage,
+    ShadowFailureOperationsObservation,
+    ShadowFailureOperationStatus,
+    ShadowFailureRecoveryRecord,
     ShadowSafetyIncidentCategory,
     ShadowSafetyIncidentObservation,
 )
@@ -146,8 +153,45 @@ def test_shadow_day_writer_persists_source_bound_safety_incident_observation() -
 
     record = repository.get_observation(receipt.observation_id)
     assert record is not None
-    assert record.schema_version == "0.2"
+    assert record.schema_version == "0.3"
     assert record.safety_incident_observation == safety_observation
+    assert receipt.record_sha256 == sha256(canonical_bytes(record)).hexdigest()
+
+
+def test_shadow_day_writer_persists_failure_operations_observation() -> None:
+    repository = _Observations()
+    failure_observation = ShadowFailureOperationsObservation(
+        coverage=ShadowFailureOperationsCoverage.COMPLETE,
+        failures=(
+            ShadowFailureOperation(
+                failure_ref="failure-1",
+                failure_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                status=ShadowFailureOperationStatus.RESOLVED,
+                affected_capabilities=(Capability.MARKET_SUMMARY_AVAILABLE,),
+                recovery=ShadowFailureRecoveryRecord(
+                    recovery_ref="recovery-1",
+                    action="Restore the configured market data connection.",
+                    validation_plan="Run readiness and confirm a valid daily bar.",
+                ),
+            ),
+        ),
+    )
+
+    receipt = record_shadow_day_observation(
+        _day_request(
+            production_failure_refs=("failure-1",),
+            actionable_recovery_refs=("recovery-1",),
+            failure_operations_observation=failure_observation,
+        ),
+        repository,
+        _Calendar(),
+        _Clock(datetime(2026, 10, 10, 0, 0, tzinfo=UTC)),
+    )
+
+    record = repository.get_observation(receipt.observation_id)
+    assert record is not None
+    assert record.schema_version == "0.3"
+    assert record.failure_operations_observation == failure_observation
     assert receipt.record_sha256 == sha256(canonical_bytes(record)).hexdigest()
 
 
@@ -181,6 +225,22 @@ def test_legacy_shadow_day_request_cannot_claim_safety_observation() -> None:
         match="schema 0.1 cannot include a safety incident observation",
     ):
         _day_request(schema_version="0.1", safety_incident_observation=safety_observation)
+
+
+def test_legacy_shadow_day_request_cannot_claim_failure_operations() -> None:
+    failure_observation = ShadowFailureOperationsObservation(
+        coverage=ShadowFailureOperationsCoverage.COMPLETE,
+        failures=(),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="schema 0.2 cannot include failure operations observation",
+    ):
+        _day_request(
+            schema_version="0.2",
+            failure_operations_observation=failure_observation,
+        )
 
 
 @pytest.mark.parametrize(

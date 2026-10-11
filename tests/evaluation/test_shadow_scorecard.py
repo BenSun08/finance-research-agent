@@ -9,6 +9,8 @@ import pytest
 from pydantic import ValidationError
 
 from finance_research_agent.application.feedback_service import RecordedFeedback
+from finance_research_agent.domain.enums import Capability
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     EventRecord,
     PublishedArtifact,
@@ -24,6 +26,11 @@ from finance_research_agent.evaluation.shadow_records import (
     ShadowDayAvailability,
     ShadowDayExclusionReason,
     ShadowDayObservation,
+    ShadowFailureOperation,
+    ShadowFailureOperationsCoverage,
+    ShadowFailureOperationsObservation,
+    ShadowFailureOperationStatus,
+    ShadowFailureRecoveryRecord,
     ShadowSafetyIncident,
     ShadowSafetyIncidentCategory,
     ShadowSafetyIncidentObservation,
@@ -871,6 +878,367 @@ def _safety_receipts(
 
 def _safety_gate(scorecard):
     return next(gate for gate in scorecard.gate_results if gate.id is ShadowGateId.SAFETY)
+
+
+def _failure_evidence(
+    observations: tuple[ShadowDayObservation, ...],
+    *,
+    period: ShadowPeriod | None = None,
+):
+    from finance_research_agent.evaluation.shadow_scorecard import (
+        _create_shadow_evaluation_evidence,
+    )
+
+    return _create_shadow_evaluation_evidence(
+        period=period or ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 26)),
+        origin=ShadowEvaluationOrigin.PERSONAL_SHADOW,
+        verified_runs=(),
+        feedback_records=(),
+        observations=observations,
+        operator_attestations=(),
+        release_check_receipts=(),
+        source_commit_sha256="a" * 64,
+        source_tree_sha256="b" * 64,
+        evidence_hashes=("c" * 64,),
+    )
+
+
+def _failure_operations_gate(scorecard):
+    return next(
+        gate for gate in scorecard.gate_results if gate.id is ShadowGateId.FAILURE_OPERATIONS
+    )
+
+
+def _failure_operation(
+    *,
+    recovery: ShadowFailureRecoveryRecord | None = None,
+    status: ShadowFailureOperationStatus = ShadowFailureOperationStatus.RESOLVED,
+) -> ShadowFailureOperation:
+    return ShadowFailureOperation(
+        failure_ref="failure-provider-1",
+        failure_code=ErrorCode.PROVIDER_UNAVAILABLE,
+        status=status,
+        affected_capabilities=(Capability.MARKET_SUMMARY_AVAILABLE,),
+        recovery=recovery,
+    )
+
+
+def _actionable_recovery() -> ShadowFailureRecoveryRecord:
+    return ShadowFailureRecoveryRecord(
+        recovery_ref="recovery-provider-1",
+        action="Restore the configured market data connection.",
+        validation_plan="Run readiness and confirm a valid daily bar is returned.",
+    )
+
+
+def _failure_day_observation(**changes: object) -> ShadowDayObservation:
+    values: dict[str, object] = {
+        "id": "shadow-day-failures-1",
+        "market_date": date(2026, 8, 26),
+        "recorded_at": datetime(2026, 8, 26, 16, tzinfo=UTC),
+        "session_id": "session-failures-1",
+        "availability": ShadowDayAvailability.ONLINE,
+    }
+    values.update(changes)
+    return ShadowDayObservation(**values)
+
+
+def test_failure_operations_gate_is_pending_without_known_coverage() -> None:
+    evidence = _failure_evidence((_failure_day_observation(),))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "FAILURE_OPERATIONS_COVERAGE_UNKNOWN" in gate.reason_codes
+
+
+def test_failure_operations_gate_is_pending_for_incomplete_coverage() -> None:
+    observation = _failure_day_observation(
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.INCOMPLETE,
+            failures=(),
+        )
+    )
+    evidence = _failure_evidence((observation,))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "FAILURE_OPERATIONS_COVERAGE_INCOMPLETE" in gate.reason_codes
+
+
+def test_failure_operations_gate_passes_only_with_explicit_complete_zero_coverage() -> None:
+    observation = _failure_day_observation(
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(),
+        )
+    )
+    evidence = _failure_evidence((observation,))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PASS
+    assert gate.measured_value == 0
+    assert gate.required_value == "all observed failures have an actionable recovery record"
+
+
+def test_failure_operations_gate_accepts_a_closed_actionable_failure_record() -> None:
+    recovery = _actionable_recovery()
+    observation = _failure_day_observation(
+        production_failure_refs=("failure-provider-1",),
+        actionable_recovery_refs=(recovery.recovery_ref,),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(_failure_operation(recovery=recovery),),
+        ),
+    )
+    evidence = _failure_evidence((observation,))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PASS
+    assert gate.measured_value == 1
+    assert "failure-provider-1" in gate.evidence_ids
+    assert "recovery-provider-1" in gate.evidence_ids
+
+
+def test_failure_operations_gate_fails_for_known_failure_without_details_or_recovery() -> None:
+    known_but_undocumented = _failure_day_observation(
+        production_failure_refs=("failure-provider-1",),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(),
+        ),
+    )
+    no_recovery = _failure_day_observation(
+        id="shadow-day-failures-no-recovery",
+        production_failure_refs=("failure-provider-1",),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(_failure_operation(),),
+        ),
+    )
+
+    undocumented_scorecard = build_shadow_scorecard(
+        (), (), _Calendar(), evidence=_failure_evidence((known_but_undocumented,))
+    )
+    no_recovery_scorecard = build_shadow_scorecard(
+        (), (), _Calendar(), evidence=_failure_evidence((no_recovery,))
+    )
+
+    assert _failure_operations_gate(undocumented_scorecard).status is EvaluationGateStatus.FAIL
+    assert "FAILURE_OPERATION_DETAILS_MISSING" in _failure_operations_gate(
+        undocumented_scorecard
+    ).reason_codes
+    assert _failure_operations_gate(no_recovery_scorecard).status is EvaluationGateStatus.FAIL
+    assert "FAILURE_RECOVERY_NOT_ACTIONABLE" in _failure_operations_gate(
+        no_recovery_scorecard
+    ).reason_codes
+
+
+def test_failure_operations_gate_requires_recovery_ref_to_match_actionable_index() -> None:
+    recovery = _actionable_recovery()
+    observation = _failure_day_observation(
+        production_failure_refs=("failure-provider-1",),
+        actionable_recovery_refs=(),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(_failure_operation(recovery=recovery),),
+        ),
+    )
+    evidence = _failure_evidence((observation,))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert "FAILURE_RECOVERY_REFERENCE_MISSING" in gate.reason_codes
+
+
+def test_failure_operations_gate_fails_for_recovery_without_action_or_validation() -> None:
+    partial_recovery = ShadowFailureRecoveryRecord(
+        recovery_ref="recovery-provider-1",
+        action=None,
+        validation_plan="Run readiness and confirm a valid daily bar is returned.",
+    )
+    observation = _failure_day_observation(
+        production_failure_refs=("failure-provider-1",),
+        actionable_recovery_refs=(partial_recovery.recovery_ref,),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(_failure_operation(recovery=partial_recovery),),
+        ),
+    )
+    evidence = _failure_evidence((observation,))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert "FAILURE_RECOVERY_NOT_ACTIONABLE" in gate.reason_codes
+
+
+def test_failure_operations_gate_fails_for_conflicting_details_of_one_failure() -> None:
+    recovery = _actionable_recovery()
+    first = _failure_day_observation(
+        production_failure_refs=("failure-provider-1",),
+        actionable_recovery_refs=(recovery.recovery_ref,),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(_failure_operation(recovery=recovery),),
+        ),
+    )
+    changed_operation = _failure_operation(recovery=recovery).model_copy(
+        update={"failure_code": ErrorCode.INVALID_RESPONSE}
+    )
+    second = _failure_day_observation(
+        id="shadow-day-failures-conflict",
+        production_failure_refs=("failure-provider-1",),
+        actionable_recovery_refs=(recovery.recovery_ref,),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(changed_operation,),
+        ),
+    )
+    evidence = _failure_evidence((first, second))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert "CONFLICTING_FAILURE_OPERATION_RECORDS" in gate.reason_codes
+
+
+def test_failure_operations_gate_allows_status_progression_for_one_failure() -> None:
+    recovery = _actionable_recovery()
+    first = _failure_day_observation(
+        production_failure_refs=("failure-provider-1",),
+        actionable_recovery_refs=(recovery.recovery_ref,),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(
+                _failure_operation(
+                    recovery=recovery,
+                    status=ShadowFailureOperationStatus.OPEN,
+                ),
+            ),
+        ),
+    )
+    second_date = date(2026, 8, 27)
+    second = _failure_day_observation(
+        id="shadow-day-failures-resolved",
+        market_date=second_date,
+        recorded_at=datetime(2026, 8, 27, 16, tzinfo=UTC),
+        production_failure_refs=("failure-provider-1",),
+        actionable_recovery_refs=(recovery.recovery_ref,),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(
+                _failure_operation(
+                    recovery=recovery,
+                    status=ShadowFailureOperationStatus.RESOLVED,
+                ),
+            ),
+        ),
+    )
+    evidence = _failure_evidence(
+        (first, second),
+        period=ShadowPeriod(start_date=date(2026, 8, 26), end_date=second_date),
+    )
+
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PASS
+    assert gate.reason_codes == ()
+
+
+def test_failure_operations_gate_fails_when_no_capability_is_identified() -> None:
+    recovery = _actionable_recovery()
+    operation = _failure_operation(recovery=recovery).model_copy(
+        update={"affected_capabilities": ()}
+    )
+    observation = _failure_day_observation(
+        production_failure_refs=("failure-provider-1",),
+        actionable_recovery_refs=(recovery.recovery_ref,),
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(operation,),
+        ),
+    )
+    evidence = _failure_evidence((observation,))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert "FAILURE_OPERATION_CAPABILITY_MISSING" in gate.reason_codes
+
+
+def test_failure_operations_gate_requires_a_complete_observation_for_each_eligible_date() -> None:
+    first_day = _failure_day_observation(
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(),
+        )
+    )
+    evidence = _failure_evidence(
+        (first_day,),
+        period=ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 27)),
+    )
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "FAILURE_OPERATIONS_COVERAGE_UNKNOWN" in gate.reason_codes
+
+
+def test_failure_operations_gate_stays_pending_without_eligible_days() -> None:
+    evidence = _failure_evidence(
+        (), period=ShadowPeriod(start_date=date(2026, 8, 29), end_date=date(2026, 8, 30))
+    )
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "NO_ELIGIBLE_TRADING_DAYS" in gate.reason_codes
+
+
+def test_failure_operations_coverage_on_an_excluded_day_is_not_eligible_coverage() -> None:
+    excluded = _failure_day_observation(
+        availability=ShadowDayAvailability.EXCLUDED,
+        exclusion_reason=ShadowDayExclusionReason.COMPUTER_OR_CODEX_UNAVAILABLE,
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.INCOMPLETE,
+            failures=(),
+        ),
+    )
+    excluded_without_failure_review = _failure_day_observation(
+        id="shadow-day-excluded-without-failure-review",
+        availability=ShadowDayAvailability.EXCLUDED,
+        exclusion_reason=ShadowDayExclusionReason.COMPUTER_OR_CODEX_UNAVAILABLE,
+    )
+    evidence = _failure_evidence((excluded, excluded_without_failure_review))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    gate = _failure_operations_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "NO_ELIGIBLE_TRADING_DAYS" in gate.reason_codes
+    assert "FAILURE_OPERATIONS_COVERAGE_UNKNOWN" not in gate.reason_codes
+
+
+def test_failure_operations_correction_supersedes_the_prior_day_record() -> None:
+    prior = _failure_day_observation(production_failure_refs=("failure-provider-1",))
+    corrected = _failure_day_observation(
+        id="shadow-day-failures-correction",
+        corrects_observation_id=prior.id,
+        corrects_observation_sha256="d" * 64,
+        failure_operations_observation=ShadowFailureOperationsObservation(
+            coverage=ShadowFailureOperationsCoverage.COMPLETE,
+            failures=(),
+        ),
+    )
+    evidence = _failure_evidence((prior, corrected))
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=evidence)
+
+    assert _failure_operations_gate(scorecard).status is EvaluationGateStatus.PASS
 
 
 def _safety_day_observation(

@@ -184,11 +184,11 @@ def test_schema_preserves_wire_decimal_and_provenance_constraints(tmp_path: Path
     assert market_schema["properties"]["source_observations"]["type"] == "array"
 
 
-def test_shadow_day_schema_exports_versioned_source_bound_safety_evidence(tmp_path: Path) -> None:
+def test_shadow_day_schema_exports_versioned_safety_and_failure_evidence(tmp_path: Path) -> None:
     export_schemas(tmp_path)
     schema = json.loads((tmp_path / "shadow-day-observation.schema.json").read_bytes())
 
-    assert schema["properties"]["schema_version"]["enum"] == ["0.1", "0.2"]
+    assert schema["properties"]["schema_version"]["enum"] == ["0.1", "0.2", "0.3"]
     assert schema["properties"]["safety_incident_observation"]["anyOf"][0] == {
         "$ref": "#/$defs/ShadowSafetyIncidentObservation"
     }
@@ -197,6 +197,13 @@ def test_shadow_day_schema_exports_versioned_source_bound_safety_evidence(tmp_pa
     assert safety_schema["properties"]["reviewed_categories"]["maxItems"] == 5
     assert safety_schema["properties"]["reviewed_categories"]["uniqueItems"] is True
     assert safety_schema["properties"]["incidents"]["maxItems"] == 128
+    failure_observation_schema = schema["$defs"]["ShadowFailureOperationsObservation"]
+    coverage_ref = failure_observation_schema["properties"]["coverage"]["$ref"].split("/")[-1]
+    assert schema["$defs"][coverage_ref]["enum"] == [
+        "COMPLETE",
+        "INCOMPLETE",
+    ]
+    assert failure_observation_schema["properties"]["failures"]["maxItems"] == 128
 
     validator = Draft202012Validator(schema)
     safety_observation = {
@@ -224,6 +231,37 @@ def test_shadow_day_schema_exports_versioned_source_bound_safety_evidence(tmp_pa
             **day_record,
             "schema_version": "0.2",
             "safety_incident_observation": safety_observation,
+        }
+    )
+    failure_operations_observation = {
+        "coverage": "COMPLETE",
+        "failures": [
+            {
+                "failure_ref": "failure-1",
+                "failure_code": "PROVIDER_UNAVAILABLE",
+                "status": "RESOLVED",
+                "affected_capabilities": ["MARKET_SUMMARY_AVAILABLE"],
+                "recovery": {
+                    "recovery_ref": "recovery-1",
+                    "action": "Restore the configured market data connection.",
+                    "validation_plan": "Run readiness and confirm a valid daily bar.",
+                },
+            }
+        ],
+    }
+    assert validator.is_valid(
+        {
+            **day_record,
+            "schema_version": "0.3",
+            "safety_incident_observation": safety_observation,
+            "failure_operations_observation": failure_operations_observation,
+        }
+    )
+    assert not validator.is_valid(
+        {
+            **day_record,
+            "schema_version": "0.2",
+            "failure_operations_observation": failure_operations_observation,
         }
     )
     assert not validator.is_valid(

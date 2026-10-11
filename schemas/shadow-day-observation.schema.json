@@ -14,6 +14,40 @@
       "title": "Capability",
       "type": "string"
     },
+    "ErrorCode": {
+      "enum": [
+        "SOURCE_NOT_CONFIGURED",
+        "CONFIGURATION_INVALID",
+        "CREDENTIALS_MISSING",
+        "PERMISSION_DENIED",
+        "MARKET_CALENDAR_UNAVAILABLE",
+        "MISSED_WINDOW",
+        "PROVIDER_UNAVAILABLE",
+        "PROVIDER_NO_DATA",
+        "PROVIDER_MISSING_SESSION",
+        "PROVIDER_DUPLICATE_CONFLICT",
+        "PROVIDER_MALFORMED_BAR",
+        "PROVIDER_STALE",
+        "PROVIDER_FUTURE_OR_INCOMPLETE_BAR",
+        "PROVIDER_SCHEMA_DRIFT",
+        "INVALID_RESPONSE",
+        "INVALID_REQUEST",
+        "EVIDENCE_CUTOFF_VIOLATION",
+        "SOURCE_CONFLICT",
+        "STALE_DATA",
+        "UNSUPPORTED_INSTRUMENT",
+        "SIZING_UNAVAILABLE",
+        "PORTFOLIO_HEAT_UNAVAILABLE",
+        "INVALID_RUN_STATE",
+        "INTERNAL_ERROR",
+        "VALIDATION_FAILED",
+        "PUBLICATION_FAILED",
+        "PATH_NOT_ALLOWED",
+        "DEADLINE_EXCEEDED"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
     "Regime": {
       "description": "Risk-environment taxonomy for the bounded release.",
       "enum": [
@@ -106,6 +140,156 @@
         "disabled_capabilities"
       ],
       "title": "ShadowExecutiveIdentification",
+      "type": "object"
+    },
+    "ShadowFailureOperation": {
+      "additionalProperties": false,
+      "description": "Typed operator record for one failure and its recovery state.",
+      "properties": {
+        "affected_capabilities": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "maxItems": 8,
+          "title": "Affected Capabilities",
+          "type": "array"
+        },
+        "failure_code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "failure_ref": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Failure Ref",
+          "type": "string"
+        },
+        "recovery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ShadowFailureRecoveryRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ShadowFailureOperationStatus"
+        }
+      },
+      "required": [
+        "failure_ref",
+        "failure_code",
+        "status"
+      ],
+      "title": "ShadowFailureOperation",
+      "type": "object"
+    },
+    "ShadowFailureOperationStatus": {
+      "enum": [
+        "OPEN",
+        "IN_PROGRESS",
+        "RESOLVED"
+      ],
+      "title": "ShadowFailureOperationStatus",
+      "type": "string"
+    },
+    "ShadowFailureOperationsCoverage": {
+      "enum": [
+        "COMPLETE",
+        "INCOMPLETE"
+      ],
+      "title": "ShadowFailureOperationsCoverage",
+      "type": "string"
+    },
+    "ShadowFailureOperationsObservation": {
+      "additionalProperties": false,
+      "description": "Operator declaration of whether all failures for a day were reviewed.",
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/ShadowFailureOperationsCoverage"
+        },
+        "failures": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ShadowFailureOperation"
+          },
+          "maxItems": 128,
+          "title": "Failures",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "coverage"
+      ],
+      "title": "ShadowFailureOperationsObservation",
+      "type": "object"
+    },
+    "ShadowFailureRecoveryRecord": {
+      "additionalProperties": false,
+      "description": "Bounded recovery action and validation plan for one known failure.",
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "pattern": "^[\\x20-\\x7E]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action"
+        },
+        "recovery_ref": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Recovery Ref",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "validation_plan": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "pattern": "^[\\x20-\\x7E]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validation Plan"
+        }
+      },
+      "required": [
+        "recovery_ref"
+      ],
+      "title": "ShadowFailureRecoveryRecord",
       "type": "object"
     },
     "ShadowSafetyIncident": {
@@ -226,7 +410,29 @@
       },
       "then": {
         "properties": {
+          "failure_operations_observation": {
+            "type": "null"
+          },
           "safety_incident_observation": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "0.2"
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "properties": {
+          "failure_operations_observation": {
             "type": "null"
           }
         }
@@ -328,6 +534,17 @@
       "default": null,
       "title": "Executive Review Duration Seconds"
     },
+    "failure_operations_observation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ShadowFailureOperationsObservation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "id": {
       "maxLength": 128,
       "minLength": 1,
@@ -394,10 +611,11 @@
       "default": null
     },
     "schema_version": {
-      "default": "0.2",
+      "default": "0.3",
       "enum": [
         "0.1",
-        "0.2"
+        "0.2",
+        "0.3"
       ],
       "title": "Schema Version",
       "type": "string"

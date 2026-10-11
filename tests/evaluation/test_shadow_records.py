@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from finance_research_agent.domain.enums import Capability
+from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.regime import Regime
 from finance_research_agent.evaluation.shadow_records import (
     OperatorReleaseAttestation,
@@ -19,6 +20,11 @@ from finance_research_agent.evaluation.shadow_records import (
     ShadowDayObservation,
     ShadowExecutiveEventState,
     ShadowExecutiveIdentification,
+    ShadowFailureOperation,
+    ShadowFailureOperationsCoverage,
+    ShadowFailureOperationsObservation,
+    ShadowFailureOperationStatus,
+    ShadowFailureRecoveryRecord,
     ShadowSafetyIncident,
     ShadowSafetyIncidentCategory,
     ShadowSafetyIncidentObservation,
@@ -91,7 +97,7 @@ def test_shadow_day_safety_observation_is_source_bound_and_schema_versioned() ->
 
     assert legacy.schema_version == "0.1"
     assert legacy.safety_incident_observation is None
-    assert current.schema_version == "0.2"
+    assert current.schema_version == "0.3"
     assert current.safety_incident_observation is not None
     assert current.safety_incident_observation.reviewed_categories == _SAFETY_CATEGORIES
     with pytest.raises(
@@ -100,6 +106,72 @@ def test_shadow_day_safety_observation_is_source_bound_and_schema_versioned() ->
         _observation(
             schema_version="0.1",
             safety_incident_observation=_safety_observation(),
+        )
+
+
+def _failure_operations_observation(**changes: object) -> ShadowFailureOperationsObservation:
+    values: dict[str, object] = {
+        "coverage": ShadowFailureOperationsCoverage.COMPLETE,
+        "failures": (
+            ShadowFailureOperation(
+                failure_ref="failure-1",
+                failure_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                status=ShadowFailureOperationStatus.RESOLVED,
+                affected_capabilities=(Capability.MARKET_SUMMARY_AVAILABLE,),
+                recovery=ShadowFailureRecoveryRecord(
+                    recovery_ref="recovery-1",
+                    action="Restore the configured market data connection.",
+                    validation_plan="Run the provider readiness check and confirm one daily bar.",
+                ),
+            ),
+        ),
+    }
+    values.update(changes)
+    return ShadowFailureOperationsObservation(**values)
+
+
+def test_shadow_failure_operations_are_explicit_and_schema_versioned() -> None:
+    legacy_safety = _observation(
+        schema_version="0.2",
+        safety_incident_observation=_safety_observation(),
+    )
+    current = _observation(
+        safety_incident_observation=_safety_observation(),
+        failure_operations_observation=_failure_operations_observation(),
+        production_failure_refs=("failure-1",),
+        actionable_recovery_refs=("recovery-1",),
+    )
+
+    assert legacy_safety.schema_version == "0.2"
+    assert current.schema_version == "0.3"
+    assert current.failure_operations_observation is not None
+    assert (
+        current.failure_operations_observation.coverage
+        is ShadowFailureOperationsCoverage.COMPLETE
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="schema 0.2 cannot include failure operations observation",
+    ):
+        _observation(
+            schema_version="0.2",
+            failure_operations_observation=_failure_operations_observation(),
+        )
+
+
+def test_shadow_failure_operation_references_must_be_unique() -> None:
+    failure = _failure_operations_observation().failures[0]
+    with pytest.raises(ValidationError, match="failure references must be unique"):
+        _failure_operations_observation(failures=(failure, failure))
+
+
+def test_shadow_failure_recovery_text_must_be_printable_and_nonblank() -> None:
+    with pytest.raises(ValidationError, match="recovery action must be printable English text"):
+        ShadowFailureRecoveryRecord(
+            recovery_ref="recovery-1",
+            action="   ",
+            validation_plan="Check the recovery.",
         )
 
 
