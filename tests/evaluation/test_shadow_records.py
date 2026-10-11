@@ -19,6 +19,9 @@ from finance_research_agent.evaluation.shadow_records import (
     ShadowDayObservation,
     ShadowExecutiveEventState,
     ShadowExecutiveIdentification,
+    ShadowSafetyIncident,
+    ShadowSafetyIncidentCategory,
+    ShadowSafetyIncidentObservation,
 )
 
 
@@ -66,6 +69,65 @@ def test_shadow_day_record_rejects_duplicate_references_and_unlinked_corrections
         )
     with pytest.raises(ValidationError, match="feedback ids must be unique"):
         _observation(observed_feedback_ids=("feedback-1", "feedback-1"))
+
+
+_SAFETY_CATEGORIES = tuple(ShadowSafetyIncidentCategory)
+
+
+def _safety_observation(**changes: object) -> ShadowSafetyIncidentObservation:
+    values: dict[str, object] = {
+        "source_commit_sha256": "a" * 64,
+        "source_tree_sha256": "b" * 64,
+        "reviewed_categories": _SAFETY_CATEGORIES,
+        "incidents": (),
+    }
+    values.update(changes)
+    return ShadowSafetyIncidentObservation(**values)
+
+
+def test_shadow_day_safety_observation_is_source_bound_and_schema_versioned() -> None:
+    legacy = _observation(schema_version="0.1")
+    current = _observation(safety_incident_observation=_safety_observation())
+
+    assert legacy.schema_version == "0.1"
+    assert legacy.safety_incident_observation is None
+    assert current.schema_version == "0.2"
+    assert current.safety_incident_observation is not None
+    assert current.safety_incident_observation.reviewed_categories == _SAFETY_CATEGORIES
+    with pytest.raises(
+        ValidationError, match="schema 0.1 cannot include a safety incident observation"
+    ):
+        _observation(
+            schema_version="0.1",
+            safety_incident_observation=_safety_observation(),
+        )
+
+
+@pytest.mark.parametrize(
+    "categories",
+    (
+        _SAFETY_CATEGORIES[:-1],
+        (*_SAFETY_CATEGORIES[:-1], _SAFETY_CATEGORIES[0]),
+        (*_SAFETY_CATEGORIES, _SAFETY_CATEGORIES[0]),
+    ),
+)
+def test_safety_observation_requires_every_closed_category_exactly_once(
+    categories: tuple[ShadowSafetyIncidentCategory, ...],
+) -> None:
+    with pytest.raises(ValidationError):
+        _safety_observation(reviewed_categories=categories)
+
+
+def test_safety_observation_rejects_duplicate_incident_ids() -> None:
+    incident = ShadowSafetyIncident(
+        id="incident-1",
+        category=ShadowSafetyIncidentCategory.CREDENTIAL_LEAK,
+        evidence_ref="incident-evidence-1",
+        occurred_at=datetime(2026, 10, 9, 12, tzinfo=UTC),
+    )
+
+    with pytest.raises(ValidationError, match="incident ids must be unique"):
+        _safety_observation(incidents=(incident, incident))
 
 
 def test_shadow_executive_identification_validates_material_event_evidence() -> None:

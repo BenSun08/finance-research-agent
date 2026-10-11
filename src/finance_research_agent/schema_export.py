@@ -29,6 +29,7 @@ from finance_research_agent.domain.models import (
     SourceObservation,
 )
 from finance_research_agent.evaluation.release_gates import MigrationReadiness
+from finance_research_agent.evaluation.shadow_records import ShadowDayObservation
 from finance_research_agent.evaluation.shadow_scorecard import ShadowScorecard
 
 _SCHEMA_MODELS: dict[str, type[Any]] = {
@@ -47,6 +48,7 @@ _SCHEMA_MODELS: dict[str, type[Any]] = {
     "run-context.schema.json": RunContext,
     "source-observation.schema.json": SourceObservation,
     "source-health.schema.json": SourceHealth,
+    "shadow-day-observation.schema.json": ShadowDayObservation,
     "shadow-scorecard.schema.json": ShadowScorecard,
 }
 _SCHEMA_MODELS.update(OPERATION_SCHEMA_MODELS)

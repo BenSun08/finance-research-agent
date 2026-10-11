@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import date
 from hashlib import sha256
+from typing import Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from finance_research_agent.application.ports import (
     Clock,
@@ -30,6 +31,7 @@ from finance_research_agent.evaluation.shadow_records import (
     ShadowDayExclusionReason,
     ShadowDayObservation,
     ShadowExecutiveIdentification,
+    ShadowSafetyIncidentObservation,
 )
 
 _NEW_YORK = ZoneInfo("America/New_York")
@@ -38,6 +40,7 @@ _NEW_YORK = ZoneInfo("America/New_York")
 class RecordShadowDayObservation(StrictModel):
     """Operator input; `recorded_at` is intentionally service-owned."""
 
+    schema_version: Literal["0.1", "0.2"] = "0.2"  # type: ignore[assignment]
     id: Identifier
     market_date: date
     session_id: Identifier
@@ -50,8 +53,15 @@ class RecordShadowDayObservation(StrictModel):
     executive_review_duration_seconds: NonNegativeReviewSeconds | None = None
     detailed_review_duration_seconds: NonNegativeReviewSeconds | None = None
     executive_identification: ShadowExecutiveIdentification | None = None
+    safety_incident_observation: ShadowSafetyIncidentObservation | None = None
     corrects_observation_id: Identifier | None = None
     corrects_observation_sha256: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def request_is_compatible_with_schema_version(self) -> RecordShadowDayObservation:
+        if self.schema_version == "0.1" and self.safety_incident_observation is not None:
+            raise ValueError("schema 0.1 cannot include a safety incident observation")
+        return self
 
 
 class ShadowObservationReceipt(StrictModel):

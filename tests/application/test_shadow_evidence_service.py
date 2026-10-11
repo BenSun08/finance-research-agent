@@ -21,6 +21,8 @@ from finance_research_agent.evaluation.shadow_records import (
     OperatorReleaseResult,
     ShadowDayAvailability,
     ShadowDayObservation,
+    ShadowSafetyIncidentCategory,
+    ShadowSafetyIncidentObservation,
 )
 
 
@@ -124,6 +126,61 @@ def test_shadow_day_writer_stamps_utc_and_returns_canonical_digest() -> None:
     assert record.recorded_at == now
     assert receipt.recorded_at == now
     assert receipt.record_sha256 == sha256(canonical_bytes(record)).hexdigest()
+
+
+def test_shadow_day_writer_persists_source_bound_safety_incident_observation() -> None:
+    repository = _Observations()
+    safety_observation = ShadowSafetyIncidentObservation(
+        source_commit_sha256="a" * 64,
+        source_tree_sha256="b" * 64,
+        reviewed_categories=tuple(ShadowSafetyIncidentCategory),
+        incidents=(),
+    )
+
+    receipt = record_shadow_day_observation(
+        _day_request(safety_incident_observation=safety_observation),
+        repository,
+        _Calendar(),
+        _Clock(datetime(2026, 10, 10, 0, 0, tzinfo=UTC)),
+    )
+
+    record = repository.get_observation(receipt.observation_id)
+    assert record is not None
+    assert record.schema_version == "0.2"
+    assert record.safety_incident_observation == safety_observation
+    assert receipt.record_sha256 == sha256(canonical_bytes(record)).hexdigest()
+
+
+def test_legacy_shadow_day_request_remains_readable_without_safety_observation() -> None:
+    repository = _Observations()
+    request = _day_request(schema_version="0.1")
+
+    receipt = record_shadow_day_observation(
+        request,
+        repository,
+        _Calendar(),
+        _Clock(datetime(2026, 10, 10, 0, 0, tzinfo=UTC)),
+    )
+
+    record = repository.get_observation(receipt.observation_id)
+    assert record is not None
+    assert record.schema_version == "0.1"
+    assert record.safety_incident_observation is None
+
+
+def test_legacy_shadow_day_request_cannot_claim_safety_observation() -> None:
+    safety_observation = ShadowSafetyIncidentObservation(
+        source_commit_sha256="a" * 64,
+        source_tree_sha256="b" * 64,
+        reviewed_categories=tuple(ShadowSafetyIncidentCategory),
+        incidents=(),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="schema 0.1 cannot include a safety incident observation",
+    ):
+        _day_request(schema_version="0.1", safety_incident_observation=safety_observation)
 
 
 @pytest.mark.parametrize(

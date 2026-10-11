@@ -24,6 +24,9 @@ from finance_research_agent.evaluation.shadow_records import (
     ShadowDayAvailability,
     ShadowDayExclusionReason,
     ShadowDayObservation,
+    ShadowSafetyIncident,
+    ShadowSafetyIncidentCategory,
+    ShadowSafetyIncidentObservation,
 )
 from finance_research_agent.evaluation.shadow_scorecard import (
     DailyReviewTimeObservation,
@@ -811,21 +814,26 @@ def test_legacy_scorecard_call_cannot_claim_unverified_gates() -> None:
 
 def _safety_evidence(
     receipts: tuple[ReleaseCheckReceipt, ...],
+    observations: tuple[ShadowDayObservation, ...] = (),
+    *,
+    period: ShadowPeriod | None = None,
+    source_commit_sha256: str | None = "a" * 64,
+    source_tree_sha256: str | None = "b" * 64,
 ):
     from finance_research_agent.evaluation.shadow_scorecard import (
         _create_shadow_evaluation_evidence,
     )
 
     return _create_shadow_evaluation_evidence(
-        period=ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 26)),
+        period=period or ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 26)),
         origin=ShadowEvaluationOrigin.PERSONAL_SHADOW,
         verified_runs=(),
         feedback_records=(),
-        observations=(),
+        observations=observations,
         operator_attestations=(),
         release_check_receipts=receipts,
-        source_commit_sha256="a" * 64,
-        source_tree_sha256="b" * 64,
+        source_commit_sha256=source_commit_sha256,
+        source_tree_sha256=source_tree_sha256,
         evidence_hashes=("c" * 64,),
     )
 
@@ -863,6 +871,27 @@ def _safety_receipts(
 
 def _safety_gate(scorecard):
     return next(gate for gate in scorecard.gate_results if gate.id is ShadowGateId.SAFETY)
+
+
+def _safety_day_observation(
+    *,
+    source_commit_sha256: str = "a" * 64,
+    source_tree_sha256: str = "b" * 64,
+    incidents: tuple[ShadowSafetyIncident, ...] = (),
+) -> ShadowDayObservation:
+    return ShadowDayObservation(
+        id="shadow-day-safety-1",
+        market_date=date(2026, 8, 26),
+        recorded_at=datetime(2026, 8, 26, 16, tzinfo=UTC),
+        session_id="session-safety-1",
+        availability=ShadowDayAvailability.ONLINE,
+        safety_incident_observation=ShadowSafetyIncidentObservation(
+            source_commit_sha256=source_commit_sha256,
+            source_tree_sha256=source_tree_sha256,
+            reviewed_categories=tuple(ShadowSafetyIncidentCategory),
+            incidents=incidents,
+        ),
+    )
 
 
 def test_safety_gate_requires_version_bound_security_checks_and_incident_observation() -> None:
@@ -903,6 +932,184 @@ def test_safety_gate_waits_for_security_checks_bound_to_evidence_source() -> Non
     gate = _safety_gate(scorecard)
     assert gate.status is EvaluationGateStatus.PENDING
     assert "SAFETY_RELEASE_CHECK_SOURCE_MISMATCH" in gate.reason_codes
+
+
+def test_safety_gate_passes_with_exact_checks_and_complete_zero_incident_observation() -> None:
+    observation = _safety_day_observation()
+    scorecard = build_shadow_scorecard(
+        (),
+        (),
+        _Calendar(),
+        evidence=_safety_evidence(_safety_receipts(), observations=(observation,)),
+    )
+
+    gate = _safety_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PASS
+    assert gate.measured_value == 0
+    assert gate.required_value == 0
+    assert observation.id in gate.evidence_ids
+
+
+def test_safety_gate_fails_for_typed_incident_even_when_other_evidence_is_missing() -> None:
+    incident = ShadowSafetyIncident(
+        id="incident-credential-1",
+        category=ShadowSafetyIncidentCategory.CREDENTIAL_LEAK,
+        evidence_ref="secret-scan-evidence-1",
+        occurred_at=datetime(2026, 8, 26, 14, tzinfo=UTC),
+    )
+    observation = _safety_day_observation(incidents=(incident,))
+    scorecard = build_shadow_scorecard(
+        (), (), _Calendar(), evidence=_safety_evidence((), observations=(observation,))
+    )
+
+    gate = _safety_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert "SAFETY_INCIDENT_OBSERVED" in gate.reason_codes
+    assert incident.id in gate.evidence_ids
+    assert incident.evidence_ref in gate.evidence_ids
+    assert gate.measured_value == 1
+
+
+def test_safety_gate_fails_for_incident_on_an_attested_excluded_day() -> None:
+    incident = ShadowSafetyIncident(
+        id="incident-prohibited-state-1",
+        category=ShadowSafetyIncidentCategory.PROHIBITED_STATE,
+        evidence_ref="state-audit-evidence-1",
+        occurred_at=datetime(2026, 8, 26, 14, tzinfo=UTC),
+    )
+    online = _safety_day_observation(incidents=(incident,))
+    excluded = ShadowDayObservation(
+        **(
+            online.model_dump()
+            | {
+                "id": "shadow-day-safety-excluded",
+                "availability": ShadowDayAvailability.EXCLUDED,
+                "exclusion_reason": ShadowDayExclusionReason.TOTAL_LOCAL_NETWORK_OUTAGE,
+            }
+        )
+    )
+    scorecard = build_shadow_scorecard(
+        (), (), _Calendar(), evidence=_safety_evidence((), observations=(excluded,))
+    )
+
+    gate = _safety_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert "SAFETY_INCIDENT_PROHIBITED_STATE" in gate.reason_codes
+    assert gate.measured_value == 1
+
+
+def test_safety_gate_uses_the_current_corrected_day_record() -> None:
+    incident = ShadowSafetyIncident(
+        id="incident-corrected-away-1",
+        category=ShadowSafetyIncidentCategory.SERIOUS_INJECTION_ESCAPE,
+        evidence_ref="injection-review-evidence-1",
+        occurred_at=datetime(2026, 8, 26, 14, tzinfo=UTC),
+    )
+    prior = _safety_day_observation(incidents=(incident,))
+    corrected = ShadowDayObservation(
+        **(
+            prior.model_dump()
+            | {
+                "id": "shadow-day-safety-corrected",
+                "safety_incident_observation": ShadowSafetyIncidentObservation(
+                    source_commit_sha256="a" * 64,
+                    source_tree_sha256="b" * 64,
+                    reviewed_categories=tuple(ShadowSafetyIncidentCategory),
+                    incidents=(),
+                ),
+                "corrects_observation_id": prior.id,
+                "corrects_observation_sha256": "c" * 64,
+            }
+        )
+    )
+    scorecard = build_shadow_scorecard(
+        (),
+        (),
+        _Calendar(),
+        evidence=_safety_evidence(_safety_receipts(), observations=(prior, corrected)),
+    )
+
+    gate = _safety_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PASS
+    assert corrected.id in gate.evidence_ids
+    assert prior.id not in gate.evidence_ids
+    assert incident.id not in gate.evidence_ids
+
+
+@pytest.mark.parametrize(
+    ("observations", "expected_reason"),
+    (
+        ((), "SAFETY_INCIDENT_OBSERVATION_REQUIRED"),
+        (
+            (_safety_day_observation(source_commit_sha256="d" * 64),),
+            "SAFETY_INCIDENT_OBSERVATION_SOURCE_MISMATCH",
+        ),
+        (
+            (_safety_day_observation(source_tree_sha256="e" * 64),),
+            "SAFETY_INCIDENT_OBSERVATION_SOURCE_MISMATCH",
+        ),
+    ),
+)
+def test_safety_gate_stays_pending_without_exact_source_day_observation(
+    observations: tuple[ShadowDayObservation, ...], expected_reason: str
+) -> None:
+    scorecard = build_shadow_scorecard(
+        (), (), _Calendar(), evidence=_safety_evidence(_safety_receipts(), observations)
+    )
+
+    gate = _safety_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert expected_reason in gate.reason_codes
+
+
+def test_safety_gate_requires_source_identity_and_at_least_one_eligible_day() -> None:
+    no_source = build_shadow_scorecard(
+        (),
+        (),
+        _Calendar(),
+        evidence=_safety_evidence(
+            _safety_receipts(),
+            (_safety_day_observation(),),
+            source_commit_sha256=None,
+            source_tree_sha256=None,
+        ),
+    )
+    no_trading_dates = build_shadow_scorecard(
+        (),
+        (),
+        _Calendar(),
+        evidence=_safety_evidence(
+            _safety_receipts(),
+            period=ShadowPeriod(start_date=date(2026, 8, 29), end_date=date(2026, 8, 29)),
+        ),
+    )
+
+    assert _safety_gate(no_source).status is EvaluationGateStatus.PENDING
+    assert "SAFETY_SOURCE_IDENTITY_UNAVAILABLE" in _safety_gate(no_source).reason_codes
+    assert _safety_gate(no_trading_dates).status is EvaluationGateStatus.PENDING
+    assert "NO_ELIGIBLE_TRADING_DAYS" in _safety_gate(no_trading_dates).reason_codes
+
+
+def test_safety_gate_checks_each_current_record_for_an_eligible_day() -> None:
+    complete = _safety_day_observation()
+    incomplete = ShadowDayObservation(
+        id="shadow-day-safety-2",
+        market_date=complete.market_date,
+        recorded_at=complete.recorded_at,
+        session_id="session-safety-2",
+        availability=ShadowDayAvailability.ONLINE,
+    )
+    scorecard = build_shadow_scorecard(
+        (),
+        (),
+        _Calendar(),
+        evidence=_safety_evidence(_safety_receipts(), observations=(complete, incomplete)),
+    )
+
+    gate = _safety_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "SAFETY_INCIDENT_OBSERVATION_REQUIRED" in gate.reason_codes
+    assert {complete.id, incomplete.id} <= set(gate.evidence_ids)
 
 
 def _deterministic_evidence(verified_runs=(), receipts: tuple[ReleaseCheckReceipt, ...] = ()):

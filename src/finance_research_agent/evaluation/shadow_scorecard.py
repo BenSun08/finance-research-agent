@@ -736,43 +736,104 @@ def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGat
     )
 
 
-def _safety_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGate:
+def _safety_gate(
+    evidence: ShadowEvaluationEvidence,
+    eligible_dates: tuple[date, ...],
+) -> EvaluationGate:
     checks = _release_check_evidence(evidence, _SAFETY_RELEASE_CHECKS)
+    superseded_ids = {
+        item.corrects_observation_id
+        for item in evidence.observations
+        if item.corrects_observation_id is not None
+    }
+    current_period_observations = tuple(
+        item
+        for item in evidence.observations
+        if item.id not in superseded_ids
+        and evidence.period.start_date <= item.market_date <= evidence.period.end_date
+    )
+    observations_by_date: dict[date, list[ShadowDayObservation]] = {}
+    for item in current_period_observations:
+        observations_by_date.setdefault(item.market_date, []).append(item)
+    incidents = tuple(
+        incident
+        for item in current_period_observations
+        if item.safety_incident_observation is not None
+        for incident in item.safety_incident_observation.incidents
+    )
+    missing_observation_dates: list[date] = []
+    source_mismatch_dates: list[date] = []
+    for market_date in eligible_dates:
+        day_observations = observations_by_date.get(market_date, [])
+        if not day_observations or any(
+            item.safety_incident_observation is None for item in day_observations
+        ):
+            missing_observation_dates.append(market_date)
+        for item in day_observations:
+            safety_observation = item.safety_incident_observation
+            if safety_observation is None:
+                continue
+            if (
+                evidence.source_commit_sha256 is None
+                or evidence.source_tree_sha256 is None
+                or safety_observation.source_commit_sha256 != evidence.source_commit_sha256
+                or safety_observation.source_tree_sha256 != evidence.source_tree_sha256
+            ):
+                source_mismatch_dates.append(market_date)
+
     evidence_ids = tuple(
         sorted(
             {
                 *evidence.evidence_hashes,
                 *(item.id for item in checks.selected),
                 *(item.id for item in checks.source_mismatches),
+                *(item.id for item in current_period_observations),
+                *(item.id for item in incidents),
+                *(item.evidence_ref for item in incidents),
             }
         )
     )
+    failure_reasons: list[str] = []
+    if incidents:
+        failure_reasons.append("SAFETY_INCIDENT_OBSERVED")
+        failure_reasons.extend(
+            f"SAFETY_INCIDENT_{incident.category.value}"
+            for incident in sorted(incidents, key=lambda item: item.id)
+        )
     if checks.failures:
+        failure_reasons.append("SAFETY_RELEASE_CHECK_FAILED")
+    if failure_reasons:
         return EvaluationGate(
             id=ShadowGateId.SAFETY,
             status=EvaluationGateStatus.FAIL,
             evidence_ids=evidence_ids,
-            reason_codes=("SAFETY_RELEASE_CHECK_FAILED",),
-            measured_value=len(checks.failures),
+            reason_codes=tuple(failure_reasons),
+            measured_value=len(incidents) if incidents else len(checks.failures),
             required_value=0,
         )
 
     pending_reasons = []
+    if not eligible_dates:
+        pending_reasons.append("NO_ELIGIBLE_TRADING_DAYS")
     if not checks.source_identity_known:
         pending_reasons.append("SAFETY_SOURCE_IDENTITY_UNAVAILABLE")
     if checks.source_mismatches:
         pending_reasons.append("SAFETY_RELEASE_CHECK_SOURCE_MISMATCH")
     if checks.missing:
         pending_reasons.append("SAFETY_RELEASE_CHECK_MATRIX_INCOMPLETE")
-    # The current R11 evidence model has no typed incident observation. Empty
-    # failure references therefore cannot establish an observed zero incident count.
-    pending_reasons.append("SAFETY_INCIDENT_OBSERVATION_REQUIRED")
+    if missing_observation_dates:
+        pending_reasons.append("SAFETY_INCIDENT_OBSERVATION_REQUIRED")
+    if source_mismatch_dates:
+        pending_reasons.append("SAFETY_INCIDENT_OBSERVATION_SOURCE_MISMATCH")
+    observation_coverage_complete = bool(eligible_dates) and not (
+        missing_observation_dates or source_mismatch_dates
+    )
     return EvaluationGate(
         id=ShadowGateId.SAFETY,
-        status=EvaluationGateStatus.PENDING,
+        status=(EvaluationGateStatus.PENDING if pending_reasons else EvaluationGateStatus.PASS),
         evidence_ids=evidence_ids,
         reason_codes=tuple(pending_reasons),
-        measured_value=None,
+        measured_value=0 if observation_coverage_complete else None,
         required_value=0,
     )
 
@@ -1356,7 +1417,7 @@ def build_shadow_scorecard(
 
     specific_gates = {
         ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS: day_gate,
-        ShadowGateId.SAFETY: _safety_gate(evidence),
+        ShadowGateId.SAFETY: _safety_gate(evidence, eligible_dates),
         ShadowGateId.DETERMINISTIC_CORRECTNESS: _deterministic_correctness_gate(evidence),
         ShadowGateId.EVIDENCE: _citation_evidence_gate(evidence),
         ShadowGateId.REVIEW_TIME: review_time_gate,

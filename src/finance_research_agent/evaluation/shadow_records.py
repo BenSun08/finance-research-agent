@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from finance_research_agent.domain.enums import Capability
 from finance_research_agent.domain.models import (
@@ -29,6 +29,46 @@ class ShadowDayAvailability(StrEnum):
 class ShadowDayExclusionReason(StrEnum):
     COMPUTER_OR_CODEX_UNAVAILABLE = "COMPUTER_OR_CODEX_UNAVAILABLE"
     TOTAL_LOCAL_NETWORK_OUTAGE = "TOTAL_LOCAL_NETWORK_OUTAGE"
+
+
+class ShadowSafetyIncidentCategory(StrEnum):
+    UNAUTHORIZED_TOOL_PATH = "UNAUTHORIZED_TOOL_PATH"
+    CREDENTIAL_LEAK = "CREDENTIAL_LEAK"
+    PROHIBITED_STATE = "PROHIBITED_STATE"
+    SERIOUS_INJECTION_ESCAPE = "SERIOUS_INJECTION_ESCAPE"
+    MATERIAL_OUT_OF_ROOT_WRITE = "MATERIAL_OUT_OF_ROOT_WRITE"
+
+
+class ShadowSafetyIncident(StrictModel):
+    """One operator-observed incident with a stable evidence reference."""
+
+    id: Identifier
+    category: ShadowSafetyIncidentCategory
+    evidence_ref: Identifier
+    occurred_at: UtcDatetime
+
+
+class ShadowSafetyIncidentObservation(StrictModel):
+    """Complete source-bound category review for one observed shadow day."""
+
+    source_commit_sha256: Sha256
+    source_tree_sha256: Sha256
+    reviewed_categories: tuple[ShadowSafetyIncidentCategory, ...] = Field(
+        min_length=len(ShadowSafetyIncidentCategory),
+        max_length=len(ShadowSafetyIncidentCategory),
+        json_schema_extra={"uniqueItems": True},
+    )
+    incidents: tuple[ShadowSafetyIncident, ...] = Field(default=(), max_length=128)
+
+    @model_validator(mode="after")
+    def observation_is_complete(self) -> ShadowSafetyIncidentObservation:
+        if len(set(self.reviewed_categories)) != len(self.reviewed_categories) or set(
+            self.reviewed_categories
+        ) != set(ShadowSafetyIncidentCategory):
+            raise ValueError("reviewed categories must contain every category exactly once")
+        if len({item.id for item in self.incidents}) != len(self.incidents):
+            raise ValueError("incident ids must be unique")
+        return self
 
 
 class ShadowExecutiveEventState(StrEnum):
@@ -67,6 +107,23 @@ NonNegativeReviewSeconds = Annotated[int, Field(ge=0, le=86_400)]
 class ShadowDayObservation(StrictModel):
     """One append-only operator record for an actual or unknown shadow day."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"schema_version": {"const": "0.1"}},
+                        "required": ["schema_version"],
+                    },
+                    "then": {
+                        "properties": {"safety_incident_observation": {"type": "null"}}
+                    },
+                }
+            ]
+        }
+    )
+
+    schema_version: Literal["0.1", "0.2"] = "0.2"  # type: ignore[assignment]
     id: Identifier
     market_date: date
     recorded_at: UtcDatetime
@@ -80,11 +137,14 @@ class ShadowDayObservation(StrictModel):
     executive_review_duration_seconds: NonNegativeReviewSeconds | None = None
     detailed_review_duration_seconds: NonNegativeReviewSeconds | None = None
     executive_identification: ShadowExecutiveIdentification | None = None
+    safety_incident_observation: ShadowSafetyIncidentObservation | None = None
     corrects_observation_id: Identifier | None = None
     corrects_observation_sha256: Sha256 | None = None
 
     @model_validator(mode="after")
     def observation_is_consistent(self) -> ShadowDayObservation:
+        if self.schema_version == "0.1" and self.safety_incident_observation is not None:
+            raise ValueError("schema 0.1 cannot include a safety incident observation")
         if (
             self.availability is ShadowDayAvailability.EXCLUDED
             and self.exclusion_reason is None
@@ -203,4 +263,7 @@ __all__ = [
     "ShadowDayObservation",
     "ShadowExecutiveEventState",
     "ShadowExecutiveIdentification",
+    "ShadowSafetyIncident",
+    "ShadowSafetyIncidentCategory",
+    "ShadowSafetyIncidentObservation",
 ]
