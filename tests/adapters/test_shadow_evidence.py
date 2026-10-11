@@ -131,7 +131,7 @@ def _write_release_watermark(
     status: str = "PASS",
 ) -> Path:
     lock_path = root / ".release-evidence.lock"
-    lock_path.touch(mode=0o600, exist_ok=True)
+    lock_path.write_bytes(b'{"pending_sources":[],"schema_version":"0.1"}')
     lock_path.chmod(0o600)
     path = root / f"release-status-{source_commit_sha256}-{source_tree_sha256}.json"
     payload = json.dumps(
@@ -416,6 +416,20 @@ def test_release_evidence_reader_fails_closed_on_malformed_collection_lock_state
     _write_release_receipt_batch(root, (_release_receipt(),))
     lock_path = root / ".release-evidence.lock"
     lock_path.write_bytes(b"{malformed state}")
+    lock_path.chmod(0o600)
+
+    assert _release_reader(root).list_receipts() == ()
+
+
+def test_release_evidence_reader_fails_closed_on_interrupted_empty_lock_state(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_receipt_batch(root, (_release_receipt(),))
+    lock_path = root / ".release-evidence.lock"
+    lock_path.write_bytes(b"")
     lock_path.chmod(0o600)
 
     assert _release_reader(root).list_receipts() == ()

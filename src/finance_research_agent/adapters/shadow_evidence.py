@@ -320,8 +320,12 @@ def _release_evidence_read_lock(
         except OSError as exc:
             raise ValueError("release evidence collection lock is unavailable") from exc
         try:
+            payload = lock_file.read()
+            if not payload:
+                yield None
+                return
             try:
-                state = _read_release_evidence_lock_state(lock_file.read())
+                state = _read_release_evidence_lock_state(payload)
             except ValueError:
                 yield None
             else:
