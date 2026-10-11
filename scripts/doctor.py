@@ -43,6 +43,13 @@ def _private_tree(data_root: Path) -> bool:
             continue
         if path.is_symlink() or not path.is_dir() or stat.S_IMODE(path.stat().st_mode) & 0o077:
             return False
+    evaluation_root = data_root / "diagnostics" / "evaluation"
+    if evaluation_root.exists() and (
+        evaluation_root.is_symlink()
+        or not evaluation_root.is_dir()
+        or stat.S_IMODE(evaluation_root.stat().st_mode) & 0o077
+    ):
+        return False
     config_root = data_root / "config"
     if config_root.is_dir():
         for path in config_root.iterdir():

@@ -6,11 +6,20 @@ repo_root="$(cd -- "$script_dir/.." && pwd)"
 cd "$repo_root"
 export PYTHONDONTWRITEBYTECODE=1
 
-if command -v python >/dev/null 2>&1; then
-    python_bin=python
-elif command -v python3 >/dev/null 2>&1; then
-    python_bin=python3
-else
+python_bin=""
+for candidate in python python3; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+        continue
+    fi
+    if "$candidate" -c \
+        'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' \
+        >/dev/null 2>&1; then
+        python_bin="$(command -v "$candidate")"
+        break
+    fi
+done
+
+if [[ -z "$python_bin" ]]; then
     printf '%s\n' 'Supported Python: FAIL (activate the locked project environment)' >&2
     exit 1
 fi

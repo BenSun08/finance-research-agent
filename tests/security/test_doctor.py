@@ -59,6 +59,20 @@ def _run_doctor(environment: dict[str, str]) -> subprocess.CompletedProcess[str]
     )
 
 
+def _write_fake_interpreter(path: Path, *, supported: bool) -> None:
+    version_status = 0 if supported else 1
+    path.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        f"  *sys.version_info*) exit {version_status} ;;\n"
+        f"  \"-m scripts.doctor\") printf 'selected-interpreter: {path.name}\\n'; exit 0 ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o700)
+
+
 def test_doctor_passes_offline_checks_without_exposing_credential_values(tmp_path: Path) -> None:
     environment, data_root = _doctor_environment(tmp_path)
 
@@ -114,6 +128,39 @@ def test_doctor_probes_data_root_configured_in_dotenv(tmp_path: Path) -> None:
     assert result.returncode == 0, output
     assert "Data-root writable probe: PASS" in output
     assert not tuple(data_root.glob(".doctor-write.*"))
+
+
+def test_doctor_skips_unsupported_python_when_supported_python3_is_available(
+    tmp_path: Path,
+) -> None:
+    environment, _ = _doctor_environment(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(mode=0o700)
+    _write_fake_interpreter(fake_bin / "python", supported=False)
+    _write_fake_interpreter(fake_bin / "python3", supported=True)
+    environment["PATH"] = os.pathsep.join((str(fake_bin), environment["PATH"]))
+
+    result = _run_doctor(environment)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "selected-interpreter: python3" in result.stdout
+    assert "selected-interpreter: python\n" not in result.stdout
+
+
+def test_doctor_reports_unsupported_python_without_import_traceback(tmp_path: Path) -> None:
+    environment, _ = _doctor_environment(tmp_path)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(mode=0o700)
+    _write_fake_interpreter(fake_bin / "python", supported=False)
+    _write_fake_interpreter(fake_bin / "python3", supported=False)
+    environment["PATH"] = os.pathsep.join((str(fake_bin), environment["PATH"]))
+
+    result = _run_doctor(environment)
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "Supported Python: FAIL" in output
+    assert "Traceback" not in output
 
 
 def test_doctor_entrypoint_keeps_missing_credentials_outside_offline_readiness(
@@ -210,6 +257,17 @@ def test_private_tree_rejects_open_root_child_and_config_file_modes(tmp_path: Pa
     external = tmp_path / "external"
     external.mkdir(mode=0o700)
     (data_root / "logs").symlink_to(external, target_is_directory=True)
+    assert not doctor._private_tree(data_root)
+
+
+def test_private_tree_rejects_open_nested_evaluation_directory(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    evaluation_root = data_root / "diagnostics" / "evaluation"
+    evaluation_root.mkdir(parents=True, mode=0o700)
+    data_root.chmod(0o700)
+    (data_root / "diagnostics").chmod(0o700)
+    evaluation_root.chmod(0o755)
+
     assert not doctor._private_tree(data_root)
 
 
