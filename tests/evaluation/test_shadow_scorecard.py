@@ -225,6 +225,7 @@ def _citation_evidence_snapshot(
     from finance_research_agent.application.packet_service import build_research_packet
     from finance_research_agent.application.replay_service import ArtifactReplayResult
     from finance_research_agent.domain.enums import BriefOrigin
+    from finance_research_agent.domain.validation import validate_research_brief
     from finance_research_agent.evaluation.citation_sampling import (
         select_citation_entailment_sample,
     )
@@ -259,6 +260,11 @@ def _citation_evidence_snapshot(
         if material_claims:
             brief = valid_brief_draft.model_copy(update={"run_id": run_id})
             bundle_data["brief_draft"] = brief.model_dump(mode="json")
+            bundle_data["validation_report"] = validate_research_brief(
+                packet,
+                brief,
+                validation_attempt=1,
+            ).model_dump(mode="json")
         else:
             bundle_data["brief_origin"] = BriefOrigin.DETERMINISTIC_REDUCED.value
         bundle = PublishedRunBundle.model_construct(
@@ -873,13 +879,7 @@ def test_safety_gate_requires_version_bound_security_checks_and_incident_observa
 
 @pytest.mark.parametrize(
     ("receipts", "expected_reason"),
-    (
-        (
-            _safety_receipts(conclusion=ReleaseCheckConclusion.FAILURE),
-            "SAFETY_RELEASE_CHECK_FAILED",
-        ),
-        (_safety_receipts(mismatched_source=True), "SAFETY_RELEASE_CHECK_SOURCE_MISMATCH"),
-    ),
+    ((_safety_receipts(conclusion=ReleaseCheckConclusion.FAILURE), "SAFETY_RELEASE_CHECK_FAILED"),),
 )
 def test_safety_gate_fails_when_exact_source_security_check_fails(
     receipts: tuple[ReleaseCheckReceipt, ...], expected_reason: str
@@ -889,6 +889,269 @@ def test_safety_gate_fails_when_exact_source_security_check_fails(
     gate = _safety_gate(scorecard)
     assert gate.status is EvaluationGateStatus.FAIL
     assert expected_reason in gate.reason_codes
+
+
+def test_safety_gate_waits_for_security_checks_bound_to_evidence_source() -> None:
+    evidence = _safety_evidence(_safety_receipts(mismatched_source=True))
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _safety_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "SAFETY_RELEASE_CHECK_SOURCE_MISMATCH" in gate.reason_codes
+
+
+def _deterministic_evidence(verified_runs=(), receipts: tuple[ReleaseCheckReceipt, ...] = ()):
+    from finance_research_agent.evaluation.shadow_scorecard import (
+        _create_shadow_evaluation_evidence,
+    )
+
+    return _create_shadow_evaluation_evidence(
+        period=ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 26)),
+        origin=ShadowEvaluationOrigin.PERSONAL_SHADOW,
+        verified_runs=tuple(verified_runs),
+        feedback_records=(),
+        observations=(),
+        operator_attestations=(),
+        release_check_receipts=receipts,
+        source_commit_sha256="a" * 64,
+        source_tree_sha256="b" * 64,
+        evidence_hashes=("c" * 64,),
+    )
+
+
+def _deterministic_receipts(
+    *,
+    conclusion: ReleaseCheckConclusion = ReleaseCheckConclusion.SUCCESS,
+    mismatched_source: bool = False,
+) -> tuple[ReleaseCheckReceipt, ...]:
+    required_checks = (
+        ReleaseCheckId.UNIT_AND_INTEGRATION_TESTS,
+        ReleaseCheckId.SCENARIO_AND_FAILURE_MATRIX,
+    )
+    return tuple(
+        ReleaseCheckReceipt(
+            id=f"{check_id.value.lower()}-{python_version}",
+            check_id=check_id,
+            source_commit_sha256="d" * 64 if mismatched_source else "a" * 64,
+            source_tree_sha256="e" * 64 if mismatched_source else "b" * 64,
+            repository_id="finance-research-agent",
+            workflow_id="ci",
+            actions_run_id="run-456",
+            actions_job_id=f"verify-{python_version}",
+            actions_step_id=f"{check_id.value.lower()}-step",
+            python_version=python_version,
+            completed_at=datetime(2026, 8, 26, 12, tzinfo=UTC),
+            conclusion=conclusion,
+            response_sha256="f" * 64,
+        )
+        for check_id in required_checks
+        for python_version in ("3.12", "3.13", "3.14")
+    )
+
+
+def _deterministic_gate(scorecard):
+    return next(
+        gate for gate in scorecard.gate_results if gate.id is ShadowGateId.DETERMINISTIC_CORRECTNESS
+    )
+
+
+def test_deterministic_gate_requires_exact_release_checks_and_same_version_replay(
+    valid_packet, valid_brief_draft
+) -> None:
+    verified = _citation_evidence_snapshot(valid_packet, valid_brief_draft)[0].verified_runs
+    missing_checks_evidence = _deterministic_evidence(verified)
+    missing_checks = build_shadow_scorecard(
+        missing_checks_evidence.published_runs,
+        missing_checks_evidence.feedback_records,
+        _Calendar(),
+        evidence=missing_checks_evidence,
+    )
+    missing_replay_evidence = _deterministic_evidence((), _deterministic_receipts())
+    missing_replay = build_shadow_scorecard(
+        missing_replay_evidence.published_runs,
+        missing_replay_evidence.feedback_records,
+        _Calendar(),
+        evidence=missing_replay_evidence,
+    )
+    complete_evidence = _deterministic_evidence(verified, _deterministic_receipts())
+    complete = build_shadow_scorecard(
+        complete_evidence.published_runs,
+        complete_evidence.feedback_records,
+        _Calendar(),
+        evidence=complete_evidence,
+    )
+
+    assert _deterministic_gate(missing_checks).status is EvaluationGateStatus.PENDING
+    assert (
+        "DETERMINISTIC_RELEASE_CHECK_MATRIX_INCOMPLETE"
+        in _deterministic_gate(missing_checks).reason_codes
+    )
+    assert _deterministic_gate(missing_replay).status is EvaluationGateStatus.PENDING
+    assert (
+        "DETERMINISTIC_SAME_VERSION_REPLAY_REQUIRED"
+        in _deterministic_gate(missing_replay).reason_codes
+    )
+    assert _deterministic_gate(complete).status is EvaluationGateStatus.PASS
+    assert _deterministic_gate(complete).measured_value == 0
+    assert _deterministic_gate(complete).required_value == 0
+
+
+@pytest.mark.parametrize(
+    ("receipts", "expected_reason"),
+    (
+        (
+            _deterministic_receipts(conclusion=ReleaseCheckConclusion.FAILURE),
+            "DETERMINISTIC_RELEASE_CHECK_FAILED",
+        ),
+    ),
+)
+def test_deterministic_gate_fails_on_failed_or_wrong_source_receipt(
+    receipts: tuple[ReleaseCheckReceipt, ...], expected_reason: str
+) -> None:
+    evidence = _deterministic_evidence((), receipts)
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _deterministic_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert expected_reason in gate.reason_codes
+
+
+def test_deterministic_gate_waits_for_receipts_bound_to_evidence_source() -> None:
+    evidence = _deterministic_evidence((), _deterministic_receipts(mismatched_source=True))
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _deterministic_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "DETERMINISTIC_RELEASE_CHECK_SOURCE_MISMATCH" in gate.reason_codes
+
+
+def test_deterministic_gate_waits_when_only_version_drifted_artifacts_exist(
+    valid_packet, valid_brief_draft
+) -> None:
+    from dataclasses import replace
+
+    verified = _citation_evidence_snapshot(valid_packet, valid_brief_draft)[0].verified_runs
+    original = verified[0]
+    assert original.replay_result is not None
+    drifted_replay = replace(
+        original.replay_result,
+        markdown_matches=False,
+        replayed_markdown_sha256=None,
+        component_version_mismatches=("core_version",),
+    )
+    drifted_run = replace(original, replay_result=drifted_replay)
+    evidence = _deterministic_evidence((drifted_run,), _deterministic_receipts())
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _deterministic_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "DETERMINISTIC_SAME_VERSION_REPLAY_REQUIRED" in gate.reason_codes
+
+
+def test_deterministic_gate_waits_for_missing_numeric_validation_evidence(
+    valid_packet, valid_brief_draft
+) -> None:
+    from dataclasses import replace
+
+    verified = _citation_evidence_snapshot(valid_packet, valid_brief_draft)[0].verified_runs
+    original = verified[0]
+    assert original.published_bundle is not None and original.replay_result is not None
+    contents = original.published_bundle.model_dump(mode="json")["bundle"]
+    del contents["validation_report"]
+    incomplete_bundle = original.published_bundle.model_copy(update={"bundle": FrozenMap(contents)})
+    replay = replace(original.replay_result, bundle=incomplete_bundle)
+    incomplete_run = replace(original, published_bundle=incomplete_bundle, replay_result=replay)
+    evidence = _deterministic_evidence((incomplete_run,), _deterministic_receipts())
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _deterministic_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert "NUMERIC_VALIDATION_EVIDENCE_MISSING" in gate.reason_codes
+
+
+def test_deterministic_gate_fails_on_same_version_artifact_replay_mismatch(
+    valid_packet, valid_brief_draft
+) -> None:
+    from dataclasses import replace
+
+    verified = _citation_evidence_snapshot(valid_packet, valid_brief_draft)[0].verified_runs
+    original = verified[0]
+    assert original.replay_result is not None
+    bad_replay = replace(
+        original.replay_result,
+        markdown_matches=False,
+        replayed_markdown_sha256="d" * 64,
+    )
+    bad_run = replace(original, replay_result=bad_replay)
+    evidence = _deterministic_evidence((bad_run,), _deterministic_receipts())
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _deterministic_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert "SAME_VERSION_ARTIFACT_REPLAY_MISMATCH" in gate.reason_codes
+
+
+def test_deterministic_gate_revalidates_published_numeric_claims(
+    valid_packet, valid_brief_draft
+) -> None:
+    from dataclasses import replace
+
+    verified = _citation_evidence_snapshot(valid_packet, valid_brief_draft)[0].verified_runs
+    original = verified[0]
+    assert original.published_bundle is not None and original.replay_result is not None
+    contents = original.published_bundle.model_dump(mode="json")["bundle"]
+    draft = dict(contents["brief_draft"])
+    claims = [dict(claim) for claim in draft["claims"]]
+    numeric_claim = next(claim for claim in claims if claim["claim_id"] == "claim-sma")
+    numeric_claim["numeric_value"] = "104.00"
+    draft["claims"] = claims
+    contents["brief_draft"] = draft
+    bad_bundle = original.published_bundle.model_copy(update={"bundle": FrozenMap(contents)})
+    replay = replace(original.replay_result, bundle=bad_bundle)
+    bad_run = replace(original, published_bundle=bad_bundle, replay_result=replay)
+    evidence = _deterministic_evidence((bad_run,), _deterministic_receipts())
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _deterministic_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert "PUBLISHED_NUMERIC_OR_CLAIM_VALIDATION_FAILED" in gate.reason_codes
 
 
 def test_scorecard_contract_excludes_performance_and_execution_fields() -> None:

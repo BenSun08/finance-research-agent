@@ -27,6 +27,11 @@ from finance_research_agent.domain.models import (
 from finance_research_agent.domain.packets import ResearchPacket
 from finance_research_agent.domain.regime import Regime
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
+from finance_research_agent.domain.validation import (
+    ResearchBriefDraft,
+    ValidationReport,
+    validate_research_brief,
+)
 from finance_research_agent.evaluation.shadow_records import (
     ReleaseCheckConclusion,
     ReleaseCheckId,
@@ -52,7 +57,28 @@ _SAFETY_RELEASE_CHECKS = (
     ReleaseCheckId.SECRET_SCAN,
     ReleaseCheckId.NETWORK_BOUNDARY,
 )
-_SAFETY_RELEASE_PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
+_DETERMINISTIC_RELEASE_CHECKS = (
+    ReleaseCheckId.UNIT_AND_INTEGRATION_TESTS,
+    # This fixed matrix includes the stale-current-price sizing fail-closed case.
+    ReleaseCheckId.SCENARIO_AND_FAILURE_MATRIX,
+)
+_RELEASE_CHECK_PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
+
+
+@dataclass(frozen=True, slots=True)
+class _ReleaseCheckEvidence:
+    selected: tuple[ReleaseCheckReceipt, ...]
+    missing: tuple[tuple[ReleaseCheckId, str], ...]
+    failures: tuple[ReleaseCheckReceipt, ...]
+    source_mismatches: tuple[ReleaseCheckReceipt, ...]
+    source_identity_known: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _DeterministicArtifactReview:
+    failures: tuple[str, ...]
+    missing: tuple[str, ...]
+    stale_sizing_count: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -711,56 +737,32 @@ def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGat
 
 
 def _safety_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGate:
-    selected: list[ReleaseCheckReceipt] = []
-    missing: list[tuple[ReleaseCheckId, str]] = []
-    failures: list[ReleaseCheckReceipt] = []
-    source_mismatches: list[ReleaseCheckReceipt] = []
-    source_is_known = (
-        evidence.source_commit_sha256 is not None and evidence.source_tree_sha256 is not None
+    checks = _release_check_evidence(evidence, _SAFETY_RELEASE_CHECKS)
+    evidence_ids = tuple(
+        sorted(
+            {
+                *evidence.evidence_hashes,
+                *(item.id for item in checks.selected),
+                *(item.id for item in checks.source_mismatches),
+            }
+        )
     )
-
-    for check_id in _SAFETY_RELEASE_CHECKS:
-        for python_version in _SAFETY_RELEASE_PYTHON_VERSIONS:
-            receipt = next(
-                (
-                    item
-                    for item in evidence.release_check_receipts
-                    if item.check_id is check_id and item.python_version == python_version
-                ),
-                None,
-            )
-            if receipt is None:
-                missing.append((check_id, python_version))
-                continue
-            selected.append(receipt)
-            if source_is_known and (
-                receipt.source_commit_sha256 != evidence.source_commit_sha256
-                or receipt.source_tree_sha256 != evidence.source_tree_sha256
-            ):
-                source_mismatches.append(receipt)
-            elif receipt.conclusion is not ReleaseCheckConclusion.SUCCESS:
-                failures.append(receipt)
-
-    evidence_ids = tuple(sorted({*evidence.evidence_hashes, *(item.id for item in selected)}))
-    if source_mismatches or failures:
-        reasons = []
-        if source_mismatches:
-            reasons.append("SAFETY_RELEASE_CHECK_SOURCE_MISMATCH")
-        if failures:
-            reasons.append("SAFETY_RELEASE_CHECK_FAILED")
+    if checks.failures:
         return EvaluationGate(
             id=ShadowGateId.SAFETY,
             status=EvaluationGateStatus.FAIL,
             evidence_ids=evidence_ids,
-            reason_codes=tuple(reasons),
-            measured_value=len(source_mismatches) + len(failures),
+            reason_codes=("SAFETY_RELEASE_CHECK_FAILED",),
+            measured_value=len(checks.failures),
             required_value=0,
         )
 
     pending_reasons = []
-    if not source_is_known:
+    if not checks.source_identity_known:
         pending_reasons.append("SAFETY_SOURCE_IDENTITY_UNAVAILABLE")
-    if missing:
+    if checks.source_mismatches:
+        pending_reasons.append("SAFETY_RELEASE_CHECK_SOURCE_MISMATCH")
+    if checks.missing:
         pending_reasons.append("SAFETY_RELEASE_CHECK_MATRIX_INCOMPLETE")
     # The current R11 evidence model has no typed incident observation. Empty
     # failure references therefore cannot establish an observed zero incident count.
@@ -771,6 +773,229 @@ def _safety_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGate:
         evidence_ids=evidence_ids,
         reason_codes=tuple(pending_reasons),
         measured_value=None,
+        required_value=0,
+    )
+
+
+def _release_check_evidence(
+    evidence: ShadowEvaluationEvidence,
+    required_checks: tuple[ReleaseCheckId, ...],
+) -> _ReleaseCheckEvidence:
+    selected: list[ReleaseCheckReceipt] = []
+    missing: list[tuple[ReleaseCheckId, str]] = []
+    failures: list[ReleaseCheckReceipt] = []
+    source_mismatches: list[ReleaseCheckReceipt] = []
+    source_identity_known = (
+        evidence.source_commit_sha256 is not None and evidence.source_tree_sha256 is not None
+    )
+
+    for check_id in required_checks:
+        for python_version in _RELEASE_CHECK_PYTHON_VERSIONS:
+            candidates = tuple(
+                item
+                for item in evidence.release_check_receipts
+                if item.check_id is check_id and item.python_version == python_version
+            )
+            if not source_identity_known:
+                missing.append((check_id, python_version))
+                continue
+            exact_source_receipts = tuple(
+                item
+                for item in candidates
+                if item.source_commit_sha256 == evidence.source_commit_sha256
+                and item.source_tree_sha256 == evidence.source_tree_sha256
+            )
+            if not exact_source_receipts:
+                missing.append((check_id, python_version))
+                source_mismatches.extend(candidates)
+                continue
+            selected.extend(exact_source_receipts)
+            failures.extend(
+                item
+                for item in exact_source_receipts
+                if item.conclusion is not ReleaseCheckConclusion.SUCCESS
+            )
+
+    return _ReleaseCheckEvidence(
+        selected=tuple(selected),
+        missing=tuple(missing),
+        failures=tuple(failures),
+        source_mismatches=tuple(source_mismatches),
+        source_identity_known=source_identity_known,
+    )
+
+
+def _review_deterministic_artifact(
+    verified_run: VerifiedShadowRunEvidence,
+) -> _DeterministicArtifactReview:
+    bundle = verified_run.published_bundle
+    if bundle is None:
+        return _DeterministicArtifactReview(failures=(), missing=(), stale_sizing_count=None)
+
+    contents = bundle.model_dump(mode="json")["bundle"]
+    if contents.get("brief_origin") == BriefOrigin.OPERATIONAL.value:
+        return _DeterministicArtifactReview(failures=(), missing=(), stale_sizing_count=0)
+
+    packet_value = contents.get("research_packet")
+    if packet_value is None:
+        return _DeterministicArtifactReview(
+            failures=(), missing=("FROZEN_RESEARCH_PACKET_REQUIRED",), stale_sizing_count=None
+        )
+    try:
+        packet = ResearchPacket.model_validate_json(_deterministic_json_bytes(packet_value))
+    except (TypeError, ValueError):
+        return _DeterministicArtifactReview(
+            failures=("FROZEN_RESEARCH_PACKET_INVALID",), missing=(), stale_sizing_count=None
+        )
+
+    failures: list[str] = []
+    missing: list[str] = []
+    if "brief_draft" in contents:
+        validation_value = contents.get("validation_report")
+        if validation_value is None:
+            missing.append("NUMERIC_VALIDATION_EVIDENCE_MISSING")
+        else:
+            try:
+                draft = ResearchBriefDraft.model_validate_json(
+                    _deterministic_json_bytes(contents["brief_draft"])
+                )
+                recorded_validation = ValidationReport.model_validate_json(
+                    _deterministic_json_bytes(validation_value)
+                )
+                current_validation = validate_research_brief(
+                    packet,
+                    draft,
+                    validation_attempt=recorded_validation.validation_attempt,
+                )
+            except (KeyError, TypeError, ValueError):
+                failures.append("PUBLISHED_BRIEF_VALIDATION_INVALID")
+            else:
+                if (
+                    not recorded_validation.is_valid
+                    or not current_validation.is_valid
+                    or current_validation != recorded_validation
+                ):
+                    failures.append("PUBLISHED_NUMERIC_OR_CLAIM_VALIDATION_FAILED")
+
+    stale_symbols = {
+        str(item.structured_fields["requested_symbol"])
+        for item in packet.evidence
+        if item.source.provider == "alpaca"
+        and item.structured_fields.get("outcome") == "PREMARKET_PRICE"
+        and item.structured_fields.get("error_code") == "STALE_DATA"
+        and isinstance(item.structured_fields.get("requested_symbol"), str)
+    }
+    stale_sizing_count = sum(
+        plan.symbol in stale_symbols and plan.position_sizing.suggested_units is not None
+        for plan in packet.deterministic_plan_inputs
+    )
+    if stale_sizing_count:
+        failures.append("STALE_CURRENT_PRICE_SIZING_OBSERVED")
+
+    return _DeterministicArtifactReview(
+        failures=tuple(failures),
+        missing=tuple(missing),
+        stale_sizing_count=stale_sizing_count,
+    )
+
+
+def _deterministic_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _deterministic_correctness_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGate:
+    checks = _release_check_evidence(evidence, _DETERMINISTIC_RELEASE_CHECKS)
+    published_runs = tuple(
+        item for item in evidence.verified_runs if item.published_bundle is not None
+    )
+    same_version_runs = tuple(
+        item
+        for item in published_runs
+        if item.replay_result is not None and not item.replay_result.component_version_mismatches
+    )
+    replay_failures = tuple(
+        item
+        for item in same_version_runs
+        if item.replay_result is None
+        or not item.replay_result.json_matches
+        or not item.replay_result.markdown_matches
+        or item.replay_result.stored_json_sha256 != item.replay_result.replayed_json_sha256
+        or item.replay_result.replayed_markdown_sha256 is None
+        or item.replay_result.stored_markdown_sha256 != item.replay_result.replayed_markdown_sha256
+    )
+    artifact_reviews = tuple(_review_deterministic_artifact(item) for item in same_version_runs)
+    artifact_failures = tuple(
+        dict.fromkeys(reason for review in artifact_reviews for reason in review.failures)
+    )
+    artifact_missing = tuple(
+        dict.fromkeys(reason for review in artifact_reviews for reason in review.missing)
+    )
+    stale_counts = tuple(review.stale_sizing_count for review in artifact_reviews)
+    stale_sizing_count = (
+        sum(count for count in stale_counts if count is not None)
+        if same_version_runs and all(count is not None for count in stale_counts)
+        else None
+    )
+    evidence_ids = tuple(
+        sorted(
+            {
+                *evidence.evidence_hashes,
+                *(item.id for item in checks.selected),
+                *(item.id for item in checks.source_mismatches),
+                *(item.stored_run.run_id for item in same_version_runs),
+            }
+        )
+    )
+
+    reasons = []
+    if checks.failures:
+        reasons.append("DETERMINISTIC_RELEASE_CHECK_FAILED")
+    if replay_failures:
+        reasons.append("SAME_VERSION_ARTIFACT_REPLAY_MISMATCH")
+    reasons.extend(artifact_failures)
+    reasons = list(dict.fromkeys(reasons))
+    if reasons:
+        return EvaluationGate(
+            id=ShadowGateId.DETERMINISTIC_CORRECTNESS,
+            status=EvaluationGateStatus.FAIL,
+            evidence_ids=evidence_ids,
+            reason_codes=tuple(reasons),
+            measured_value=stale_sizing_count,
+            required_value=0,
+        )
+
+    pending_reasons = []
+    if not checks.source_identity_known:
+        pending_reasons.append("DETERMINISTIC_SOURCE_IDENTITY_UNAVAILABLE")
+    if checks.source_mismatches:
+        pending_reasons.append("DETERMINISTIC_RELEASE_CHECK_SOURCE_MISMATCH")
+    if checks.missing:
+        pending_reasons.append("DETERMINISTIC_RELEASE_CHECK_MATRIX_INCOMPLETE")
+    pending_reasons.extend(artifact_missing)
+    if not same_version_runs:
+        pending_reasons.append("DETERMINISTIC_SAME_VERSION_REPLAY_REQUIRED")
+    pending_reasons = list(dict.fromkeys(pending_reasons))
+    if pending_reasons:
+        return EvaluationGate(
+            id=ShadowGateId.DETERMINISTIC_CORRECTNESS,
+            status=EvaluationGateStatus.PENDING,
+            evidence_ids=evidence_ids,
+            reason_codes=tuple(pending_reasons),
+            measured_value=stale_sizing_count,
+            required_value=0,
+        )
+
+    return EvaluationGate(
+        id=ShadowGateId.DETERMINISTIC_CORRECTNESS,
+        status=EvaluationGateStatus.PASS,
+        evidence_ids=evidence_ids,
+        measured_value=stale_sizing_count,
         required_value=0,
     )
 
@@ -1132,6 +1357,7 @@ def build_shadow_scorecard(
     specific_gates = {
         ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS: day_gate,
         ShadowGateId.SAFETY: _safety_gate(evidence),
+        ShadowGateId.DETERMINISTIC_CORRECTNESS: _deterministic_correctness_gate(evidence),
         ShadowGateId.EVIDENCE: _citation_evidence_gate(evidence),
         ShadowGateId.REVIEW_TIME: review_time_gate,
         ShadowGateId.NORMAL_PROVIDER_DURATION: duration_gate,
