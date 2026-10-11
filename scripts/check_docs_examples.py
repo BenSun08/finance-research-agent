@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import argparse
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 import yaml
 
+from finance_research_agent.application.config_service import (
+    FIXED_CONFIGURATION_FILES,
+    load_configuration,
+)
 from finance_research_agent.application.operations import OPERATION_NAMES
 from finance_research_agent.application.skill_bundle import declared_skill_resources
 from finance_research_agent.application.skill_contracts import (
@@ -18,6 +23,36 @@ from finance_research_agent.application.skill_contracts import (
     parse_skill_bytes,
     validate_workflow_bytes,
 )
+
+_REVIEWED_EXAMPLE_SYMBOLS = frozenset(
+    {
+        "AAPL",
+        "DIA",
+        "GLD",
+        "HYG",
+        "IWM",
+        "LQD",
+        "QQQ",
+        "SPY",
+        "TLT",
+        "UUP",
+        "USO",
+        "VIX",
+        "XLB",
+        "XLC",
+        "XLE",
+        "XLF",
+        "XLI",
+        "XLK",
+        "XLP",
+        "XLRE",
+        "XLU",
+        "XLV",
+        "XLY",
+    }
+)
+_REVIEWED_EXAMPLE_RATIONALE = "Synthetic example for offline configuration validation."
+_REVIEWED_EXAMPLE_NOTES = "Synthetic data only."
 
 
 @dataclass(frozen=True)
@@ -39,8 +74,17 @@ def declared_resources(skill: Skill) -> tuple[PurePosixPath, ...]:
 
 
 def _regular_confined(root: Path, path: Path) -> None:
-    if root.is_symlink() or any(part.is_symlink() for part in (path, *path.parents)):
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("resource is outside its root") from exc
+    current = root
+    if current.is_symlink():
         raise ValueError("symlink resource is forbidden")
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("symlink resource is forbidden")
     if not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
         raise ValueError("missing or unconfined resource")
 
@@ -80,6 +124,54 @@ def validate_product_a_contracts(root: Path) -> tuple[str, ...]:
     errors.extend(validate_workflow(manifest))
     if any((root / "skills").glob("*/scripts/*")):
         errors.append("skill-local executable scripts are forbidden")
+    errors.extend(validate_configuration_examples(root))
+    return tuple(errors)
+
+
+def _example_symbol_values(value: object) -> Iterator[str]:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if isinstance(key, str) and (key == "symbol" or key.endswith(("_symbol", "_symbols"))):
+                if isinstance(item, str):
+                    yield item
+                elif isinstance(item, (tuple, list)):
+                    yield from (symbol for symbol in item if isinstance(symbol, str))
+            yield from _example_symbol_values(item)
+    elif isinstance(value, (tuple, list)):
+        for item in value:
+            yield from _example_symbol_values(item)
+
+
+def validate_configuration_examples(root: Path) -> tuple[str, ...]:
+    """Validate tracked example configs and their reviewed, de-identified values."""
+    example_root = root / "config" / "examples"
+    try:
+        for filename in FIXED_CONFIGURATION_FILES.values():
+            _regular_confined(root, example_root / filename)
+        configuration = load_configuration(example_root)
+        example_symbols = tuple(
+            symbol
+            for filename in FIXED_CONFIGURATION_FILES.values()
+            for symbol in _example_symbol_values(
+                yaml.safe_load((example_root / filename).read_text(encoding="utf-8"))
+            )
+        )
+    except (OSError, ValueError, yaml.YAMLError):
+        return ("Product A configuration examples must be safe, present, and model-valid",)
+
+    errors = []
+    if any(symbol not in _REVIEWED_EXAMPLE_SYMBOLS for symbol in example_symbols):
+        errors.append("configuration example symbols must use reviewed de-identified samples")
+    if any(
+        item.research_rationale != _REVIEWED_EXAMPLE_RATIONALE
+        for item in configuration.watchlist.items
+    ):
+        errors.append("watchlist example rationales must remain reviewed and de-identified")
+    if any(
+        item.notes is not None and item.notes != _REVIEWED_EXAMPLE_NOTES
+        for item in configuration.watchlist.items
+    ):
+        errors.append("watchlist example notes must remain reviewed and de-identified")
     return tuple(errors)
 
 
