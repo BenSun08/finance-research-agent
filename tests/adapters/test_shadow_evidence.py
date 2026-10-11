@@ -32,6 +32,8 @@ from finance_research_agent.evaluation.shadow_records import (
 
 _SOURCE_COMMIT_SHA256 = "a" * 64
 _SOURCE_TREE_SHA256 = "b" * 64
+_REPOSITORY_ID = "789"
+_WORKFLOW_ID = "101"
 
 
 class _Runs:
@@ -90,8 +92,8 @@ def _release_receipt() -> ReleaseCheckReceipt:
         check_id=ReleaseCheckId.LINT,
         source_commit_sha256=_SOURCE_COMMIT_SHA256,
         source_tree_sha256=_SOURCE_TREE_SHA256,
-        repository_id="789",
-        workflow_id="101",
+        repository_id=_REPOSITORY_ID,
+        workflow_id=_WORKFLOW_ID,
         actions_run_id="123",
         actions_job_id="456",
         actions_step_id="1:2",
@@ -112,6 +114,8 @@ def _release_reader(
         root,
         source_commit_sha256=source_commit_sha256,
         source_tree_sha256=source_tree_sha256,
+        repository_id=_REPOSITORY_ID,
+        workflow_id=_WORKFLOW_ID,
     )
 
 
@@ -342,6 +346,8 @@ def test_release_evidence_reader_rejects_invalid_source_hash_configuration(
             root,
             source_commit_sha256="not-a-sha256",
             source_tree_sha256=_SOURCE_TREE_SHA256,
+            repository_id=_REPOSITORY_ID,
+            workflow_id=_WORKFLOW_ID,
         )
 
     with pytest.raises(ValueError, match="source tree hash is invalid"):
@@ -349,6 +355,58 @@ def test_release_evidence_reader_rejects_invalid_source_hash_configuration(
             root,
             source_commit_sha256=_SOURCE_COMMIT_SHA256,
             source_tree_sha256="not-a-sha256",
+            repository_id=_REPOSITORY_ID,
+            workflow_id=_WORKFLOW_ID,
+        )
+
+
+@pytest.mark.parametrize(
+    ("identity_field", "identity_value"),
+    (("repository_id", "790"), ("workflow_id", "102")),
+)
+def test_release_evidence_reader_rejects_receipts_from_another_repository_or_workflow(
+    tmp_path: Path,
+    identity_field: str,
+    identity_value: str,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    receipt = _release_receipt().model_copy(update={identity_field: identity_value})
+    _write_release_receipt_batch(root, (receipt,))
+
+    reader = FileSystemReleaseEvidenceReader(
+        root,
+        source_commit_sha256=_SOURCE_COMMIT_SHA256,
+        source_tree_sha256=_SOURCE_TREE_SHA256,
+        repository_id=_REPOSITORY_ID,
+        workflow_id=_WORKFLOW_ID,
+    )
+
+    with pytest.raises(ValueError, match="does not match the configured repository and workflow"):
+        reader.list_receipts()
+
+
+@pytest.mark.parametrize(
+    ("repository_id", "workflow_id", "error"),
+    (
+        ("invalid id", _WORKFLOW_ID, "repository id is invalid"),
+        (_REPOSITORY_ID, "invalid id", "workflow id is invalid"),
+    ),
+)
+def test_release_evidence_reader_rejects_invalid_repository_workflow_configuration(
+    tmp_path: Path,
+    repository_id: str,
+    workflow_id: str,
+    error: str,
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        FileSystemReleaseEvidenceReader(
+            tmp_path / "release-evidence",
+            source_commit_sha256=_SOURCE_COMMIT_SHA256,
+            source_tree_sha256=_SOURCE_TREE_SHA256,
+            repository_id=repository_id,
+            workflow_id=workflow_id,
         )
 
 

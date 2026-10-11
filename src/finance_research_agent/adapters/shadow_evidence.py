@@ -81,7 +81,7 @@ class FileSystemOperatorReleaseAttestationRepository:
 
 
 class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
-    """Read the newest private batch for one configured source commit and tree."""
+    """Read the newest private batch for one configured source and workflow."""
 
     def __init__(
         self,
@@ -89,6 +89,8 @@ class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
         *,
         source_commit_sha256: Sha256,
         source_tree_sha256: Sha256,
+        repository_id: Identifier,
+        workflow_id: Identifier,
     ) -> None:
         self._root = Path(root)
         try:
@@ -103,6 +105,14 @@ class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
             )
         except ValidationError as exc:
             raise ValueError("release evidence source tree hash is invalid") from exc
+        try:
+            self._repository_id = _IDENTIFIER_ADAPTER.validate_python(repository_id, strict=True)
+        except ValidationError as exc:
+            raise ValueError("release evidence repository id is invalid") from exc
+        try:
+            self._workflow_id = _IDENTIFIER_ADAPTER.validate_python(workflow_id, strict=True)
+        except ValidationError as exc:
+            raise ValueError("release evidence workflow id is invalid") from exc
 
     def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]:
         if not _private_directory_available_or_missing(self._root):
@@ -126,7 +136,11 @@ class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
             for path, parts in matching_source
             if (int(parts[2]), int(parts[3])) == latest_order
         )
-        return _read_release_batch(latest)
+        return _read_release_batch(
+            latest,
+            repository_id=self._repository_id,
+            workflow_id=self._workflow_id,
+        )
 
 
 def _append(
@@ -232,7 +246,9 @@ def _private_directory_available_or_missing(root: Path) -> bool:
     return True
 
 
-def _read_release_batch(path: Path) -> tuple[ReleaseCheckReceipt, ...]:
+def _read_release_batch(
+    path: Path, *, repository_id: str, workflow_id: str
+) -> tuple[ReleaseCheckReceipt, ...]:
     commit_sha256, tree_sha256, run_id, attempt = _release_batch_filename_parts(path)
     if path.is_symlink() or not path.is_file():
         raise ValueError("release evidence batch must be a regular local file")
@@ -255,6 +271,13 @@ def _read_release_batch(path: Path) -> tuple[ReleaseCheckReceipt, ...]:
         for receipt in receipts
     ):
         raise ValueError("release evidence receipt does not match its batch identity")
+    if any(
+        receipt.repository_id != repository_id or receipt.workflow_id != workflow_id
+        for receipt in receipts
+    ):
+        raise ValueError(
+            "release evidence receipt does not match the configured repository and workflow"
+        )
     return receipts
 
 
