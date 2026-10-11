@@ -1362,8 +1362,19 @@ def test_normal_provider_duration_gate_is_pending_without_a_terminal_checkpoint(
     assert gate.reason_codes == ("NORMAL_PROVIDER_TERMINAL_EVIDENCE_MISSING",)
 
 
-def test_daily_metrics_use_earliest_complete_feedback_once_per_report(
-    valid_packet, tmp_path, monkeypatch
+@pytest.mark.parametrize(
+    ("later_identified_posture", "expected_identification_status"),
+    (
+        ("unknown", EvaluationGateStatus.PASS),
+        ("neutral", EvaluationGateStatus.FAIL),
+    ),
+)
+def test_daily_metrics_and_identification_use_selected_complete_feedback(
+    valid_packet,
+    tmp_path,
+    monkeypatch,
+    later_identified_posture,
+    expected_identification_status,
 ) -> None:
     from finance_research_agent.application import shadow_evidence_loader
     from finance_research_agent.application.operations import (
@@ -1373,20 +1384,38 @@ def test_daily_metrics_use_earliest_complete_feedback_once_per_report(
     from finance_research_agent.application.shadow_evidence_loader import (
         load_shadow_evaluation_evidence,
     )
+    from finance_research_agent.domain.enums import Capability
+    from finance_research_agent.domain.errors import ErrorCode
+    from finance_research_agent.domain.models import CapabilityState
     from finance_research_agent.domain.regime import Regime
 
-    bundle, artifact = personal_reduced_publication(valid_packet, tmp_path)
+    packet = valid_packet.model_copy(
+        update={
+            "capability_states": (
+                CapabilityState(
+                    capability=Capability.EVENT_RISK_CHECK_AVAILABLE,
+                    available=False,
+                    reason_codes=(ErrorCode.PROVIDER_UNAVAILABLE,),
+                    evidence_ids=(),
+                ),
+            )
+        }
+    )
+    bundle, artifact = personal_reduced_publication(packet, tmp_path)
     monkeypatch.setattr(
         shadow_evidence_loader,
         "current_component_versions",
         lambda snapshot: recorded_component_versions(bundle.run),
     )
     identification = ExecutiveIdentification(
-        market_posture=Regime.NEUTRAL,
-        event_state=ExecutiveEventState.NO_MATERIAL_EVENTS,
+        market_posture=Regime.UNKNOWN,
+        event_state=ExecutiveEventState.UNAVAILABLE,
         event_ids=(),
-        priority_symbols=("SPY",),
-        disabled_capabilities=(),
+        priority_symbols=(),
+        disabled_capabilities=(Capability.EVENT_RISK_CHECK_AVAILABLE,),
+    )
+    later_identification = identification.model_copy(
+        update={"market_posture": Regime(later_identified_posture)}
     )
     common_feedback = {
         "run_id": bundle.run.run_id,
@@ -1403,9 +1432,11 @@ def test_daily_metrics_use_earliest_complete_feedback_once_per_report(
             common_feedback
             | {
                 "feedback_id": "feedback-z",
+                "recorded_at": datetime(2026, 8, 26, 14, tzinfo=UTC),
                 "usefulness_score": 1,
                 "executive_review_duration_seconds": 300,
                 "detailed_review_duration_seconds": 1200,
+                "executive_identification": later_identification,
             }
         )
     )
@@ -1485,6 +1516,11 @@ def test_daily_metrics_use_earliest_complete_feedback_once_per_report(
     gates = {gate.id: gate for gate in scorecard.gate_results}
     assert gates[ShadowGateId.REVIEW_TIME].status is EvaluationGateStatus.PASS
     assert gates[ShadowGateId.USEFULNESS].status is EvaluationGateStatus.PASS
+    assert gates[ShadowGateId.EXECUTIVE_IDENTIFICATION].status is expected_identification_status
+    if expected_identification_status is EvaluationGateStatus.FAIL:
+        assert gates[ShadowGateId.EXECUTIVE_IDENTIFICATION].reason_codes == (
+            "EXECUTIVE_IDENTIFICATION_MISMATCH",
+        )
     expected_daily_feedback_ids = {
         earlier_partial_feedback.feedback_id,
         full_later_id.feedback_id,

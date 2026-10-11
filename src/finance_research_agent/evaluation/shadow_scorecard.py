@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -13,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-from finance_research_agent.domain.enums import BriefOrigin
+from finance_research_agent.domain.enums import BriefOrigin, Capability
 from finance_research_agent.domain.models import (
     Identifier,
     PerformanceTelemetry,
@@ -23,10 +24,17 @@ from finance_research_agent.domain.models import (
     StoredRun,
     StrictModel,
 )
+from finance_research_agent.domain.packets import ResearchPacket
+from finance_research_agent.domain.regime import Regime
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
+from finance_research_agent.evaluation.shadow_records import (
+    ShadowExecutiveEventState,
+    ShadowExecutiveIdentification,
+)
 
 if TYPE_CHECKING:
     from finance_research_agent.application.feedback_service import RecordedFeedback
+    from finance_research_agent.application.operations import ExecutiveIdentification
     from finance_research_agent.application.replay_service import ArtifactReplayResult
     from finance_research_agent.domain.market_calendar import TradingCalendar
     from finance_research_agent.evaluation.shadow_records import (
@@ -338,6 +346,144 @@ def _daily_usefulness_gate(
         reason_codes=reason_codes,
         measured_value=average_usefulness,
         required_value=Decimal("4"),
+    )
+
+
+def _executive_identification_gate(
+    report_dates: Sequence[date],
+    selected_publications: dict[date, VerifiedShadowRunEvidence],
+    evidence: ShadowEvaluationEvidence,
+) -> EvaluationGate:
+    evidence_ids: set[str] = set()
+    completed_review_days = 0
+    missing_review = False
+    mismatch = False
+
+    for market_date in report_dates:
+        verified_run = selected_publications[market_date]
+        bundle = verified_run.published_bundle
+        artifact = verified_run.published_artifact
+        if bundle is None or artifact is None:
+            missing_review = True
+            continue
+        run_id = verified_run.stored_run.run_id
+        evidence_ids.add(run_id)
+        reviews = tuple(
+            record
+            for record in evidence.feedback_records
+            if record.run_id == run_id
+            and record.bundle_sha256 == artifact.bundle_sha256
+            and record.schema_version == "0.2"
+            and record.executive_identification is not None
+        )
+        if not reviews:
+            missing_review = True
+            continue
+        evidence_ids.update(record.feedback_id for record in reviews)
+        identifications = tuple(
+            record.executive_identification
+            for record in reviews
+            if record.executive_identification is not None
+        )
+
+        expected = _expected_executive_identification(bundle)
+        if expected is None or not identifications:
+            missing_review = True
+            continue
+        completed_review_days += 1
+        if any(not _executive_identification_matches(item, expected) for item in identifications):
+            mismatch = True
+
+    if mismatch:
+        status = EvaluationGateStatus.FAIL
+        reasons: tuple[str, ...] = ("EXECUTIVE_IDENTIFICATION_MISMATCH",)
+    elif missing_review or not report_dates:
+        status = EvaluationGateStatus.PENDING
+        reasons = ("DAILY_EXECUTIVE_IDENTIFICATION_EVIDENCE_MISSING",)
+    else:
+        status = EvaluationGateStatus.PASS
+        reasons = ()
+    return EvaluationGate(
+        id=ShadowGateId.EXECUTIVE_IDENTIFICATION,
+        status=status,
+        evidence_ids=tuple(sorted(evidence_ids)),
+        reason_codes=reasons,
+        measured_value=completed_review_days,
+        required_value=len(report_dates),
+    )
+
+
+def _expected_executive_identification(
+    bundle: PublishedRunBundle,
+) -> ShadowExecutiveIdentification | None:
+    packet_data = bundle.model_dump(mode="json")["bundle"].get("research_packet")
+    if not isinstance(packet_data, Mapping):
+        return None
+    try:
+        packet_bytes = json.dumps(
+            packet_data,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        packet = ResearchPacket.model_validate_json(packet_bytes)
+    except (TypeError, ValueError):
+        return None
+
+    event_capability = next(
+        (
+            state
+            for state in packet.capability_states
+            if state.capability is Capability.EVENT_RISK_CHECK_AVAILABLE
+        ),
+        None,
+    )
+    if event_capability is None:
+        return None
+
+    material_event_ids = tuple(
+        dict.fromkeys(
+            event.event_id
+            for event in packet.events
+            if event.materiality in {"MEDIUM", "HIGH", "UNKNOWN"}
+        )
+    )
+    if material_event_ids:
+        event_state = ShadowExecutiveEventState.MATERIAL_EVENTS
+    elif event_capability.available:
+        event_state = ShadowExecutiveEventState.NO_MATERIAL_EVENTS
+    else:
+        event_state = ShadowExecutiveEventState.UNAVAILABLE
+
+    return ShadowExecutiveIdentification(
+        market_posture=(
+            packet.regime_result.regime if packet.regime_result is not None else Regime.UNKNOWN
+        ),
+        event_state=event_state,
+        event_ids=material_event_ids,
+        priority_symbols=tuple(
+            dict.fromkeys(
+                candidate.symbol for candidate in packet.candidates if candidate.executive_highlight
+            )
+        ),
+        disabled_capabilities=tuple(
+            dict.fromkeys(
+                state.capability for state in packet.capability_states if not state.available
+            )
+        ),
+    )
+
+
+def _executive_identification_matches(
+    observed: ExecutiveIdentification,
+    expected: ShadowExecutiveIdentification,
+) -> bool:
+    return (
+        observed.market_posture.value == expected.market_posture.value
+        and observed.event_state.value == expected.event_state.value
+        and set(observed.event_ids) == set(expected.event_ids)
+        and observed.priority_symbols == expected.priority_symbols
+        and set(observed.disabled_capabilities) == set(expected.disabled_capabilities)
     )
 
 
@@ -892,6 +1038,11 @@ def build_shadow_scorecard(
         ShadowGateId.NORMAL_PROVIDER_DURATION: duration_gate,
         ShadowGateId.TIMELY_PUBLICATION: timely_gate,
         ShadowGateId.USEFULNESS: usefulness_gate,
+        ShadowGateId.EXECUTIVE_IDENTIFICATION: _executive_identification_gate(
+            report_dates,
+            selected_publications,
+            evidence,
+        ),
     }
     gates = tuple(
         specific_gates.get(gate_id)
