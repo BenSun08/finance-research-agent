@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
-from finance_research_agent.domain.enums import BriefOrigin, Capability
+from finance_research_agent.domain.enums import BriefOrigin, Capability, ReducedReportReason
 from finance_research_agent.domain.errors import ErrorCode
 from finance_research_agent.domain.models import (
     Identifier,
@@ -1064,6 +1064,19 @@ def _review_deterministic_artifact(
 
     failures: list[str] = []
     missing: list[str] = []
+    if contents.get("brief_origin") == BriefOrigin.DETERMINISTIC_REDUCED.value:
+        from finance_research_agent.application.reduced_report import render_reduced_report
+
+        try:
+            expected_report = render_reduced_report(
+                packet, ReducedReportReason(contents["reduced_report_reason"])
+            )
+        except (KeyError, TypeError, ValueError):
+            missing.append("DETERMINISTIC_REDUCED_DISCLOSURES_UNVERIFIED")
+        else:
+            if expected_report != bundle.report_markdown:
+                missing.append("DETERMINISTIC_REDUCED_DISCLOSURES_UNVERIFIED")
+
     if "brief_draft" in contents:
         validation_value = contents.get("validation_report")
         if validation_value is None:

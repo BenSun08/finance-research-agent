@@ -233,10 +233,16 @@ def _citation_evidence_snapshot(
     invalid_receipt: bool = False,
     missing_validation: bool = False,
     post_cutoff_evidence: bool = False,
+    unverified_reduced_disclosure: bool = False,
+    missing_reduced_report_reason: bool = False,
 ):
     from finance_research_agent.application.packet_service import build_research_packet
+    from finance_research_agent.application.reduced_report import (
+        render_reduced_report,
+        render_reduced_report_base,
+    )
     from finance_research_agent.application.replay_service import ArtifactReplayResult
-    from finance_research_agent.domain.enums import BriefOrigin
+    from finance_research_agent.domain.enums import BriefOrigin, ReducedReportReason
     from finance_research_agent.domain.validation import validate_research_brief
     from finance_research_agent.evaluation.citation_sampling import (
         select_citation_entailment_sample,
@@ -278,14 +284,31 @@ def _citation_evidence_snapshot(
                     brief,
                     validation_attempt=1,
                 ).model_dump(mode="json")
+            report = "verified report fixture"
         else:
+            reason = ReducedReportReason.SYNTHESIS_UNAVAILABLE
             bundle_data["brief_origin"] = BriefOrigin.DETERMINISTIC_REDUCED.value
+            if not missing_reduced_report_reason:
+                bundle_data["reduced_report_reason"] = reason.value
+            bundle_data["reduced_report_staged_sha256"] = sha256(
+                render_reduced_report_base(packet)
+            ).hexdigest()
+            bundle_data["reduced_plans"] = [
+                {"plan_id": plan.plan_id, "status": "BLOCKED", "reason": reason.value}
+                for plan in packet.deterministic_plan_inputs
+            ]
+            bundle_data["validation_reports"] = []
+            report = (
+                "verified report fixture"
+                if unverified_reduced_disclosure
+                else render_reduced_report(packet, reason)
+            )
         if first_bundle is None:
             first_bundle = PublishedRunBundle.model_construct(
                 run=run,
                 bundle=FrozenMap(bundle_data),
-                report_markdown="verified report fixture",
-                markdown_sha256=None,
+                report_markdown=report,
+                markdown_sha256=sha256(report.encode("utf-8")).hexdigest(),
             )
         if post_cutoff_evidence:
             packet_data = dict(bundle_data["research_packet"])
@@ -299,15 +322,15 @@ def _citation_evidence_snapshot(
         bundle = PublishedRunBundle.model_construct(
             run=run,
             bundle=FrozenMap(bundle_data),
-            report_markdown="verified report fixture",
-            markdown_sha256=None,
+            report_markdown=report,
+            markdown_sha256=sha256(report.encode("utf-8")).hexdigest(),
         )
         bundle_hash = sha256(canonical_bytes(bundle)).hexdigest()
         published_at = run.invoked_at + timedelta(minutes=2)
         artifact = PublishedArtifact(
             run_id=run_id,
             bundle_sha256="f" * 64 if invalid_receipt else bundle_hash,
-            markdown_sha256="c" * 64,
+            markdown_sha256=sha256(report.encode("utf-8")).hexdigest(),
             published_at=published_at,
         )
         replay = ArtifactReplayResult(
@@ -580,6 +603,60 @@ def test_evidence_gate_passes_a_structurally_empty_citation_sample_after_artifac
     assert _evidence_gate(scorecard).status is EvaluationGateStatus.PASS
     assert _evidence_gate(scorecard).reason_codes == ("NO_MATERIAL_CLAIMS",)
     assert _evidence_gate(scorecard).measured_value == 0
+
+
+def test_evidence_gate_stays_pending_for_reduced_empty_sample_without_disclosure_verification(
+    valid_packet, valid_brief_draft
+) -> None:
+    evidence, claim_ids = _citation_evidence_snapshot(
+        valid_packet,
+        valid_brief_draft,
+        material_claims=False,
+        unverified_reduced_disclosure=True,
+    )
+    assert claim_ids == ()
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _evidence_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert gate.reason_codes == (
+        "NO_MATERIAL_CLAIMS",
+        "DETERMINISTIC_REDUCED_DISCLOSURES_UNVERIFIED",
+    )
+    assert gate.measured_value is None
+
+
+def test_evidence_gate_stays_pending_when_reduced_report_reason_is_missing(
+    valid_packet, valid_brief_draft
+) -> None:
+    evidence, claim_ids = _citation_evidence_snapshot(
+        valid_packet,
+        valid_brief_draft,
+        material_claims=False,
+        missing_reduced_report_reason=True,
+    )
+    assert claim_ids == ()
+
+    scorecard = build_shadow_scorecard(
+        evidence.published_runs,
+        evidence.feedback_records,
+        _Calendar(),
+        evidence=evidence,
+    )
+
+    gate = _evidence_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert gate.reason_codes == (
+        "NO_MATERIAL_CLAIMS",
+        "DETERMINISTIC_REDUCED_DISCLOSURES_UNVERIFIED",
+    )
+    assert gate.measured_value is None
 
 
 def test_evidence_gate_does_not_pass_operational_empty_sample_without_disclosure_check(

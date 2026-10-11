@@ -439,7 +439,10 @@ def test_installed_skill_version_drift_skips_reconstruction_and_preserves_json_i
         reader, bundle.run.run_id,
         component_versions.current_component_versions(bundle.run.configuration_snapshot),
     )
-    assert result.component_version_mismatches == ("skill_version",)
+    assert result.component_version_mismatches == (
+        "skill_version",
+        "report_template_version",
+    )
     assert result.json_matches is True
     assert result.markdown_matches is False
     assert result.replayed_markdown_sha256 is None
