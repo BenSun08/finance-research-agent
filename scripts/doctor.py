@@ -32,22 +32,20 @@ def _project_versions(root: Path) -> tuple[str, str, str]:
     return project["project"]["version"], locked[0]["version"], version("finance-research-agent")
 
 
+def _private_directory(path: Path) -> bool:
+    return not path.is_symlink() and path.is_dir() and not stat.S_IMODE(path.stat().st_mode) & 0o077
+
+
 def _private_tree(data_root: Path) -> bool:
-    if data_root.is_symlink() or not data_root.is_dir():
-        return False
-    if stat.S_IMODE(data_root.stat().st_mode) & 0o077:
+    if not _private_directory(data_root):
         return False
     for name in ("config", "runs", "reports", "cache", "diagnostics", "logs", "feedback"):
         path = data_root / name
-        if not path.exists():
-            continue
-        if path.is_symlink() or not path.is_dir() or stat.S_IMODE(path.stat().st_mode) & 0o077:
+        if (path.exists() or path.is_symlink()) and not _private_directory(path):
             return False
     evaluation_root = data_root / "diagnostics" / "evaluation"
-    if evaluation_root.exists() and (
-        evaluation_root.is_symlink()
-        or not evaluation_root.is_dir()
-        or stat.S_IMODE(evaluation_root.stat().st_mode) & 0o077
+    if (evaluation_root.exists() or evaluation_root.is_symlink()) and not _private_directory(
+        evaluation_root
     ):
         return False
     config_root = data_root / "config"

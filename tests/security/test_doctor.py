@@ -271,6 +271,19 @@ def test_private_tree_rejects_open_nested_evaluation_directory(tmp_path: Path) -
     assert not doctor._private_tree(data_root)
 
 
+def test_private_tree_rejects_dangling_nested_evaluation_symlink(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    diagnostics_root = data_root / "diagnostics"
+    diagnostics_root.mkdir(parents=True, mode=0o700)
+    data_root.chmod(0o700)
+    diagnostics_root.chmod(0o700)
+    (diagnostics_root / "evaluation").symlink_to(
+        tmp_path / "missing-evaluation-root", target_is_directory=True
+    )
+
+    assert not doctor._private_tree(data_root)
+
+
 def test_doctor_subchecks_force_offline_child_environment(tmp_path: Path, monkeypatch) -> None:
     observed: dict[str, object] = {}
 
