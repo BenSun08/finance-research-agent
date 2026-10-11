@@ -18,10 +18,19 @@ def test_ci_uses_locked_dependencies_and_all_supported_interpreters() -> None:
 
     assert set(events) == {"pull_request", "push"}
     job = workflow["jobs"]["verify"]
+    assert job["env"]["AI_MARKET_RESEARCH_DOTENV_PATH"] == (
+        "${{ runner.temp }}/finance-research-agent-config/.env"
+    )
+    assert any(
+        step["name"] == "Prepare isolated configuration root" and "chmod 600" in step["run"]
+        for step in job["steps"]
+    )
     assert job["strategy"]["matrix"]["python-version"] == ["3.12", "3.13", "3.14"]
     steps = job["steps"]
     install = next(step["run"] for step in steps if "Install locked dependencies" == step["name"])
-    assert "pip install --disable-pip-version-check -r requirements.lock" in install
+    assert (
+        "pip install --require-hashes --disable-pip-version-check -r requirements.lock" in install
+    )
     assert "pip install --disable-pip-version-check --no-deps --no-build-isolation ." in install
     formatting = next(step["run"] for step in steps if step["name"] == "Check formatting")
     assert all(

@@ -73,6 +73,21 @@ def test_settings_loads_data_directory_from_a_permission_restricted_dotenv(tmp_p
     assert "file-key" not in settings.model_dump_json()
 
 
+def test_settings_can_read_dotenv_from_an_explicit_configuration_root(tmp_path: Path) -> None:
+    config_root = tmp_path / "configuration"
+    config_root.mkdir()
+    dotenv = config_root / ".env"
+    dotenv.write_text("AI_MARKET_RESEARCH_DATA_DIR=/temporary/data\n", encoding="utf-8")
+    dotenv.chmod(0o600)
+
+    settings = Settings.from_sources(
+        environment={"AI_MARKET_RESEARCH_DOTENV_PATH": str(dotenv)},
+        secret_provider=lambda _: None,
+    )
+
+    assert settings.data_dir == Path("/temporary/data")
+
+
 def test_settings_rejects_a_symlinked_dotenv_before_reading(tmp_path: Path) -> None:
     target = tmp_path / "real.env"
     target.write_text("ALPACA_API_KEY=file-key\n", encoding="utf-8")

@@ -117,6 +117,157 @@ def test_bootstrap_excludes_only_its_output_and_writes_an_atomic_baseline(
     assert not tuple(root.glob(".secrets.baseline.*.tmp"))
 
 
+def test_baseline_writer_stores_repository_relative_filenames(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    candidate = root / "tests" / "candidate.py"
+    candidate.parent.mkdir()
+    baseline_path = root / ".secrets.baseline"
+    document = {
+        "version": "1.5.0",
+        "plugins_used": [],
+        "filters_used": [],
+        "results": {str(candidate): [{"filename": str(candidate), "type": "Example Plugin"}]},
+    }
+    monkeypatch.setattr(check_secrets.baseline, "format_for_output", lambda _: document)
+
+    check_secrets._write_baseline(baseline_path, object())  # type: ignore[arg-type]
+
+    written = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert written["results"] == {
+        "tests/candidate.py": [{"filename": "tests/candidate.py", "type": "Example Plugin"}]
+    }
+
+
+def test_secret_collection_paths_are_repository_relative(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    candidate = root / "tests" / "synthetic.py"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text('token = "AKIAIOSFODNN7EXAMPLE"\n', encoding="utf-8")
+
+    with check_secrets.default_settings():
+        collection = check_secrets._scan_files(root.resolve(), (candidate,))
+
+    filenames = {secret.filename for _, secret in collection}
+    assert filenames == {"tests/synthetic.py"}
+    assert all(secret in collection[filename] for filename, secret in collection)
+
+
+def test_normal_scan_detects_secret_values_embedded_in_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    baseline_path = root / ".secrets.baseline"
+    fake_value = "AKIA" + "IOSFODNN7EXAMPLE"
+    baseline_path.write_text(
+        json.dumps(
+            {
+                "version": "1.5.0",
+                "plugins_used": [],
+                "filters_used": [],
+                "results": {},
+                "review_note": fake_value,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        check_secrets,
+        "_git_file_list",
+        lambda root, *, bootstrap: (".secrets.baseline",),
+    )
+
+    result = check_secrets.main([], root=root)
+    output = capsys.readouterr().out
+
+    assert result == 1
+    assert ".secrets.baseline" in output
+    assert fake_value not in output
+
+
+def test_normal_scan_masks_only_detect_secrets_fingerprint_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".secrets.baseline").write_text(
+        json.dumps(
+            {
+                "version": "1.5.0",
+                "plugins_used": [],
+                "filters_used": [],
+                "results": {
+                    "src/fixture.py": [
+                        {
+                            "filename": "src/fixture.py",
+                            "hashed_secret": "a" * 40,
+                            "is_secret": False,
+                            "is_verified": False,
+                            "line_number": 1,
+                            "type": "Example Plugin",
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        check_secrets,
+        "_git_file_list",
+        lambda root, *, bootstrap: (".secrets.baseline",),
+    )
+
+    result = check_secrets.main([], root=root)
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert "no new potential secrets" in output.out
+
+
+def test_baseline_filter_configuration_cannot_hide_a_tracked_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "src" / "candidate.py"
+    source.parent.mkdir()
+    fake_value = "AKIA" + "IOSFODNN7EXAMPLE"
+    source.write_text(f"credential = {fake_value!r}\n", encoding="utf-8")
+    with check_secrets.default_settings():
+        document = check_secrets.baseline.format_for_output(check_secrets.SecretsCollection())
+    document["results"] = {}
+    document["filters_used"].append(
+        {
+            "path": "detect_secrets.filters.regex.should_exclude_line",
+            "pattern": [".*"],
+        }
+    )
+    (root / ".secrets.baseline").write_text(json.dumps(document), encoding="utf-8")
+    monkeypatch.setattr(
+        check_secrets,
+        "_git_file_list",
+        lambda root, *, bootstrap: (".secrets.baseline", "src/candidate.py"),
+    )
+
+    result = check_secrets.main([], root=root)
+    output = capsys.readouterr().out
+
+    assert result == 1
+    assert "src/candidate.py" in output
+    assert fake_value not in output
+
+
 def test_normal_scan_fails_closed_when_baseline_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -255,7 +406,7 @@ def test_normal_scan_requires_every_baseline_finding_to_be_audited_false(
         assert "fixture.py: AWS Access Key" in output.err
 
 
-def test_normal_scan_does_not_rescan_the_baseline_output(
+def test_normal_scan_checks_baseline_content_without_printing_secret_values(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -282,8 +433,8 @@ def test_normal_scan_does_not_rescan_the_baseline_output(
         lambda root, *, bootstrap: (".secrets.baseline", "tracked.py"),
     )
 
-    assert check_secrets.main([], root=root) == 0
+    assert check_secrets.main([], root=root) == 1
     output = capsys.readouterr()
 
-    assert "no new potential secrets" in output.out
+    assert ".secrets.baseline" in output.out
     assert "AKIAIOSFODNN7EXAMPLE" not in output.out + output.err

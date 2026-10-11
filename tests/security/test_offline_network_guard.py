@@ -117,6 +117,109 @@ def test_guard_blocks_external_socket_methods_before_sending(
     assert calls == []
 
 
+@pytest.mark.skipif(not hasattr(socket.socket, "sendmsg"), reason="sendmsg is unavailable")
+def test_guard_blocks_external_sendmsg_before_sending(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def fake_sendmsg(
+        self: socket.socket,
+        buffers: list[bytes],
+        ancdata: tuple[object, ...] = (),
+        flags: int = 0,
+        address: tuple[str, int] | None = None,
+    ) -> int:
+        calls.append("sendmsg")
+        return 0
+
+    monkeypatch.setenv("FINANCE_RESEARCH_AGENT_OFFLINE_TESTS", "1")
+    monkeypatch.setattr(socket.socket, "sendmsg", fake_sendmsg)
+    guard = _load_guard_module()
+    connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        with pytest.raises(guard.OfflineTestNetworkError):
+            connection.sendmsg([b"test"], address=("203.0.113.8", 53))
+    finally:
+        connection.close()
+
+    assert calls == []
+
+
+@pytest.mark.skipif(not hasattr(socket.socket, "sendmsg"), reason="sendmsg is unavailable")
+@pytest.mark.parametrize(
+    ("family", "address"),
+    (
+        (socket.AF_INET, ("127.0.0.1", 53)),
+        (socket.AF_INET, None),
+        (socket.AF_UNIX, "local-socket"),
+    ),
+)
+def test_guard_preserves_local_sendmsg(
+    monkeypatch: pytest.MonkeyPatch,
+    family: int,
+    address: Any,
+) -> None:
+    calls: list[Any] = []
+
+    def fake_sendmsg(
+        self: socket.socket,
+        buffers: list[bytes],
+        ancdata: tuple[tuple[int, int, bytes], ...] = (),
+        flags: int = 0,
+        address: Any = None,
+    ) -> int:
+        calls.append(address)
+        return 1
+
+    monkeypatch.setenv("FINANCE_RESEARCH_AGENT_OFFLINE_TESTS", "1")
+    monkeypatch.setattr(socket.socket, "sendmsg", fake_sendmsg)
+    _load_guard_module()
+    connection = socket.socket(family, socket.SOCK_DGRAM)
+    try:
+        assert connection.sendmsg([b"x"], address=address) == 1
+    finally:
+        connection.close()
+
+    assert calls == [address]
+
+
+@pytest.mark.parametrize(
+    ("method_name", "socket_type", "arguments"),
+    (
+        ("send", socket.SOCK_STREAM, (b"test",)),
+        ("sendall", socket.SOCK_STREAM, (b"test",)),
+        ("sendto", socket.SOCK_DGRAM, (b"test",)),
+        ("sendmsg", socket.SOCK_DGRAM, ([b"test"],)),
+    ),
+)
+def test_guard_blocks_connected_external_socket_sends(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    socket_type: int,
+    arguments: tuple[Any, ...],
+) -> None:
+    calls: list[str] = []
+
+    def fake_getpeername(self: socket.socket) -> tuple[str, int]:
+        return ("203.0.113.8", 443)
+
+    def fake_send(self: socket.socket, *args: Any) -> int | None:
+        calls.append(method_name)
+        return None if method_name == "sendall" else 0
+
+    monkeypatch.setenv("FINANCE_RESEARCH_AGENT_OFFLINE_TESTS", "1")
+    monkeypatch.setattr(socket.socket, "getpeername", fake_getpeername)
+    monkeypatch.setattr(socket.socket, method_name, fake_send)
+    guard = _load_guard_module()
+    connection = socket.socket(socket.AF_INET, socket_type)
+    try:
+        with pytest.raises(guard.OfflineTestNetworkError):
+            getattr(connection, method_name)(*arguments)
+    finally:
+        connection.close()
+
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     ("method_name", "family", "socket_type", "arguments", "expected"),
     (
