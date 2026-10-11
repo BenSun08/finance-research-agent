@@ -2,22 +2,34 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
+import stat
 import tempfile
 from pathlib import Path
 from typing import cast
 
 from pydantic import TypeAdapter, ValidationError
 
-from finance_research_agent.application.ports import FeedbackRepository, RunRepository
+from finance_research_agent.application.ports import (
+    FeedbackRepository,
+    ReleaseEvidenceReader,
+    RunRepository,
+)
 from finance_research_agent.domain.models import Identifier
 from finance_research_agent.domain.types import canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
     OperatorReleaseAttestation,
+    ReleaseCheckReceipt,
     ShadowDayObservation,
 )
 
 _IDENTIFIER_ADAPTER = TypeAdapter(Identifier)
+_RELEASE_RECEIPTS_ADAPTER = TypeAdapter(tuple[ReleaseCheckReceipt, ...])
+_RELEASE_BATCH_NAME = re.compile(
+    r"^release-checks-([0-9a-f]{64})-([0-9a-f]{64})-([1-9][0-9]*)-([1-9][0-9]*)\.json$"
+)
 
 
 class FileSystemShadowObservationRepository:
@@ -39,8 +51,7 @@ class FileSystemShadowObservationRepository:
 
     def has_feedback_id(self, feedback_id: str) -> bool:
         return any(
-            item.feedback_id == feedback_id
-            for item in self._feedback_repository.list_feedback()
+            item.feedback_id == feedback_id for item in self._feedback_repository.list_feedback()
         )
 
     def get_observation(self, observation_id: str) -> ShadowDayObservation | None:
@@ -66,6 +77,22 @@ class FileSystemOperatorReleaseAttestationRepository:
 
     def list_attestations(self) -> tuple[OperatorReleaseAttestation, ...]:
         return _read_all(self._root, OperatorReleaseAttestation, "operator release attestation")
+
+
+class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
+    """Read private, canonical receipt batches written by the release collector."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = Path(root)
+
+    def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]:
+        if not _private_directory_available_or_missing(self._root):
+            return ()
+        batches = tuple(
+            _read_release_batch(path)
+            for path in sorted(self._root.glob("release-checks-*.json"), key=lambda item: item.name)
+        )
+        return tuple(receipt for batch in batches for receipt in batch)
 
 
 def _append(
@@ -161,6 +188,70 @@ def _root_is_available_or_missing(root: Path) -> bool:
     return True
 
 
+def _private_directory_available_or_missing(root: Path) -> bool:
+    if root.is_symlink():
+        raise ValueError("release evidence root must be a private local directory")
+    if not root.exists():
+        return False
+    if not root.is_dir() or stat.S_IMODE(root.stat().st_mode) & 0o077:
+        raise ValueError("release evidence root must be a private local directory")
+    return True
+
+
+def _read_release_batch(path: Path) -> tuple[ReleaseCheckReceipt, ...]:
+    match = _RELEASE_BATCH_NAME.fullmatch(path.name)
+    if match is None:
+        raise ValueError("release evidence filename is invalid")
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("release evidence batch must be a regular local file")
+    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+        raise ValueError("release evidence batch must be private")
+    try:
+        payload = path.read_bytes()
+        receipts = _RELEASE_RECEIPTS_ADAPTER.validate_json(payload, strict=True)
+    except (OSError, ValueError) as exc:
+        raise ValueError("release evidence batch is malformed") from exc
+    if not receipts:
+        raise ValueError("release evidence batch must contain at least one receipt")
+    if _release_batch_bytes(receipts) != payload:
+        raise ValueError("release evidence batch is not in canonical form")
+    commit_sha256, tree_sha256, run_id, attempt = match.groups()
+    if any(
+        receipt.source_commit_sha256 != commit_sha256
+        or receipt.source_tree_sha256 != tree_sha256
+        or receipt.actions_run_id != run_id
+        or not _release_step_matches_batch(receipt, run_id, attempt)
+        for receipt in receipts
+    ):
+        raise ValueError("release evidence receipt does not match its batch identity")
+    return receipts
+
+
+def _release_step_matches_batch(receipt: ReleaseCheckReceipt, run_id: str, attempt: str) -> bool:
+    parts = receipt.actions_step_id.split(":")
+    if len(parts) != 2:
+        return False
+    receipt_attempt, step_number = parts
+    return (
+        receipt_attempt == attempt
+        and step_number.isascii()
+        and step_number.isdecimal()
+        and int(step_number) > 0
+        and receipt.id == f"gha:{run_id}:{receipt.actions_job_id}:{receipt_attempt}:{step_number}"
+    )
+
+
+def _release_batch_bytes(receipts: tuple[ReleaseCheckReceipt, ...]) -> bytes:
+    records = [item.model_dump(mode="json") for item in receipts]
+    return json.dumps(
+        records,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
 def _fsync_directory(root: Path) -> None:
     descriptor = os.open(root, os.O_RDONLY)
     try:
@@ -170,6 +261,7 @@ def _fsync_directory(root: Path) -> None:
 
 
 __all__ = [
+    "FileSystemReleaseEvidenceReader",
     "FileSystemOperatorReleaseAttestationRepository",
     "FileSystemShadowObservationRepository",
 ]

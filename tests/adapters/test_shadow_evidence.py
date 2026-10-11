@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 
 from finance_research_agent.adapters.shadow_evidence import (
     FileSystemOperatorReleaseAttestationRepository,
+    FileSystemReleaseEvidenceReader,
     FileSystemShadowObservationRepository,
 )
 from finance_research_agent.domain.enums import Capability
@@ -18,6 +20,9 @@ from finance_research_agent.evaluation.shadow_records import (
     OperatorReleaseAttestation,
     OperatorReleaseCheckId,
     OperatorReleaseResult,
+    ReleaseCheckConclusion,
+    ReleaseCheckId,
+    ReleaseCheckReceipt,
     ShadowDayAvailability,
     ShadowDayObservation,
     ShadowExecutiveEventState,
@@ -73,6 +78,43 @@ def _attestation() -> OperatorReleaseAttestation:
         source_tree_sha256="d" * 64,
         evidence_sha256="e" * 64,
     )
+
+
+def _release_receipt() -> ReleaseCheckReceipt:
+    return ReleaseCheckReceipt(
+        id="gha:123:456:1:2",
+        check_id=ReleaseCheckId.LINT,
+        source_commit_sha256="a" * 64,
+        source_tree_sha256="b" * 64,
+        repository_id="789",
+        workflow_id="101",
+        actions_run_id="123",
+        actions_job_id="456",
+        actions_step_id="1:2",
+        python_version="3.12",
+        completed_at=datetime(2026, 10, 10, 2, 0, tzinfo=UTC),
+        conclusion=ReleaseCheckConclusion.SUCCESS,
+        response_sha256="c" * 64,
+    )
+
+
+def _write_release_receipt_batch(root: Path, receipts: tuple[ReleaseCheckReceipt, ...]) -> Path:
+    first = receipts[0]
+    attempt = first.actions_step_id.split(":", maxsplit=1)[0]
+    path = root / (
+        f"release-checks-{first.source_commit_sha256}-{first.source_tree_sha256}-"
+        f"{first.actions_run_id}-{attempt}.json"
+    )
+    payload = json.dumps(
+        [receipt.model_dump(mode="json") for receipt in receipts],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    path.write_bytes(payload)
+    path.chmod(0o600)
+    return path
 
 
 def test_observation_repository_writes_canonical_bytes_and_resolves_trusted_refs(
@@ -203,6 +245,206 @@ def test_operator_attestations_are_immutable_and_filename_bound(tmp_path: Path) 
         )
 
 
+def test_release_evidence_reader_loads_canonical_private_receipt_batch(tmp_path: Path) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    receipt = _release_receipt()
+    _write_release_receipt_batch(root, (receipt,))
+    reader = FileSystemReleaseEvidenceReader(root)
+
+    assert reader.list_receipts() == (receipt,)
+
+
+def test_release_evidence_reader_orders_batches_and_ignores_other_diagnostics(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    later_name_receipt = _release_receipt()
+    earlier_name_receipt = later_name_receipt.model_copy(
+        update={
+            "id": "gha:124:457:1:3",
+            "source_commit_sha256": "0" * 64,
+            "actions_run_id": "124",
+            "actions_job_id": "457",
+            "actions_step_id": "1:3",
+            "response_sha256": "d" * 64,
+        }
+    )
+    _write_release_receipt_batch(root, (later_name_receipt,))
+    _write_release_receipt_batch(root, (earlier_name_receipt,))
+    (root / "other-diagnostic.txt").write_text("leave outside reader contract", encoding="utf-8")
+
+    assert FileSystemReleaseEvidenceReader(root).list_receipts() == (
+        earlier_name_receipt,
+        later_name_receipt,
+    )
+
+
+def test_release_evidence_reader_returns_empty_for_a_missing_root(tmp_path: Path) -> None:
+    reader = FileSystemReleaseEvidenceReader(tmp_path / "missing-release-evidence")
+
+    assert reader.list_receipts() == ()
+
+
+def test_release_evidence_reader_rejects_an_empty_collector_batch(tmp_path: Path) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    receipt = _release_receipt()
+    path = root / (
+        f"release-checks-{receipt.source_commit_sha256}-{receipt.source_tree_sha256}-"
+        f"{receipt.actions_run_id}-1.json"
+    )
+    path.write_bytes(b"[]")
+    path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="must contain at least one receipt"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+
+def test_release_evidence_reader_rejects_malformed_and_noncanonical_batches(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    path = _write_release_receipt_batch(root, (_release_receipt(),))
+
+    path.write_bytes(b" " + path.read_bytes())
+    with pytest.raises(ValueError, match="not in canonical form"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+    path.write_bytes(b"{not json}")
+    with pytest.raises(ValueError, match="malformed"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+
+def test_release_evidence_reader_binds_receipt_identity_to_batch_filename(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    receipt = _release_receipt()
+    path = root / (
+        f"release-checks-{'f' * 64}-{receipt.source_tree_sha256}-{receipt.actions_run_id}-1.json"
+    )
+    batch = json.dumps(
+        [receipt.model_dump(mode="json")],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    path.write_bytes(batch)
+    path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="does not match its batch identity"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+
+def test_release_evidence_reader_rejects_permissive_roots_and_batch_files(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o750)
+    with pytest.raises(ValueError, match="root must be a private local directory"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+    root.chmod(0o700)
+    path = _write_release_receipt_batch(root, (_release_receipt(),))
+    path.chmod(0o640)
+    with pytest.raises(ValueError, match="batch must be private"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+    file_root = tmp_path / "release-evidence-file"
+    file_root.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(ValueError, match="root must be a private local directory"):
+        FileSystemReleaseEvidenceReader(file_root).list_receipts()
+
+
+def test_release_evidence_reader_rejects_symlink_roots_and_batches(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir(mode=0o700)
+    target.chmod(0o700)
+    root_link = tmp_path / "root-link"
+    root_link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ValueError, match="root must be a private local directory"):
+        FileSystemReleaseEvidenceReader(root_link).list_receipts()
+
+    receipt = _release_receipt()
+    real_batch = _write_release_receipt_batch(target, (receipt,))
+    root_batch = tmp_path / "release-evidence"
+    root_batch.mkdir(mode=0o700)
+    root_batch.chmod(0o700)
+    batch_link = root_batch / real_batch.name
+    batch_link.symlink_to(real_batch)
+    with pytest.raises(ValueError, match="regular local file"):
+        FileSystemReleaseEvidenceReader(root_batch).list_receipts()
+
+
+def test_release_evidence_reader_rejects_invalid_names_and_nonfile_batches(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    invalid_name = root / "release-checks-invalid.json"
+    invalid_name.write_bytes(b"[]")
+    invalid_name.chmod(0o600)
+    with pytest.raises(ValueError, match="filename is invalid"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+    invalid_name.unlink()
+    receipt = _release_receipt()
+    batch_directory = root / (
+        f"release-checks-{receipt.source_commit_sha256}-{receipt.source_tree_sha256}-"
+        f"{receipt.actions_run_id}-1.json"
+    )
+    batch_directory.mkdir(mode=0o700)
+    with pytest.raises(ValueError, match="regular local file"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+
+def test_release_evidence_reader_rejects_a_receipt_with_malformed_step_identity(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    receipt = _release_receipt().model_copy(
+        update={"id": "gha:123:456:1:2:3", "actions_step_id": "1:2:3"}
+    )
+    _write_release_receipt_batch(root, (receipt,))
+
+    with pytest.raises(ValueError, match="does not match its batch identity"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+
+def test_release_evidence_reader_reports_unreadable_batch_as_malformed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    path = _write_release_receipt_batch(root, (_release_receipt(),))
+    read_bytes = Path.read_bytes
+
+    def fail_batch_read(source: Path) -> bytes:
+        if source == path:
+            raise PermissionError("private batch")
+        return read_bytes(source)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_batch_read)
+
+    with pytest.raises(ValueError, match="batch is malformed"):
+        FileSystemReleaseEvidenceReader(root).list_receipts()
+
+
 def test_repositories_return_empty_when_fixed_data_directories_do_not_exist(
     tmp_path: Path,
 ) -> None:
@@ -250,9 +492,7 @@ def test_failed_exclusive_link_cleans_up_the_staged_temp_file(
         raise PermissionError("fixture cannot link the record")
 
     with monkeypatch.context() as context:
-        context.setattr(
-            "finance_research_agent.adapters.shadow_evidence.os.link", fail_link
-        )
+        context.setattr("finance_research_agent.adapters.shadow_evidence.os.link", fail_link)
         with pytest.raises(OSError, match="could not append shadow observation"):
             repository.append_observation(_observation())
 
