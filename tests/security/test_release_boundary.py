@@ -9,7 +9,26 @@ from pathlib import Path
 
 import yaml
 
+from finance_research_agent.evaluation.shadow_records import ReleaseCheckId
+
 ROOT = Path(__file__).resolve().parents[2]
+
+EXPECTED_RELEASE_STEPS = {
+    ReleaseCheckId.FORMAT: "Check formatting",
+    ReleaseCheckId.LINT: "Check Ruff",
+    ReleaseCheckId.TYPES: "Check mypy",
+    ReleaseCheckId.UNIT_AND_INTEGRATION_TESTS: "Check unit and integration tests",
+    ReleaseCheckId.SCENARIO_AND_FAILURE_MATRIX: "Check scenarios and failure matrix",
+    ReleaseCheckId.BRANCH_COVERAGE: "Check whole-package coverage",
+    ReleaseCheckId.SCHEMA_DRIFT: "Check generated schemas",
+    ReleaseCheckId.DOCS_AND_EXAMPLES: "Check docs and examples",
+    ReleaseCheckId.SECRET_SCAN: "Check tracked secrets",
+    ReleaseCheckId.NETWORK_BOUNDARY: "Check offline network boundary",
+    ReleaseCheckId.PLUGIN_WHEEL_SDIST: "Check plugin wheel and sdist",
+    ReleaseCheckId.FRESH_WHEEL_INSTALL: "Check fresh wheel installation",
+    ReleaseCheckId.DOCTOR: "Check local doctor",
+    ReleaseCheckId.COMPATIBILITY: "Check compatibility consumers",
+}
 
 
 def test_ci_uses_locked_dependencies_and_all_supported_interpreters() -> None:
@@ -39,6 +58,19 @@ def test_ci_uses_locked_dependencies_and_all_supported_interpreters() -> None:
     )
     assert '"--diff-filter=ACMRT"' in formatting
     assert '["ruff", "format", "--check"' in formatting
+
+
+def test_ci_has_one_named_step_for_each_release_check_and_matrix_version() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    job = workflow["jobs"]["verify"]
+    step_names = [step["name"] for step in job["steps"]]
+
+    assert set(EXPECTED_RELEASE_STEPS) == set(ReleaseCheckId)
+    assert len(set(EXPECTED_RELEASE_STEPS.values())) == len(ReleaseCheckId)
+    assert job["strategy"]["matrix"]["python-version"] == ["3.12", "3.13", "3.14"]
+    assert {name: step_names.count(name) for name in EXPECTED_RELEASE_STEPS.values()} == {
+        name: 1 for name in EXPECTED_RELEASE_STEPS.values()
+    }
 
 
 def test_ci_runs_bounded_doctor_with_private_synthetic_configuration() -> None:
