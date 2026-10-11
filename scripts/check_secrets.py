@@ -184,6 +184,9 @@ def _scan_repository(root: Path, *, bootstrap: bool) -> int:
                     "secret baseline is missing or unsafe; audit before bootstrap", file=sys.stderr
                 )
                 return 2
+            if not baseline_is_tracked:
+                print("secret baseline is not tracked; refusing suppression", file=sys.stderr)
+                return 2
         collection = _scan_files(root, files)
         if not bootstrap and baseline_is_tracked:
             try:

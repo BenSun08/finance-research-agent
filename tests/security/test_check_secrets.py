@@ -283,6 +283,34 @@ def test_normal_scan_fails_closed_when_baseline_is_missing(
     assert "baseline is missing or unsafe" in capsys.readouterr().err
 
 
+def test_normal_scan_rejects_an_untracked_baseline_that_suppresses_a_tracked_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = tmp_path / "repo"
+    source = root / "src" / "candidate.py"
+    source.parent.mkdir(parents=True)
+    source.write_text('credential = "AKIAIOSFODNN7EXAMPLE"\n', encoding="utf-8")
+    with check_secrets.default_settings():
+        collection = check_secrets._scan_files(root.resolve(), (source,))
+    for _, secret in collection:
+        secret.is_secret = False
+    check_secrets._write_baseline(root / ".secrets.baseline", collection)
+    monkeypatch.setattr(
+        check_secrets,
+        "_git_file_list",
+        lambda root, *, bootstrap: ("src/candidate.py",),
+    )
+
+    result = check_secrets.main([], root=root)
+    output = capsys.readouterr()
+
+    assert result == 2
+    assert "secret baseline is not tracked" in output.err
+    assert "no new potential secrets" not in output.out
+
+
 def test_normal_scan_fails_closed_on_symlinked_or_malformed_baseline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -301,6 +329,11 @@ def test_normal_scan_fails_closed_on_symlinked_or_malformed_baseline(
 
     baseline_path.unlink()
     baseline_path.write_text("not json\n", encoding="utf-8")
+    monkeypatch.setattr(
+        check_secrets,
+        "_git_file_list",
+        lambda root, *, bootstrap: (".secrets.baseline",),
+    )
     assert check_secrets.main([], root=root) == 2
     error = capsys.readouterr().err
     assert "baseline could not be loaded (UnableToReadBaselineError)" in error
