@@ -6,10 +6,16 @@ from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, computed_field, model_validator
 
+from finance_research_agent import __version__
+from finance_research_agent.application.skill_bundle import (
+    compute_skill_version,
+    load_installed_premarket_skill_version,
+)
 from finance_research_agent.domain.enums import BriefOrigin
 from finance_research_agent.domain.models import Identifier, Sha256, StrictModel
 from finance_research_agent.evaluation.models import (
@@ -715,36 +721,38 @@ def _supervised_shadow_section(
     by_check: dict[OperatorReleaseCheckId, list[OperatorReleaseAttestation]] = {
         check_id: [] for check_id in expected_ids
     }
-    for record in evidence.operator_attestations:
+    current_skill_version = _current_premarket_skill_version()
+    current_attestations = tuple(
+        record
+        for record in evidence.operator_attestations
+        if evidence.source_commit_sha256 is not None
+        and evidence.source_tree_sha256 is not None
+        and record.source_commit_sha256 == evidence.source_commit_sha256
+        and record.source_tree_sha256 == evidence.source_tree_sha256
+        and record.package_version == __version__
+        and current_skill_version is not None
+        and record.skill_version == current_skill_version
+    )
+    for record in current_attestations:
         by_check[record.check_id].append(record)
     missing = [check_id for check_id, records in by_check.items() if not records]
-    wrong_source = [
-        record
-        for record in evidence.operator_attestations
-        if evidence.source_commit_sha256 is None
-        or evidence.source_tree_sha256 is None
-        or record.source_commit_sha256 != evidence.source_commit_sha256
-        or record.source_tree_sha256 != evidence.source_tree_sha256
-    ]
     failed = [
-        record
-        for record in evidence.operator_attestations
-        if record.result is OperatorReleaseResult.FAIL
+        record for record in current_attestations if record.result is OperatorReleaseResult.FAIL
     ]
-    if failed or wrong_source:
+    if failed:
         attestation_gate = _gate(
             "OPERATOR_ATTESTATIONS",
             MigrationReadinessStatus.FAIL,
-            evidence_ids=tuple(record.id for record in (*failed, *wrong_source)),
-            reason_codes=("OPERATOR_ATTESTATION_FAILED_OR_SOURCE_MISMATCHED",),
-            measured_value=len(failed) + len(wrong_source),
+            evidence_ids=tuple(record.id for record in failed),
+            reason_codes=("OPERATOR_ATTESTATION_FAILED",),
+            measured_value=len(failed),
             required_value=0,
         )
     elif missing:
         attestation_gate = _gate(
             "OPERATOR_ATTESTATIONS",
             MigrationReadinessStatus.PENDING,
-            evidence_ids=tuple(record.id for record in evidence.operator_attestations),
+            evidence_ids=tuple(record.id for record in current_attestations),
             reason_codes=("OPERATOR_ATTESTATIONS_INCOMPLETE",),
             measured_value=len(expected_ids) - len(missing),
             required_value=len(expected_ids),
@@ -753,7 +761,7 @@ def _supervised_shadow_section(
         attestation_gate = _gate(
             "OPERATOR_ATTESTATIONS",
             MigrationReadinessStatus.PASS,
-            evidence_ids=tuple(record.id for record in evidence.operator_attestations),
+            evidence_ids=tuple(record.id for record in current_attestations),
             measured_value=len(expected_ids),
             required_value=len(expected_ids),
         )
@@ -761,6 +769,46 @@ def _supervised_shadow_section(
         id="SUPERVISED_SHADOW_READINESS",
         gate_results=(prerequisite, attestation_gate),
     )
+
+
+def _current_premarket_skill_version() -> str | None:
+    source_root = Path(__file__).resolve().parents[3]
+    skill_root = source_root / "skills" / "premarket-research"
+    skill_path = skill_root / "SKILL.md"
+    workflow_path = skill_root / "references" / "workflow-contract.yaml"
+    if skill_root.exists() or skill_root.is_symlink():
+        try:
+            skill_bytes = _read_confined_skill_source(source_root, skill_path)
+            workflow_bytes = _read_confined_skill_source(source_root, workflow_path)
+            if skill_bytes is None or workflow_bytes is None:
+                return None
+            return compute_skill_version(
+                {
+                    "SKILL.md": skill_bytes,
+                    "references/workflow-contract.yaml": workflow_bytes,
+                }
+            )
+        except (OSError, ValueError):
+            return None
+    try:
+        return load_installed_premarket_skill_version()
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return None
+
+
+def _read_confined_skill_source(source_root: Path, path: Path) -> bytes | None:
+    try:
+        relative = path.relative_to(source_root)
+    except ValueError:
+        return None
+    current = source_root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return None
+    if not current.is_file() or not current.resolve().is_relative_to(source_root):
+        return None
+    return current.read_bytes()
 
 
 def _shadow_graduation_section(

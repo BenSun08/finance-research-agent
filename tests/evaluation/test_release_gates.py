@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from finance_research_agent import __version__
 from finance_research_agent.application.replay_service import ArtifactReplayResult
+from finance_research_agent.application.skill_bundle import compute_skill_version
 from finance_research_agent.domain.enums import BriefOrigin, DeliveryStatus
 from finance_research_agent.domain.models import (
     PublishedArtifact,
@@ -62,6 +65,15 @@ from finance_research_agent.evaluation.shadow_scorecard import (
 _COMMIT = "a" * 64
 _TREE = "b" * 64
 _STAMP = datetime(2026, 10, 11, 16, tzinfo=UTC)
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+_CURRENT_SKILL_VERSION = compute_skill_version(
+    {
+        "SKILL.md": (_REPOSITORY_ROOT / "skills/premarket-research/SKILL.md").read_bytes(),
+        "references/workflow-contract.yaml": (
+            _REPOSITORY_ROOT / "skills/premarket-research/references/workflow-contract.yaml"
+        ).read_bytes(),
+    }
+)
 
 
 def _scorecard(
@@ -242,18 +254,22 @@ def _attestations(
     result: OperatorReleaseResult = OperatorReleaseResult.PASS,
     *,
     source_commit_sha256: str = _COMMIT,
+    source_tree_sha256: str = _TREE,
+    package_version: str = __version__,
+    skill_version: str = _CURRENT_SKILL_VERSION,
+    id_prefix: str = "",
 ) -> tuple[OperatorReleaseAttestation, ...]:
     return tuple(
         OperatorReleaseAttestation(
-            id=f"attestation-{check_id.value.lower()}",
+            id=f"{id_prefix}attestation-{check_id.value.lower()}",
             check_id=check_id,
             result=result,
             operator_id="operator-1",
             recorded_at=_STAMP,
-            package_version="0.5.0.dev0",
-            skill_version="0.1.0",
+            package_version=package_version,
+            skill_version=skill_version,
             source_commit_sha256=source_commit_sha256,
-            source_tree_sha256=_TREE,
+            source_tree_sha256=source_tree_sha256,
             evidence_sha256="d" * 64,
         )
         for check_id in OperatorReleaseCheckId
@@ -1227,7 +1243,9 @@ def test_supervised_readiness_requires_all_source_bound_operator_attestations(mo
     assert result.supervised_shadow_readiness.status is MigrationReadinessStatus.PASS
 
 
-def test_wrong_source_operator_attestation_fails_supervised_readiness(monkeypatch) -> None:
+def test_stale_source_operator_attestations_leave_supervised_readiness_pending(
+    monkeypatch,
+) -> None:
     _patch_complete_failure_manifest(monkeypatch)
     evidence = _evidence(
         receipts=_release_receipts(),
@@ -1237,13 +1255,62 @@ def test_wrong_source_operator_attestation_fails_supervised_readiness(monkeypatc
 
     result = build_migration_readiness(_passing_outcomes(), evidence, scorecard)
 
-    assert result.supervised_shadow_readiness.status is MigrationReadinessStatus.FAIL
+    assert result.supervised_shadow_readiness.status is MigrationReadinessStatus.PENDING
     attestation_gate = next(
         gate
         for gate in result.supervised_shadow_readiness.gate_results
         if gate.id == "OPERATOR_ATTESTATIONS"
     )
-    assert attestation_gate.status is MigrationReadinessStatus.FAIL
+    assert attestation_gate.status is MigrationReadinessStatus.PENDING
+
+
+def test_current_operator_attestations_are_not_failed_by_retained_stale_history(
+    monkeypatch,
+) -> None:
+    _patch_complete_failure_manifest(monkeypatch)
+    stale = _attestations(source_commit_sha256="9" * 64, id_prefix="stale-")
+    current = _attestations(id_prefix="current-")
+    evidence = _evidence(
+        receipts=_release_receipts(),
+        attestations=(*stale, *current),
+    )
+    scorecard = _scorecard(evidence)
+
+    result = build_migration_readiness(_passing_outcomes(), evidence, scorecard)
+
+    assert result.supervised_shadow_readiness.status is MigrationReadinessStatus.PASS
+    attestation_gate = next(
+        gate
+        for gate in result.supervised_shadow_readiness.gate_results
+        if gate.id == "OPERATOR_ATTESTATIONS"
+    )
+    assert attestation_gate.evidence_ids == tuple(item.id for item in current)
+
+
+@pytest.mark.parametrize(
+    ("version_field", "stale_value"),
+    (("package_version", "0.4.0"), ("skill_version", "sha256:" + "0" * 64)),
+)
+def test_operator_attestations_with_stale_package_or_skill_version_are_pending(
+    monkeypatch,
+    version_field: str,
+    stale_value: str,
+) -> None:
+    _patch_complete_failure_manifest(monkeypatch)
+    evidence = _evidence(
+        receipts=_release_receipts(),
+        attestations=_attestations(**{version_field: stale_value}),
+    )
+    scorecard = _scorecard(evidence)
+
+    result = build_migration_readiness(_passing_outcomes(), evidence, scorecard)
+
+    attestation_gate = next(
+        gate
+        for gate in result.supervised_shadow_readiness.gate_results
+        if gate.id == "OPERATOR_ATTESTATIONS"
+    )
+    assert attestation_gate.status is MigrationReadinessStatus.PENDING
 
 
 def test_shadow_graduation_uses_scorecard_failure_and_real_day_evidence() -> None:
