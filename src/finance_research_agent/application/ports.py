@@ -34,6 +34,11 @@ from finance_research_agent.market_data.historical import (
 
 if TYPE_CHECKING:
     from finance_research_agent.application.feedback_service import RecordedFeedback
+    from finance_research_agent.evaluation.shadow_records import (
+        OperatorReleaseAttestation,
+        ReleaseCheckReceipt,
+        ShadowDayObservation,
+    )
 
 __all__ = [
     "Clock",
@@ -44,8 +49,11 @@ __all__ = [
     "HistoricalBarsFetcher",
     "MarketDataProvider",
     "ProviderRequestObserver",
+    "OperatorReleaseAttestationRepository",
     "RunRepository",
     "PublishedArtifactReader",
+    "ShadowObservationRepository",
+    "ReleaseEvidenceReader",
     "WatchlistRepository",
     "TradingCalendar",
 ]
@@ -172,6 +180,10 @@ class RunRepository(Protocol):
 
     def load(self, run_id: str) -> StoredRun | None: ...
 
+    def list_runs(
+        self, market_date_start: date, market_date_end: date
+    ) -> tuple[StoredRun, ...]: ...
+
     def create(self, context: RunContext) -> None: ...
 
     def checkpoint(self, run_id: str, checkpoint: RunCheckpoint) -> None: ...
@@ -215,3 +227,31 @@ class FeedbackRepository(Protocol):
     def append_feedback(self, feedback: RecordedFeedback) -> None: ...
 
     def list_feedback(self) -> tuple[RecordedFeedback, ...]: ...
+
+
+class ShadowObservationRepository(Protocol):
+    """Append-only observations with trusted references to existing evidence."""
+
+    def has_run_id(self, run_id: str) -> bool: ...
+
+    def has_feedback_id(self, feedback_id: str) -> bool: ...
+
+    def get_observation(self, observation_id: str) -> ShadowDayObservation | None: ...
+
+    def append_observation(self, observation: ShadowDayObservation) -> None: ...
+
+    def list_observations(self) -> tuple[ShadowDayObservation, ...]: ...
+
+
+class OperatorReleaseAttestationRepository(Protocol):
+    """Append-only persistence for operator-attributed host check results."""
+
+    def append_attestation(self, attestation: OperatorReleaseAttestation) -> None: ...
+
+    def list_attestations(self) -> tuple[OperatorReleaseAttestation, ...]: ...
+
+
+class ReleaseEvidenceReader(Protocol):
+    """Read receipts selected for the reader's configured fixed repository/workflow."""
+
+    def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]: ...

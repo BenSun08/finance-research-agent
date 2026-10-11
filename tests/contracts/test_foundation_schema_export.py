@@ -23,10 +23,13 @@ SCHEMA_NAMES = {
     "instrument-identity.schema.json",
     "market-snapshot.schema.json",
     "metric-result.schema.json",
+    "migration-readiness.schema.json",
     "price-observation.schema.json",
     "run-context.schema.json",
     "source-observation.schema.json",
     "source-health.schema.json",
+    "shadow-day-observation.schema.json",
+    "shadow-scorecard.schema.json",
     "product-a-citation-entailment-review.schema.json",
     "product-a-feedback-receipt.schema.json",
     "product-a-operation-error.schema.json",
@@ -100,6 +103,7 @@ def test_every_schema_export_is_stable_sorted_newline_terminated_json(tmp_path: 
             if "schema_version" in parsed["properties"] and filename not in {
                 "product-a-citation-entailment-review.schema.json",
                 "product-a-operation-record-run-feedback-request.schema.json",
+                "shadow-day-observation.schema.json",
             }:
                 assert parsed["properties"]["schema_version"]["const"] == "0.1"
             for definition in parsed.get("$defs", {}).values():
@@ -178,6 +182,108 @@ def test_schema_preserves_wire_decimal_and_provenance_constraints(tmp_path: Path
     market_schema = json.loads((tmp_path / "market-snapshot.schema.json").read_bytes())
     assert market_schema["properties"]["completed_daily_bars"]["type"] == "array"
     assert market_schema["properties"]["source_observations"]["type"] == "array"
+
+
+def test_shadow_day_schema_exports_versioned_safety_and_failure_evidence(tmp_path: Path) -> None:
+    export_schemas(tmp_path)
+    schema = json.loads((tmp_path / "shadow-day-observation.schema.json").read_bytes())
+
+    assert schema["properties"]["schema_version"]["enum"] == ["0.1", "0.2", "0.3"]
+    assert schema["properties"]["safety_incident_observation"]["anyOf"][0] == {
+        "$ref": "#/$defs/ShadowSafetyIncidentObservation"
+    }
+    safety_schema = schema["$defs"]["ShadowSafetyIncidentObservation"]
+    assert safety_schema["properties"]["reviewed_categories"]["minItems"] == 5
+    assert safety_schema["properties"]["reviewed_categories"]["maxItems"] == 5
+    assert safety_schema["properties"]["reviewed_categories"]["uniqueItems"] is True
+    assert safety_schema["properties"]["incidents"]["maxItems"] == 128
+    failure_observation_schema = schema["$defs"]["ShadowFailureOperationsObservation"]
+    coverage_ref = failure_observation_schema["properties"]["coverage"]["$ref"].split("/")[-1]
+    assert schema["$defs"][coverage_ref]["enum"] == [
+        "COMPLETE",
+        "INCOMPLETE",
+    ]
+    assert failure_observation_schema["properties"]["failures"]["maxItems"] == 128
+
+    validator = Draft202012Validator(schema)
+    safety_observation = {
+        "source_commit_sha256": "a" * 64,
+        "source_tree_sha256": "b" * 64,
+        "reviewed_categories": [
+            "UNAUTHORIZED_TOOL_PATH",
+            "CREDENTIAL_LEAK",
+            "PROHIBITED_STATE",
+            "SERIOUS_INJECTION_ESCAPE",
+            "MATERIAL_OUT_OF_ROOT_WRITE",
+        ],
+        "incidents": [],
+    }
+    day_record = {
+        "id": "shadow-day-1",
+        "market_date": "2026-10-09",
+        "recorded_at": "2026-10-10T00:00:00Z",
+        "session_id": "session-1",
+        "availability": "ONLINE",
+    }
+    assert validator.is_valid({**day_record, "schema_version": "0.1"})
+    assert validator.is_valid(
+        {
+            **day_record,
+            "schema_version": "0.2",
+            "safety_incident_observation": safety_observation,
+        }
+    )
+    failure_operations_observation = {
+        "coverage": "COMPLETE",
+        "failures": [
+            {
+                "failure_ref": "failure-1",
+                "failure_code": "PROVIDER_UNAVAILABLE",
+                "status": "RESOLVED",
+                "affected_capabilities": ["MARKET_SUMMARY_AVAILABLE"],
+                "recovery": {
+                    "recovery_ref": "recovery-1",
+                    "action": "Restore the configured market data connection.",
+                    "validation_plan": "Run readiness and confirm a valid daily bar.",
+                },
+            }
+        ],
+    }
+    assert validator.is_valid(
+        {
+            **day_record,
+            "schema_version": "0.3",
+            "safety_incident_observation": safety_observation,
+            "failure_operations_observation": failure_operations_observation,
+        }
+    )
+    assert not validator.is_valid(
+        {
+            **day_record,
+            "schema_version": "0.2",
+            "failure_operations_observation": failure_operations_observation,
+        }
+    )
+    assert not validator.is_valid(
+        {
+            **day_record,
+            "schema_version": "0.1",
+            "safety_incident_observation": safety_observation,
+        }
+    )
+    assert not validator.is_valid(
+        {
+            **day_record,
+            "schema_version": "0.2",
+            "safety_incident_observation": {
+                **safety_observation,
+                "reviewed_categories": [
+                    *safety_observation["reviewed_categories"][:-1],
+                    "UNAUTHORIZED_TOOL_PATH",
+                ],
+            },
+        }
+    )
 
 
 def test_operation_schemas_are_strict_bounded_and_exclude_caller_authority() -> None:

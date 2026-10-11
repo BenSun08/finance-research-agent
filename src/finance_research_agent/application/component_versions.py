@@ -20,7 +20,7 @@ def component_versions_for_skill(
         plugin_version=plugin_version,
         skill_version=skill_version,
         prompt_version=canonical_prompt_sha256(),
-        report_template_version="0.1",
+        report_template_version="0.2",
         schema_versions=FrozenMap(
             {
                 "citation-entailment-review": "0.2",

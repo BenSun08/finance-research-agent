@@ -147,7 +147,7 @@ def test_prepare_scheduled_run_starts_without_an_evidence_cutoff(
     assert run.skill_version == SYNTHETIC_SKILL_VERSION
     prompt = CONFIG_ROOT.parents[1] / "prompts" / "research-brief-draft.md"
     assert run.prompt_version == hashlib.sha256(prompt.read_bytes()).hexdigest()
-    assert run.report_template_version == "0.1"
+    assert run.report_template_version == "0.2"
     assert run.schema_versions["run-context"] == "0.1"
     assert config.calls == 1
     assert clock.calls == 1

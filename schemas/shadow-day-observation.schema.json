@@ -1,0 +1,640 @@
+{
+  "$defs": {
+    "Capability": {
+      "enum": [
+        "MARKET_SUMMARY_AVAILABLE",
+        "REGIME_CLASSIFICATION_AVAILABLE",
+        "WATCHLIST_METRICS_AVAILABLE",
+        "EVENT_RISK_CHECK_AVAILABLE",
+        "SETUP_DETECTION_AVAILABLE",
+        "PLAN_DRAFT_AVAILABLE",
+        "POSITION_SIZING_AVAILABLE",
+        "PORTFOLIO_HEAT_CHECK_AVAILABLE"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
+    "ErrorCode": {
+      "enum": [
+        "SOURCE_NOT_CONFIGURED",
+        "CONFIGURATION_INVALID",
+        "CREDENTIALS_MISSING",
+        "PERMISSION_DENIED",
+        "MARKET_CALENDAR_UNAVAILABLE",
+        "MISSED_WINDOW",
+        "PROVIDER_UNAVAILABLE",
+        "PROVIDER_NO_DATA",
+        "PROVIDER_MISSING_SESSION",
+        "PROVIDER_DUPLICATE_CONFLICT",
+        "PROVIDER_MALFORMED_BAR",
+        "PROVIDER_STALE",
+        "PROVIDER_FUTURE_OR_INCOMPLETE_BAR",
+        "PROVIDER_SCHEMA_DRIFT",
+        "INVALID_RESPONSE",
+        "INVALID_REQUEST",
+        "EVIDENCE_CUTOFF_VIOLATION",
+        "SOURCE_CONFLICT",
+        "STALE_DATA",
+        "UNSUPPORTED_INSTRUMENT",
+        "SIZING_UNAVAILABLE",
+        "PORTFOLIO_HEAT_UNAVAILABLE",
+        "INVALID_RUN_STATE",
+        "INTERNAL_ERROR",
+        "VALIDATION_FAILED",
+        "PUBLICATION_FAILED",
+        "PATH_NOT_ALLOWED",
+        "DEADLINE_EXCEEDED"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "Regime": {
+      "description": "Risk-environment taxonomy for the bounded release.",
+      "enum": [
+        "permissive",
+        "neutral",
+        "defensive",
+        "unknown"
+      ],
+      "title": "Regime",
+      "type": "string"
+    },
+    "ShadowDayAvailability": {
+      "enum": [
+        "ONLINE",
+        "EXCLUDED",
+        "UNKNOWN"
+      ],
+      "title": "ShadowDayAvailability",
+      "type": "string"
+    },
+    "ShadowDayExclusionReason": {
+      "enum": [
+        "COMPUTER_OR_CODEX_UNAVAILABLE",
+        "TOTAL_LOCAL_NETWORK_OUTAGE"
+      ],
+      "title": "ShadowDayExclusionReason",
+      "type": "string"
+    },
+    "ShadowExecutiveEventState": {
+      "enum": [
+        "UNAVAILABLE",
+        "NO_MATERIAL_EVENTS",
+        "MATERIAL_EVENTS"
+      ],
+      "title": "ShadowExecutiveEventState",
+      "type": "string"
+    },
+    "ShadowExecutiveIdentification": {
+      "additionalProperties": false,
+      "description": "Bounded human account of the brief's posture, events, and priorities.",
+      "properties": {
+        "disabled_capabilities": {
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "maxItems": 8,
+          "title": "Disabled Capabilities",
+          "type": "array"
+        },
+        "event_ids": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Event Ids",
+          "type": "array"
+        },
+        "event_state": {
+          "$ref": "#/$defs/ShadowExecutiveEventState"
+        },
+        "market_posture": {
+          "$ref": "#/$defs/Regime"
+        },
+        "priority_symbols": {
+          "items": {
+            "maxLength": 16,
+            "minLength": 1,
+            "pattern": "^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$",
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Priority Symbols",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "market_posture",
+        "event_state",
+        "event_ids",
+        "priority_symbols",
+        "disabled_capabilities"
+      ],
+      "title": "ShadowExecutiveIdentification",
+      "type": "object"
+    },
+    "ShadowFailureOperation": {
+      "additionalProperties": false,
+      "description": "Typed operator record for one failure and its recovery state.",
+      "properties": {
+        "affected_capabilities": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "maxItems": 8,
+          "title": "Affected Capabilities",
+          "type": "array"
+        },
+        "failure_code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "failure_ref": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Failure Ref",
+          "type": "string"
+        },
+        "recovery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ShadowFailureRecoveryRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ShadowFailureOperationStatus"
+        }
+      },
+      "required": [
+        "failure_ref",
+        "failure_code",
+        "status"
+      ],
+      "title": "ShadowFailureOperation",
+      "type": "object"
+    },
+    "ShadowFailureOperationStatus": {
+      "enum": [
+        "OPEN",
+        "IN_PROGRESS",
+        "RESOLVED"
+      ],
+      "title": "ShadowFailureOperationStatus",
+      "type": "string"
+    },
+    "ShadowFailureOperationsCoverage": {
+      "enum": [
+        "COMPLETE",
+        "INCOMPLETE"
+      ],
+      "title": "ShadowFailureOperationsCoverage",
+      "type": "string"
+    },
+    "ShadowFailureOperationsObservation": {
+      "additionalProperties": false,
+      "description": "Operator declaration of whether all failures for a day were reviewed.",
+      "properties": {
+        "coverage": {
+          "$ref": "#/$defs/ShadowFailureOperationsCoverage"
+        },
+        "failures": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ShadowFailureOperation"
+          },
+          "maxItems": 128,
+          "title": "Failures",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "coverage"
+      ],
+      "title": "ShadowFailureOperationsObservation",
+      "type": "object"
+    },
+    "ShadowFailureRecoveryRecord": {
+      "additionalProperties": false,
+      "description": "Bounded recovery action and validation plan for one known failure.",
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "pattern": "^[\\x20-\\x7E]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Action"
+        },
+        "recovery_ref": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Recovery Ref",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "validation_plan": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "pattern": "^[\\x20-\\x7E]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validation Plan"
+        }
+      },
+      "required": [
+        "recovery_ref"
+      ],
+      "title": "ShadowFailureRecoveryRecord",
+      "type": "object"
+    },
+    "ShadowSafetyIncident": {
+      "additionalProperties": false,
+      "description": "One operator-observed incident with a stable evidence reference.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ShadowSafetyIncidentCategory"
+        },
+        "evidence_ref": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Evidence Ref",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "pattern": "(?:[Zz]|\\+00:00)$",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "category",
+        "evidence_ref",
+        "occurred_at"
+      ],
+      "title": "ShadowSafetyIncident",
+      "type": "object"
+    },
+    "ShadowSafetyIncidentCategory": {
+      "enum": [
+        "UNAUTHORIZED_TOOL_PATH",
+        "CREDENTIAL_LEAK",
+        "PROHIBITED_STATE",
+        "SERIOUS_INJECTION_ESCAPE",
+        "MATERIAL_OUT_OF_ROOT_WRITE"
+      ],
+      "title": "ShadowSafetyIncidentCategory",
+      "type": "string"
+    },
+    "ShadowSafetyIncidentObservation": {
+      "additionalProperties": false,
+      "description": "Complete source-bound category review for one observed shadow day.",
+      "properties": {
+        "incidents": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ShadowSafetyIncident"
+          },
+          "maxItems": 128,
+          "title": "Incidents",
+          "type": "array"
+        },
+        "reviewed_categories": {
+          "items": {
+            "$ref": "#/$defs/ShadowSafetyIncidentCategory"
+          },
+          "maxItems": 5,
+          "minItems": 5,
+          "title": "Reviewed Categories",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "schema_version": {
+          "const": "0.1",
+          "default": "0.1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_commit_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Commit Sha256",
+          "type": "string"
+        },
+        "source_tree_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Tree Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_commit_sha256",
+        "source_tree_sha256",
+        "reviewed_categories"
+      ],
+      "title": "ShadowSafetyIncidentObservation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "0.1"
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "properties": {
+          "failure_operations_observation": {
+            "type": "null"
+          },
+          "safety_incident_observation": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "0.2"
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "properties": {
+          "failure_operations_observation": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
+  "description": "One append-only operator record for an actual or unknown shadow day.",
+  "properties": {
+    "actionable_recovery_refs": {
+      "default": [],
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Actionable Recovery Refs",
+      "type": "array"
+    },
+    "availability": {
+      "$ref": "#/$defs/ShadowDayAvailability"
+    },
+    "corrects_observation_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Corrects Observation Id"
+    },
+    "corrects_observation_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Corrects Observation Sha256"
+    },
+    "detailed_review_duration_seconds": {
+      "anyOf": [
+        {
+          "maximum": 86400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detailed Review Duration Seconds"
+    },
+    "exclusion_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ShadowDayExclusionReason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "executive_identification": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ShadowExecutiveIdentification"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "executive_review_duration_seconds": {
+      "anyOf": [
+        {
+          "maximum": 86400,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Executive Review Duration Seconds"
+    },
+    "failure_operations_observation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ShadowFailureOperationsObservation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Id",
+      "type": "string"
+    },
+    "market_date": {
+      "format": "date",
+      "title": "Market Date",
+      "type": "string"
+    },
+    "observed_feedback_ids": {
+      "default": [],
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 256,
+      "title": "Observed Feedback Ids",
+      "type": "array"
+    },
+    "observed_run_ids": {
+      "default": [],
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Observed Run Ids",
+      "type": "array"
+    },
+    "production_failure_refs": {
+      "default": [],
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Production Failure Refs",
+      "type": "array"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "pattern": "(?:[Zz]|\\+00:00)$",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "safety_incident_observation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ShadowSafetyIncidentObservation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "schema_version": {
+      "default": "0.3",
+      "enum": [
+        "0.1",
+        "0.2",
+        "0.3"
+      ],
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "title": "Session Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "market_date",
+    "recorded_at",
+    "session_id",
+    "availability"
+  ],
+  "title": "ShadowDayObservation",
+  "type": "object"
+}
