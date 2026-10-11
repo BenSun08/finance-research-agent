@@ -519,7 +519,9 @@ def test_release_evidence_main_reports_pending_without_leaking_errors(
     result = collector_main(["--source-commit", "HEAD"])
 
     assert result == 0
-    assert capsys.readouterr().out == "Release evidence: PENDING (source identity is unavailable)\n"
+    assert capsys.readouterr().out == (
+        "Release evidence: PENDING (exact-head collection is unavailable)\n"
+    )
 
 
 def test_release_evidence_main_reports_an_invalid_source_as_pending(
@@ -705,6 +707,11 @@ def test_pending_collection_prevents_reader_from_reusing_an_older_receipt_batch(
     assert len(tuple(evidence_root.glob("release-checks-*.json"))) == 1
     assert reader.list_receipts() == ()
 
+    monkeypatch.setattr(release_collector, "collect_release_evidence", lambda *_args: complete)
+    assert collector_main(["--source-commit", source_commit]) == 0
+    assert capsys.readouterr().out == "Release evidence: PASS (42 exact-head step receipts)\n"
+    assert len(reader.list_receipts()) == len(complete.receipts)
+
 
 def test_watermark_refresh_failure_invalidates_an_older_pass_pointer(
     tmp_path: Path,
@@ -800,10 +807,16 @@ def test_nonwritable_evidence_root_cannot_expose_an_older_pass_pointer(
         pending_reason="newest exact-head run is incomplete",
     )
     monkeypatch.setattr(release_collector, "collect_release_evidence", lambda *_args: pending)
+    watermark_path = release_collector._release_collection_watermark_path(
+        evidence_root,
+        receipt.source_commit_sha256,
+        receipt.source_tree_sha256,
+    )
+    watermark_path.chmod(0o400)
     evidence_root.chmod(0o500)
     try:
         assert collector_main(["--source-commit", source_commit]) == 0
-        assert capsys.readouterr().out == ("Release evidence: PENDING (1 matrix checks missing)\n")
+        assert capsys.readouterr().out.startswith("Release evidence: PENDING (")
         assert reader.list_receipts() == ()
     finally:
         evidence_root.chmod(0o700)
@@ -846,6 +859,47 @@ def test_collection_failure_invalidates_an_older_pass_pointer(
     assert collector_main(["--source-commit", source_commit]) == 0
     assert capsys.readouterr().out == (
         "Release evidence: PENDING (exact-head collection is unavailable)\n"
+    )
+    assert reader.list_receipts() == ()
+
+
+def test_unavailable_pending_marker_never_reports_a_new_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_commit = _head_commit()
+    complete = collect_release_evidence(
+        source_commit,
+        _FakeActionsApiReader(_fake_actions_responses(source_commit)),
+    )
+    receipt = complete.receipts[0]
+    data_root = tmp_path / "private-data"
+    data_root.mkdir(mode=0o700)
+    evidence_root = data_root / "diagnostics" / "evaluation"
+    reader = FileSystemReleaseEvidenceReader(
+        evidence_root,
+        source_commit_sha256=receipt.source_commit_sha256,
+        source_tree_sha256=receipt.source_tree_sha256,
+        repository_id=receipt.repository_id,
+        workflow_id=receipt.workflow_id,
+    )
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(data_root))
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DOTENV_PATH", str(tmp_path / "missing.env"))
+    monkeypatch.setattr(release_collector, "collect_release_evidence", lambda *_args: complete)
+
+    def fail_pending_marker(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("private lock detail")
+
+    monkeypatch.setattr(
+        release_collector,
+        "_update_release_evidence_pending_source",
+        fail_pending_marker,
+    )
+
+    assert collector_main(["--source-commit", source_commit]) == 0
+    assert capsys.readouterr().out == (
+        "Release evidence: PENDING (private receipt storage is unavailable)\n"
     )
     assert reader.list_receipts() == ()
 

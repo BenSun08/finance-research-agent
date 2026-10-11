@@ -407,6 +407,20 @@ def test_release_evidence_reader_ignores_watermarks_without_collection_lock(
     assert _release_reader(root).list_receipts() == ()
 
 
+def test_release_evidence_reader_fails_closed_on_malformed_collection_lock_state(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_receipt_batch(root, (_release_receipt(),))
+    lock_path = root / ".release-evidence.lock"
+    lock_path.write_bytes(b"{malformed state}")
+    lock_path.chmod(0o600)
+
+    assert _release_reader(root).list_receipts() == ()
+
+
 def test_release_evidence_reader_uses_pending_watermark_over_retained_receipts(
     tmp_path: Path,
 ) -> None:

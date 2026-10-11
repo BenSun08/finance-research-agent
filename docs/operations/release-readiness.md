@@ -105,9 +105,13 @@ Receipt batches, the current status pointer, and the interprocess collection
 lock are written only below
 `$AI_MARKET_RESEARCH_DATA_DIR/diagnostics/evaluation`, in private directories
 with restricted file permissions. Collections are serialized so a slower
-older refresh cannot replace a later pending result. The evaluation evidence
-reader accepts only the selected batch bound to the configured source commit,
-tree, repository, and workflow. No credential or run artifact is stored.
+older refresh cannot replace a later pending result. The lock retains pending
+markers for exact source commits when a refresh cannot update the status
+pointer, so readers cannot fall back to an older PASS batch. A completed
+collection clears only its own marker after storing its status. The evaluation
+evidence reader accepts only the selected batch bound to the configured source
+commit, tree, repository, and workflow. No credential or run artifact is
+stored.
 
 ## Operator evidence and live smoke
 

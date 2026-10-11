@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from fcntl import LOCK_SH, LOCK_UN, flock
 from pathlib import Path
-from typing import Literal, cast
+from typing import BinaryIO, Literal, cast
 
 from pydantic import PositiveInt, TypeAdapter, ValidationError
 
@@ -46,6 +46,12 @@ class _ReleaseCollectionWatermark(StrictModel):
     actions_run_id: Identifier | None = None
     run_attempt: PositiveInt | None = None
     status: Literal["PASS", "FAIL", "PENDING"]
+
+
+class _ReleaseEvidenceLockState(StrictModel):
+    """Durable invalidation markers protected by the collection lock."""
+
+    pending_sources: tuple[tuple[Sha256, Sha256], ...] = ()
 
 
 class FileSystemShadowObservationRepository:
@@ -132,8 +138,15 @@ class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
     def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]:
         if not _private_directory_available_or_missing(self._root):
             return ()
-        with _release_evidence_read_lock(self._root) as locked:
-            if not locked:
+        with _release_evidence_read_lock(self._root) as pending_sources:
+            if (
+                pending_sources is None
+                or (
+                    self._source_commit_sha256,
+                    self._source_tree_sha256,
+                )
+                in pending_sources
+            ):
                 return ()
             return self._list_receipts_locked()
 
@@ -279,12 +292,14 @@ def _release_collection_watermark_path(
 
 
 @contextmanager
-def _release_evidence_read_lock(root: Path) -> Iterator[bool]:
+def _release_evidence_read_lock(
+    root: Path,
+) -> Iterator[frozenset[tuple[str, str]] | None]:
     lock_path = root / ".release-evidence.lock"
     try:
         descriptor = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW)
     except FileNotFoundError:
-        yield False
+        yield None
         return
     except OSError as exc:
         raise ValueError("release evidence collection lock is unavailable") from exc
@@ -298,16 +313,60 @@ def _release_evidence_read_lock(root: Path) -> Iterator[bool]:
         ):
             raise ValueError("release evidence collection lock is unsafe")
         if not stat.S_IMODE(lock_stat.st_mode) & stat.S_IWUSR or not os.access(lock_path, os.W_OK):
-            yield False
+            yield None
             return
         try:
             flock(lock_file.fileno(), LOCK_SH)
         except OSError as exc:
             raise ValueError("release evidence collection lock is unavailable") from exc
         try:
-            yield True
+            try:
+                state = _read_release_evidence_lock_state(lock_file.read())
+            except ValueError:
+                yield None
+            else:
+                yield frozenset(state.pending_sources)
         finally:
             flock(lock_file.fileno(), LOCK_UN)
+
+
+def _read_release_evidence_lock_state(payload: bytes) -> _ReleaseEvidenceLockState:
+    if not payload:
+        return _ReleaseEvidenceLockState()
+    try:
+        state = _ReleaseEvidenceLockState.model_validate_json(payload, strict=True)
+    except ValueError as exc:
+        raise ValueError("release evidence collection lock state is malformed") from exc
+    canonical_sources = tuple(sorted(set(state.pending_sources)))
+    if state.pending_sources != canonical_sources or canonical_bytes(state) != payload:
+        raise ValueError("release evidence collection lock state is not canonical")
+    return state
+
+
+def _update_release_evidence_pending_source(
+    lock_file: BinaryIO,
+    *,
+    source_commit_sha256: str,
+    source_tree_sha256: str,
+    pending: bool,
+) -> None:
+    try:
+        lock_file.seek(0)
+        current = _read_release_evidence_lock_state(lock_file.read())
+        sources = set(current.pending_sources)
+        identity = (source_commit_sha256, source_tree_sha256)
+        if pending:
+            sources.add(identity)
+        else:
+            sources.discard(identity)
+        state = _ReleaseEvidenceLockState(pending_sources=tuple(sorted(sources)))
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(canonical_bytes(state))
+        lock_file.flush()
+        os.fsync(lock_file.fileno())
+    except (OSError, ValueError) as exc:
+        raise ValueError("release evidence collection lock state is unavailable") from exc
 
 
 def _read_release_collection_watermark(

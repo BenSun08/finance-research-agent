@@ -16,11 +16,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import BinaryIO, Literal, Protocol, cast
 
 from finance_research_agent.adapters.shadow_evidence import (
     _release_collection_watermark_path,
     _ReleaseCollectionWatermark,
+    _update_release_evidence_pending_source,
 )
 from finance_research_agent.domain.types import canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
@@ -508,7 +509,7 @@ def _fsync_directory(path: Path) -> None:
 
 
 @contextmanager
-def _release_collection_lock(root: Path) -> Iterator[None]:
+def _release_collection_lock(root: Path) -> Iterator[BinaryIO]:
     lock_path = root / ".release-evidence.lock"
     descriptor = -1
     try:
@@ -525,7 +526,7 @@ def _release_collection_lock(root: Path) -> Iterator[None]:
             descriptor = -1
             flock(lock_file.fileno(), LOCK_EX)
             try:
-                yield
+                yield lock_file
             finally:
                 flock(lock_file.fileno(), LOCK_UN)
     except OSError as exc:
@@ -688,7 +689,18 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         root = _evaluation_root()
-        with _release_collection_lock(root):
+        with _release_collection_lock(root) as lock_file:
+            pending_marker_written = False
+            try:
+                _update_release_evidence_pending_source(
+                    lock_file,
+                    source_commit_sha256=source_identity.commit_sha256,
+                    source_tree_sha256=source_identity.tree_sha256,
+                    pending=True,
+                )
+                pending_marker_written = True
+            except ValueError:
+                pass
             pending_collection = ReleaseCollection(
                 source=source_identity,
                 actions_run_id=None,
@@ -697,7 +709,16 @@ def main(argv: list[str] | None = None) -> int:
                 missing=(),
                 pending_reason="exact-head collection is in progress",
             )
-            _store_collection_watermark(pending_collection, status="PENDING")
+            try:
+                _store_collection_watermark(pending_collection, status="PENDING")
+            except CollectionUnavailable:
+                if not pending_marker_written:
+                    raise
+                print("Release evidence: PENDING (private receipt storage is unavailable)")
+                return 0
+            if not pending_marker_written:
+                print("Release evidence: PENDING (private receipt storage is unavailable)")
+                return 0
             try:
                 collection = collect_release_evidence(arguments.source_commit, _GhApiReader())
             except CollectionUnavailable:
@@ -708,6 +729,13 @@ def main(argv: list[str] | None = None) -> int:
                 _store_receipts(collection)
             if collection.status != "PENDING":
                 _store_collection_watermark(collection, status=collection.status)
+            if pending_marker_written:
+                _update_release_evidence_pending_source(
+                    lock_file,
+                    source_commit_sha256=source_identity.commit_sha256,
+                    source_tree_sha256=source_identity.tree_sha256,
+                    pending=False,
+                )
     except (CollectionUnavailable, OSError, ValueError):
         print("Release evidence: PENDING (private receipt storage is unavailable)")
         return 0
