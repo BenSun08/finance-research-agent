@@ -18,6 +18,9 @@ from finance_research_agent.domain.models import (
 )
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
+    ReleaseCheckConclusion,
+    ReleaseCheckId,
+    ReleaseCheckReceipt,
     ShadowDayAvailability,
     ShadowDayExclusionReason,
     ShadowDayObservation,
@@ -798,6 +801,94 @@ def test_legacy_scorecard_call_cannot_claim_unverified_gates() -> None:
     assert scorecard.failed_gate_ids == ()
     assert scorecard.pending_gate_ids == tuple(ShadowGateId)
     assert scorecard.graduation_ready is False
+
+
+def _safety_evidence(
+    receipts: tuple[ReleaseCheckReceipt, ...],
+):
+    from finance_research_agent.evaluation.shadow_scorecard import (
+        _create_shadow_evaluation_evidence,
+    )
+
+    return _create_shadow_evaluation_evidence(
+        period=ShadowPeriod(start_date=date(2026, 8, 26), end_date=date(2026, 8, 26)),
+        origin=ShadowEvaluationOrigin.PERSONAL_SHADOW,
+        verified_runs=(),
+        feedback_records=(),
+        observations=(),
+        operator_attestations=(),
+        release_check_receipts=receipts,
+        source_commit_sha256="a" * 64,
+        source_tree_sha256="b" * 64,
+        evidence_hashes=("c" * 64,),
+    )
+
+
+def _safety_receipts(
+    *,
+    conclusion: ReleaseCheckConclusion = ReleaseCheckConclusion.SUCCESS,
+    mismatched_source: bool = False,
+) -> tuple[ReleaseCheckReceipt, ...]:
+    required_checks = (
+        ReleaseCheckId.SCENARIO_AND_FAILURE_MATRIX,
+        ReleaseCheckId.SECRET_SCAN,
+        ReleaseCheckId.NETWORK_BOUNDARY,
+    )
+    return tuple(
+        ReleaseCheckReceipt(
+            id=f"{check_id.value.lower()}-{python_version}",
+            check_id=check_id,
+            source_commit_sha256="d" * 64 if mismatched_source else "a" * 64,
+            source_tree_sha256="e" * 64 if mismatched_source else "b" * 64,
+            repository_id="finance-research-agent",
+            workflow_id="ci",
+            actions_run_id="run-123",
+            actions_job_id=f"verify-{python_version}",
+            actions_step_id=f"{check_id.value.lower()}-step",
+            python_version=python_version,
+            completed_at=datetime(2026, 8, 26, 12, tzinfo=UTC),
+            conclusion=conclusion,
+            response_sha256="f" * 64,
+        )
+        for check_id in required_checks
+        for python_version in ("3.12", "3.13", "3.14")
+    )
+
+
+def _safety_gate(scorecard):
+    return next(gate for gate in scorecard.gate_results if gate.id is ShadowGateId.SAFETY)
+
+
+def test_safety_gate_requires_version_bound_security_checks_and_incident_observation() -> None:
+    missing_checks = build_shadow_scorecard((), (), _Calendar(), evidence=_safety_evidence(()))
+    checks_only = build_shadow_scorecard(
+        (), (), _Calendar(), evidence=_safety_evidence(_safety_receipts())
+    )
+
+    assert _safety_gate(missing_checks).status is EvaluationGateStatus.PENDING
+    assert "SAFETY_RELEASE_CHECK_MATRIX_INCOMPLETE" in _safety_gate(missing_checks).reason_codes
+    assert _safety_gate(checks_only).status is EvaluationGateStatus.PENDING
+    assert "SAFETY_INCIDENT_OBSERVATION_REQUIRED" in _safety_gate(checks_only).reason_codes
+
+
+@pytest.mark.parametrize(
+    ("receipts", "expected_reason"),
+    (
+        (
+            _safety_receipts(conclusion=ReleaseCheckConclusion.FAILURE),
+            "SAFETY_RELEASE_CHECK_FAILED",
+        ),
+        (_safety_receipts(mismatched_source=True), "SAFETY_RELEASE_CHECK_SOURCE_MISMATCH"),
+    ),
+)
+def test_safety_gate_fails_when_exact_source_security_check_fails(
+    receipts: tuple[ReleaseCheckReceipt, ...], expected_reason: str
+) -> None:
+    scorecard = build_shadow_scorecard((), (), _Calendar(), evidence=_safety_evidence(receipts))
+
+    gate = _safety_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.FAIL
+    assert expected_reason in gate.reason_codes
 
 
 def test_scorecard_contract_excludes_performance_and_execution_fields() -> None:

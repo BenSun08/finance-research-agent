@@ -28,6 +28,9 @@ from finance_research_agent.domain.packets import ResearchPacket
 from finance_research_agent.domain.regime import Regime
 from finance_research_agent.domain.types import FrozenMap, canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
+    ReleaseCheckConclusion,
+    ReleaseCheckId,
+    ReleaseCheckReceipt,
     ShadowExecutiveEventState,
     ShadowExecutiveIdentification,
 )
@@ -39,12 +42,17 @@ if TYPE_CHECKING:
     from finance_research_agent.domain.market_calendar import TradingCalendar
     from finance_research_agent.evaluation.shadow_records import (
         OperatorReleaseAttestation,
-        ReleaseCheckReceipt,
         ShadowDayObservation,
     )
 
 
 _SHADOW_EVIDENCE_FACTORY_TOKEN = object()
+_SAFETY_RELEASE_CHECKS = (
+    ReleaseCheckId.SCENARIO_AND_FAILURE_MATRIX,
+    ReleaseCheckId.SECRET_SCAN,
+    ReleaseCheckId.NETWORK_BOUNDARY,
+)
+_SAFETY_RELEASE_PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
 
 
 @dataclass(frozen=True, slots=True)
@@ -702,6 +710,71 @@ def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGat
     )
 
 
+def _safety_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGate:
+    selected: list[ReleaseCheckReceipt] = []
+    missing: list[tuple[ReleaseCheckId, str]] = []
+    failures: list[ReleaseCheckReceipt] = []
+    source_mismatches: list[ReleaseCheckReceipt] = []
+    source_is_known = (
+        evidence.source_commit_sha256 is not None and evidence.source_tree_sha256 is not None
+    )
+
+    for check_id in _SAFETY_RELEASE_CHECKS:
+        for python_version in _SAFETY_RELEASE_PYTHON_VERSIONS:
+            receipt = next(
+                (
+                    item
+                    for item in evidence.release_check_receipts
+                    if item.check_id is check_id and item.python_version == python_version
+                ),
+                None,
+            )
+            if receipt is None:
+                missing.append((check_id, python_version))
+                continue
+            selected.append(receipt)
+            if source_is_known and (
+                receipt.source_commit_sha256 != evidence.source_commit_sha256
+                or receipt.source_tree_sha256 != evidence.source_tree_sha256
+            ):
+                source_mismatches.append(receipt)
+            elif receipt.conclusion is not ReleaseCheckConclusion.SUCCESS:
+                failures.append(receipt)
+
+    evidence_ids = tuple(sorted({*evidence.evidence_hashes, *(item.id for item in selected)}))
+    if source_mismatches or failures:
+        reasons = []
+        if source_mismatches:
+            reasons.append("SAFETY_RELEASE_CHECK_SOURCE_MISMATCH")
+        if failures:
+            reasons.append("SAFETY_RELEASE_CHECK_FAILED")
+        return EvaluationGate(
+            id=ShadowGateId.SAFETY,
+            status=EvaluationGateStatus.FAIL,
+            evidence_ids=evidence_ids,
+            reason_codes=tuple(reasons),
+            measured_value=len(source_mismatches) + len(failures),
+            required_value=0,
+        )
+
+    pending_reasons = []
+    if not source_is_known:
+        pending_reasons.append("SAFETY_SOURCE_IDENTITY_UNAVAILABLE")
+    if missing:
+        pending_reasons.append("SAFETY_RELEASE_CHECK_MATRIX_INCOMPLETE")
+    # The current R11 evidence model has no typed incident observation. Empty
+    # failure references therefore cannot establish an observed zero incident count.
+    pending_reasons.append("SAFETY_INCIDENT_OBSERVATION_REQUIRED")
+    return EvaluationGate(
+        id=ShadowGateId.SAFETY,
+        status=EvaluationGateStatus.PENDING,
+        evidence_ids=evidence_ids,
+        reason_codes=tuple(pending_reasons),
+        measured_value=None,
+        required_value=0,
+    )
+
+
 NonNegativeCount = Annotated[int, Field(ge=0)]
 NonNegativeSeconds = Annotated[int, Field(ge=0)]
 
@@ -1058,6 +1131,7 @@ def build_shadow_scorecard(
 
     specific_gates = {
         ShadowGateId.AT_LEAST_TWENTY_TRADING_DAYS: day_gate,
+        ShadowGateId.SAFETY: _safety_gate(evidence),
         ShadowGateId.EVIDENCE: _citation_evidence_gate(evidence),
         ShadowGateId.REVIEW_TIME: review_time_gate,
         ShadowGateId.NORMAL_PROVIDER_DURATION: duration_gate,
