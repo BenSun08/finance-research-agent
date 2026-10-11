@@ -582,6 +582,85 @@ def test_evidence_gate_passes_a_structurally_empty_citation_sample_after_artifac
     assert _evidence_gate(scorecard).measured_value == 0
 
 
+def test_evidence_gate_does_not_pass_operational_empty_sample_without_disclosure_check(
+    valid_packet, valid_brief_draft
+) -> None:
+    from dataclasses import replace
+
+    from finance_research_agent.application.replay_service import ArtifactReplayResult
+    from finance_research_agent.domain.enums import BriefOrigin
+    from finance_research_agent.evaluation.shadow_scorecard import (
+        _create_shadow_evaluation_evidence,
+    )
+
+    evidence, claim_ids = _citation_evidence_snapshot(
+        valid_packet, valid_brief_draft, material_claims=False
+    )
+    assert claim_ids == ()
+    verified_run = evidence.verified_runs[0]
+    assert verified_run.published_bundle is not None
+    assert verified_run.published_artifact is not None
+    report = "verified report fixture"
+    bundle = PublishedRunBundle.model_construct(
+        run=verified_run.published_bundle.run,
+        bundle=FrozenMap({"brief_origin": BriefOrigin.OPERATIONAL.value}),
+        report_markdown=report,
+        markdown_sha256=sha256(report.encode("utf-8")).hexdigest(),
+    )
+    bundle_hash = sha256(canonical_bytes(bundle)).hexdigest()
+    artifact = PublishedArtifact(
+        run_id=bundle.run.run_id,
+        bundle_sha256=bundle_hash,
+        markdown_sha256=sha256(report.encode("utf-8")).hexdigest(),
+        published_at=verified_run.published_artifact.published_at,
+    )
+    replay = ArtifactReplayResult(
+        run_id=bundle.run.run_id,
+        bundle=bundle,
+        report_markdown=report,
+        json_matches=True,
+        markdown_matches=True,
+        stored_json_sha256=bundle_hash,
+        replayed_json_sha256=bundle_hash,
+        stored_markdown_sha256=artifact.markdown_sha256,
+        replayed_markdown_sha256=artifact.markdown_sha256,
+        component_version_mismatches=(),
+    )
+    operational_run = replace(
+        verified_run,
+        published_bundle=bundle,
+        published_artifact=artifact,
+        replay_result=replay,
+    )
+    operational_evidence = _create_shadow_evaluation_evidence(
+        period=evidence.period,
+        origin=evidence.origin,
+        verified_runs=(operational_run,),
+        feedback_records=evidence.feedback_records,
+        observations=evidence.observations,
+        operator_attestations=evidence.operator_attestations,
+        release_check_receipts=evidence.release_check_receipts,
+        source_commit_sha256=evidence.source_commit_sha256,
+        source_tree_sha256=evidence.source_tree_sha256,
+        evidence_hashes=evidence.evidence_hashes,
+    )
+
+    scorecard = build_shadow_scorecard(
+        (bundle,),
+        operational_evidence.feedback_records,
+        _Calendar(),
+        evidence=operational_evidence,
+    )
+
+    gate = _evidence_gate(scorecard)
+    assert gate.status is EvaluationGateStatus.PENDING
+    assert gate.reason_codes == (
+        "NO_MATERIAL_CLAIMS",
+        "OPERATIONAL_REPORT_DISCLOSURES_UNVERIFIED",
+    )
+    assert gate.measured_value is None
+
+
 def test_evidence_gate_stays_pending_when_numeric_validation_evidence_is_missing(
     valid_packet, valid_brief_draft
 ) -> None:

@@ -676,6 +676,8 @@ def _citation_evidence_gate(evidence: ShadowEvaluationEvidence) -> EvaluationGat
 
         if sample.empty_reason is not None:
             no_material_claims = True
+            if bundle.bundle.get("brief_origin") == BriefOrigin.OPERATIONAL.value:
+                artifact_missing.append("OPERATIONAL_REPORT_DISCLOSURES_UNVERIFIED")
             continue
 
         selected_claim_ids = set(sample.claim_ids)
