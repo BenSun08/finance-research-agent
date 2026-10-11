@@ -24,6 +24,7 @@ from scripts.collect_release_evidence import (
     ActionsApiReader,
     CollectionUnavailable,
     ReleaseCollection,
+    SourceIdentity,
     collect_release_evidence,
 )
 from scripts.collect_release_evidence import (
@@ -635,6 +636,38 @@ def test_release_evidence_main_sanitizes_actions_cli_failures(
     output = capsys.readouterr().out
     assert output == "Release evidence: PENDING (42 matrix checks missing)\n"
     assert "private" not in output
+
+
+def test_release_evidence_main_collects_against_the_source_identity_it_marked_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pinned_source = SourceIdentity(
+        git_commit=_head_commit(),
+        commit_sha256="b" * 64,
+        tree_sha256="c" * 64,
+    )
+    data_root = tmp_path / "private-data"
+    data_root.mkdir(mode=0o700)
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(data_root))
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DOTENV_PATH", str(tmp_path / "missing.env"))
+    monkeypatch.setattr(release_collector, "_source_identity", lambda _commit: pinned_source)
+    collected_commits: list[str] = []
+
+    def unavailable(source_commit: str, _reader: ActionsApiReader) -> ReleaseCollection:
+        collected_commits.append(source_commit)
+        raise CollectionUnavailable("private collection detail")
+
+    monkeypatch.setattr(release_collector, "collect_release_evidence", unavailable)
+
+    result = collector_main(["--source-commit", "HEAD"])
+
+    assert result == 0
+    assert collected_commits == [pinned_source.git_commit]
+    assert capsys.readouterr().out == (
+        "Release evidence: PENDING (exact-head collection is unavailable)\n"
+    )
 
 
 def test_release_evidence_main_reports_failure_count_and_exit_code(

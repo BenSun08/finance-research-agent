@@ -742,7 +742,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("Release evidence: PENDING (private receipt storage is unavailable)")
                 return 0
             try:
-                collection = collect_release_evidence(arguments.source_commit, _GhApiReader())
+                collection = collect_release_evidence(source_identity.git_commit, _GhApiReader())
             except CollectionUnavailable:
                 print("Release evidence: PENDING (exact-head collection is unavailable)")
                 return 0
