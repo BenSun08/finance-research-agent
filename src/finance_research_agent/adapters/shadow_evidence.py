@@ -336,7 +336,7 @@ def _release_evidence_read_lock(
 
 def _read_release_evidence_lock_state(payload: bytes) -> _ReleaseEvidenceLockState:
     if not payload:
-        return _ReleaseEvidenceLockState()
+        raise ValueError("release evidence collection lock state is malformed")
     try:
         state = _ReleaseEvidenceLockState.model_validate_json(payload, strict=True)
     except ValueError as exc:

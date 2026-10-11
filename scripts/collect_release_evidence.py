@@ -21,6 +21,7 @@ from typing import BinaryIO, Literal, Protocol, cast
 from finance_research_agent.adapters.shadow_evidence import (
     _release_collection_watermark_path,
     _ReleaseCollectionWatermark,
+    _ReleaseEvidenceLockState,
     _update_release_evidence_pending_source,
 )
 from finance_research_agent.domain.types import canonical_bytes
@@ -512,12 +513,17 @@ def _fsync_directory(path: Path) -> None:
 def _release_collection_lock(root: Path) -> Iterator[BinaryIO]:
     lock_path = root / ".release-evidence.lock"
     descriptor = -1
+    created = False
     try:
-        descriptor = os.open(
-            lock_path,
-            os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW,
-            0o600,
-        )
+        try:
+            descriptor = os.open(
+                lock_path,
+                os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW,
+                0o600,
+            )
+            created = True
+        except FileExistsError:
+            descriptor = os.open(lock_path, os.O_RDWR | os.O_NOFOLLOW)
         lock_stat = os.fstat(descriptor)
         if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_nlink != 1:
             raise CollectionUnavailable("release evidence lock is unsafe")
@@ -526,6 +532,10 @@ def _release_collection_lock(root: Path) -> Iterator[BinaryIO]:
             descriptor = -1
             flock(lock_file.fileno(), LOCK_EX)
             try:
+                if created:
+                    lock_file.write(canonical_bytes(_ReleaseEvidenceLockState()))
+                    lock_file.flush()
+                    os.fsync(lock_file.fileno())
                 yield lock_file
             finally:
                 flock(lock_file.fileno(), LOCK_UN)

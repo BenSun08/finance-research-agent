@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event, Lock
+from typing import Literal
 
 import pytest
 import yaml
@@ -861,6 +862,75 @@ def test_collection_failure_invalidates_an_older_pass_pointer(
         "Release evidence: PENDING (exact-head collection is unavailable)\n"
     )
     assert reader.list_receipts() == ()
+
+
+def test_torn_collection_lock_stays_fail_closed_during_other_source_collection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_a = _head_commit()
+    source_b = subprocess.check_output(["git", "rev-parse", "HEAD^"], cwd=ROOT, text=True).strip()
+    complete_a = collect_release_evidence(
+        source_a,
+        _FakeActionsApiReader(_fake_actions_responses(source_a)),
+    )
+    complete_b = collect_release_evidence(
+        source_b,
+        _FakeActionsApiReader(_fake_actions_responses(source_b)),
+    )
+    receipt_a = complete_a.receipts[0]
+    data_root = tmp_path / "private-data"
+    data_root.mkdir(mode=0o700)
+    evidence_root = data_root / "diagnostics" / "evaluation"
+    reader_a = FileSystemReleaseEvidenceReader(
+        evidence_root,
+        source_commit_sha256=receipt_a.source_commit_sha256,
+        source_tree_sha256=receipt_a.source_tree_sha256,
+        repository_id=receipt_a.repository_id,
+        workflow_id=receipt_a.workflow_id,
+    )
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DATA_DIR", str(data_root))
+    monkeypatch.setenv("AI_MARKET_RESEARCH_DOTENV_PATH", str(tmp_path / "missing.env"))
+    monkeypatch.setattr(release_collector, "collect_release_evidence", lambda *_args: complete_a)
+
+    assert collector_main(["--source-commit", source_a]) == 0
+    assert len(reader_a.list_receipts()) == len(complete_a.receipts)
+    capsys.readouterr()
+
+    store_watermark = release_collector._store_collection_watermark
+
+    def fail_source_a_pending_watermark(
+        collection: ReleaseCollection, status: Literal["PASS", "FAIL", "PENDING"]
+    ) -> None:
+        if (
+            collection.source.commit_sha256 == complete_a.source.commit_sha256
+            and status == "PENDING"
+        ):
+            raise CollectionUnavailable("private status pointer detail")
+        store_watermark(collection, status=status)
+
+    monkeypatch.setattr(
+        release_collector,
+        "_store_collection_watermark",
+        fail_source_a_pending_watermark,
+    )
+
+    assert collector_main(["--source-commit", source_a]) == 0
+    assert capsys.readouterr().out == (
+        "Release evidence: PENDING (private receipt storage is unavailable)\n"
+    )
+    assert reader_a.list_receipts() == ()
+
+    lock_path = evidence_root / ".release-evidence.lock"
+    lock_path.write_bytes(b"")
+    monkeypatch.setattr(release_collector, "_store_collection_watermark", store_watermark)
+    monkeypatch.setattr(release_collector, "collect_release_evidence", lambda *_args: complete_b)
+
+    assert collector_main(["--source-commit", source_b]) == 0
+    assert capsys.readouterr().out.startswith("Release evidence: PENDING (")
+    assert lock_path.read_bytes() == b""
+    assert reader_a.list_receipts() == ()
 
 
 def test_unavailable_pending_marker_never_reports_a_new_pass(
