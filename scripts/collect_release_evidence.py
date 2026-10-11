@@ -16,6 +16,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
+from finance_research_agent.adapters.shadow_evidence import (
+    _release_collection_watermark_path,
+    _ReleaseCollectionWatermark,
+)
+from finance_research_agent.domain.types import canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
     ReleaseCheckConclusion,
     ReleaseCheckId,
@@ -550,6 +555,59 @@ def _store_receipts(collection: ReleaseCollection) -> Path:
     return destination
 
 
+def _store_collection_watermark(
+    collection: ReleaseCollection,
+    *,
+    status: Literal["PASS", "FAIL", "PENDING"],
+) -> Path:
+    first_receipt = collection.receipts[0] if collection.receipts else None
+    if status != "PENDING" and (
+        first_receipt is None or collection.actions_run_id is None or collection.run_attempt is None
+    ):
+        raise CollectionUnavailable("release result lacks exact-head receipt identity")
+    watermark = _ReleaseCollectionWatermark(
+        source_commit_sha256=collection.source.commit_sha256,
+        source_tree_sha256=collection.source.tree_sha256,
+        repository_id=first_receipt.repository_id if first_receipt is not None else None,
+        workflow_id=first_receipt.workflow_id if first_receipt is not None else None,
+        actions_run_id=collection.actions_run_id,
+        run_attempt=collection.run_attempt,
+        status=status,
+    )
+    payload = canonical_bytes(watermark)
+    root = _evaluation_root()
+    destination = _release_collection_watermark_path(
+        root,
+        collection.source.commit_sha256,
+        collection.source.tree_sha256,
+    )
+    if destination.is_symlink():
+        raise CollectionUnavailable("release status destination is unsafe")
+    try:
+        destination.unlink(missing_ok=True)
+        _fsync_directory(root)
+    except OSError as exc:
+        raise CollectionUnavailable("could not invalidate previous private release status") from exc
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".release-status-", suffix=".tmp", dir=root
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        _fsync_directory(root)
+    except OSError as exc:
+        raise CollectionUnavailable("could not store private release status") from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -568,12 +626,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Release evidence: PENDING (source identity is unavailable)")
         return 0
 
-    if collection.receipts:
-        try:
+    try:
+        _store_collection_watermark(collection, status="PENDING")
+        if collection.receipts:
             _store_receipts(collection)
-        except (CollectionUnavailable, OSError, ValueError):
-            print("Release evidence: PENDING (private receipt storage is unavailable)")
-            return 0
+        if collection.status != "PENDING":
+            _store_collection_watermark(collection, status=collection.status)
+    except (CollectionUnavailable, OSError, ValueError):
+        print("Release evidence: PENDING (private receipt storage is unavailable)")
+        return 0
 
     if collection.status == "FAIL":
         failed = sum(

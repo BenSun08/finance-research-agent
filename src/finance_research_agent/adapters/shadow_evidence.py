@@ -8,16 +8,16 @@ import re
 import stat
 import tempfile
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import PositiveInt, TypeAdapter, ValidationError
 
 from finance_research_agent.application.ports import (
     FeedbackRepository,
     ReleaseEvidenceReader,
     RunRepository,
 )
-from finance_research_agent.domain.models import Identifier, Sha256
+from finance_research_agent.domain.models import Identifier, Sha256, StrictModel
 from finance_research_agent.domain.types import canonical_bytes
 from finance_research_agent.evaluation.shadow_records import (
     OperatorReleaseAttestation,
@@ -31,6 +31,18 @@ _RELEASE_RECEIPTS_ADAPTER = TypeAdapter(tuple[ReleaseCheckReceipt, ...])
 _RELEASE_BATCH_NAME = re.compile(
     r"^release-checks-([0-9a-f]{64})-([0-9a-f]{64})-([1-9][0-9]*)-([1-9][0-9]*)\.json$"
 )
+
+
+class _ReleaseCollectionWatermark(StrictModel):
+    """Private pointer to the latest collection result for one exact source."""
+
+    source_commit_sha256: Sha256
+    source_tree_sha256: Sha256
+    repository_id: Identifier | None = None
+    workflow_id: Identifier | None = None
+    actions_run_id: Identifier | None = None
+    run_attempt: PositiveInt | None = None
+    status: Literal["PASS", "FAIL", "PENDING"]
 
 
 class FileSystemShadowObservationRepository:
@@ -117,25 +129,30 @@ class FileSystemReleaseEvidenceReader(ReleaseEvidenceReader):
     def list_receipts(self) -> tuple[ReleaseCheckReceipt, ...]:
         if not _private_directory_available_or_missing(self._root):
             return ()
-        candidates = tuple(
-            (path, _release_batch_filename_parts(path))
-            for path in sorted(self._root.glob("release-checks-*.json"), key=lambda item: item.name)
+        watermark_path = _release_collection_watermark_path(
+            self._root,
+            self._source_commit_sha256,
+            self._source_tree_sha256,
         )
-        if not candidates:
+        if not watermark_path.exists() and not watermark_path.is_symlink():
             return ()
-        matching_source = tuple(
-            (path, parts)
-            for path, parts in candidates
-            if parts[0] == self._source_commit_sha256 and parts[1] == self._source_tree_sha256
+        watermark = _read_release_collection_watermark(
+            watermark_path,
+            source_commit_sha256=self._source_commit_sha256,
+            source_tree_sha256=self._source_tree_sha256,
+            repository_id=self._repository_id,
+            workflow_id=self._workflow_id,
         )
-        if not matching_source:
+        if watermark.status == "PENDING":
             return ()
-        latest_order = max((int(parts[2]), int(parts[3])) for _path, parts in matching_source)
-        latest = next(
-            path
-            for path, parts in matching_source
-            if (int(parts[2]), int(parts[3])) == latest_order
+        if watermark.actions_run_id is None or watermark.run_attempt is None:
+            raise ValueError("release evidence watermark is malformed")
+        latest = self._root / (
+            f"release-checks-{self._source_commit_sha256}-{self._source_tree_sha256}-"
+            f"{watermark.actions_run_id}-{watermark.run_attempt}.json"
         )
+        if not latest.exists() and not latest.is_symlink():
+            return ()
         return _read_release_batch(
             latest,
             repository_id=self._repository_id,
@@ -244,6 +261,49 @@ def _private_directory_available_or_missing(root: Path) -> bool:
     if not root.is_dir() or stat.S_IMODE(root.stat().st_mode) & 0o077:
         raise ValueError("release evidence root must be a private local directory")
     return True
+
+
+def _release_collection_watermark_path(
+    root: Path, source_commit_sha256: str, source_tree_sha256: str
+) -> Path:
+    return root / f"release-status-{source_commit_sha256}-{source_tree_sha256}.json"
+
+
+def _read_release_collection_watermark(
+    path: Path,
+    *,
+    source_commit_sha256: str,
+    source_tree_sha256: str,
+    repository_id: str,
+    workflow_id: str,
+) -> _ReleaseCollectionWatermark:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("release evidence watermark must be a regular local file")
+    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+        raise ValueError("release evidence watermark must be private")
+    try:
+        payload = path.read_bytes()
+        watermark = _ReleaseCollectionWatermark.model_validate_json(payload, strict=True)
+    except (OSError, ValueError) as exc:
+        raise ValueError("release evidence watermark is malformed") from exc
+    if payload != canonical_bytes(watermark):
+        raise ValueError("release evidence watermark is not in canonical form")
+    if (
+        watermark.source_commit_sha256 != source_commit_sha256
+        or watermark.source_tree_sha256 != source_tree_sha256
+    ):
+        raise ValueError("release evidence watermark does not match its source")
+    if (watermark.repository_id is not None and watermark.repository_id != repository_id) or (
+        watermark.workflow_id is not None and watermark.workflow_id != workflow_id
+    ):
+        raise ValueError(
+            "release evidence watermark does not match the configured repository and workflow"
+        )
+    if watermark.status != "PENDING" and (
+        watermark.repository_id is None or watermark.workflow_id is None
+    ):
+        raise ValueError("release evidence watermark is malformed")
+    return watermark
 
 
 def _read_release_batch(

@@ -119,6 +119,39 @@ def _release_reader(
     )
 
 
+def _write_release_watermark(
+    root: Path,
+    *,
+    source_commit_sha256: str = _SOURCE_COMMIT_SHA256,
+    source_tree_sha256: str = _SOURCE_TREE_SHA256,
+    repository_id: str | None = _REPOSITORY_ID,
+    workflow_id: str | None = _WORKFLOW_ID,
+    actions_run_id: str | None = "123",
+    run_attempt: int | None = 1,
+    status: str = "PASS",
+) -> Path:
+    path = root / f"release-status-{source_commit_sha256}-{source_tree_sha256}.json"
+    payload = json.dumps(
+        {
+            "schema_version": "0.1",
+            "source_commit_sha256": source_commit_sha256,
+            "source_tree_sha256": source_tree_sha256,
+            "repository_id": repository_id,
+            "workflow_id": workflow_id,
+            "actions_run_id": actions_run_id,
+            "run_attempt": run_attempt,
+            "status": status,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    path.write_bytes(payload)
+    path.chmod(0o600)
+    return path
+
+
 def _write_release_receipt_batch(root: Path, receipts: tuple[ReleaseCheckReceipt, ...]) -> Path:
     first = receipts[0]
     attempt = first.actions_step_id.split(":", maxsplit=1)[0]
@@ -135,6 +168,13 @@ def _write_release_receipt_batch(root: Path, receipts: tuple[ReleaseCheckReceipt
     ).encode("utf-8")
     path.write_bytes(payload)
     path.chmod(0o600)
+    _write_release_watermark(
+        root,
+        source_commit_sha256=first.source_commit_sha256,
+        source_tree_sha256=first.source_tree_sha256,
+        actions_run_id=first.actions_run_id,
+        run_attempt=int(attempt),
+    )
     return path
 
 
@@ -336,6 +376,149 @@ def test_release_evidence_reader_returns_empty_when_requested_source_is_absent(
     assert _release_reader(root).list_receipts() == ()
 
 
+def test_release_evidence_reader_ignores_retained_receipts_without_a_current_watermark(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    receipt = _release_receipt()
+    _write_release_receipt_batch(root, (receipt,))
+    (root / f"release-status-{_SOURCE_COMMIT_SHA256}-{_SOURCE_TREE_SHA256}.json").unlink()
+
+    assert _release_reader(root).list_receipts() == ()
+
+
+def test_release_evidence_reader_uses_pending_watermark_over_retained_receipts(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_receipt_batch(root, (_release_receipt(),))
+    _write_release_watermark(
+        root,
+        repository_id=None,
+        workflow_id=None,
+        actions_run_id=None,
+        run_attempt=None,
+        status="PENDING",
+    )
+
+    assert _release_reader(root).list_receipts() == ()
+
+
+def test_release_evidence_reader_rejects_a_watermark_for_another_source_or_workflow(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    watermark_path = _write_release_watermark(root, workflow_id="102")
+
+    with pytest.raises(ValueError, match="configured repository and workflow"):
+        _release_reader(root).list_receipts()
+
+    watermark = json.loads(watermark_path.read_bytes())
+    watermark["workflow_id"] = _WORKFLOW_ID
+    watermark["source_commit_sha256"] = "f" * 64
+    watermark_path.write_bytes(
+        json.dumps(
+            watermark,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    )
+    with pytest.raises(ValueError, match="does not match its source"):
+        _release_reader(root).list_receipts()
+
+
+def test_release_evidence_reader_requires_a_complete_pass_watermark(tmp_path: Path) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_watermark(
+        root,
+        repository_id=None,
+        workflow_id=None,
+        actions_run_id=None,
+        run_attempt=None,
+    )
+
+    with pytest.raises(ValueError, match="watermark is malformed"):
+        _release_reader(root).list_receipts()
+
+
+def test_release_evidence_reader_rejects_pass_watermark_without_run_identity(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_watermark(root, actions_run_id=None, run_attempt=None)
+
+    with pytest.raises(ValueError, match="watermark is malformed"):
+        _release_reader(root).list_receipts()
+
+
+def test_release_evidence_reader_returns_empty_when_watermark_batch_is_missing(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    _write_release_watermark(root, actions_run_id="999")
+
+    assert _release_reader(root).list_receipts() == ()
+
+
+def test_release_evidence_reader_rejects_permissive_symlink_and_malformed_watermarks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "release-evidence"
+    root.mkdir(mode=0o700)
+    root.chmod(0o700)
+    watermark = _write_release_watermark(root)
+
+    watermark.chmod(0o644)
+    with pytest.raises(ValueError, match="watermark must be private"):
+        _release_reader(root).list_receipts()
+    watermark.chmod(0o600)
+
+    real_status = tmp_path / "real-status.json"
+    real_status.write_bytes(watermark.read_bytes())
+    watermark.unlink()
+    watermark.symlink_to(real_status)
+    with pytest.raises(ValueError, match="watermark must be a regular local file"):
+        _release_reader(root).list_receipts()
+    watermark.unlink()
+
+    watermark.write_bytes(b"{malformed}")
+    watermark.chmod(0o600)
+    with pytest.raises(ValueError, match="watermark is malformed"):
+        _release_reader(root).list_receipts()
+
+    _write_release_watermark(root)
+    watermark.write_bytes(b" " + watermark.read_bytes())
+    with pytest.raises(ValueError, match="watermark is not in canonical form"):
+        _release_reader(root).list_receipts()
+
+    _write_release_watermark(root)
+    read_bytes = Path.read_bytes
+
+    def fail_watermark_read(source: Path) -> bytes:
+        if source == watermark:
+            raise PermissionError("private status")
+        return read_bytes(source)
+
+    monkeypatch.setattr(Path, "read_bytes", fail_watermark_read)
+    with pytest.raises(ValueError, match="watermark is malformed"):
+        _release_reader(root).list_receipts()
+
+
 def test_release_evidence_reader_rejects_invalid_source_hash_configuration(
     tmp_path: Path,
 ) -> None:
@@ -435,6 +618,13 @@ def test_release_evidence_reader_rejects_an_empty_collector_batch(tmp_path: Path
     )
     path.write_bytes(b"[]")
     path.chmod(0o600)
+    _write_release_watermark(
+        root,
+        source_commit_sha256=receipt.source_commit_sha256,
+        source_tree_sha256=receipt.source_tree_sha256,
+        actions_run_id=receipt.actions_run_id,
+        run_attempt=1,
+    )
 
     with pytest.raises(ValueError, match="must contain at least one receipt"):
         _release_reader(root).list_receipts()
@@ -476,6 +666,13 @@ def test_release_evidence_reader_binds_receipt_identity_to_batch_filename(
     ).encode("utf-8")
     path.write_bytes(batch)
     path.chmod(0o600)
+    _write_release_watermark(
+        root,
+        source_commit_sha256="f" * 64,
+        source_tree_sha256=receipt.source_tree_sha256,
+        actions_run_id=receipt.actions_run_id,
+        run_attempt=1,
+    )
 
     with pytest.raises(ValueError, match="does not match its batch identity"):
         _release_reader(
@@ -522,6 +719,13 @@ def test_release_evidence_reader_rejects_symlink_roots_and_batches(tmp_path: Pat
     root_batch.chmod(0o700)
     batch_link = root_batch / real_batch.name
     batch_link.symlink_to(real_batch)
+    _write_release_watermark(
+        root_batch,
+        source_commit_sha256=receipt.source_commit_sha256,
+        source_tree_sha256=receipt.source_tree_sha256,
+        actions_run_id=receipt.actions_run_id,
+        run_attempt=1,
+    )
     with pytest.raises(ValueError, match="regular local file"):
         _release_reader(root_batch).list_receipts()
 
@@ -535,8 +739,7 @@ def test_release_evidence_reader_rejects_invalid_names_and_nonfile_batches(
     invalid_name = root / "release-checks-invalid.json"
     invalid_name.write_bytes(b"[]")
     invalid_name.chmod(0o600)
-    with pytest.raises(ValueError, match="filename is invalid"):
-        _release_reader(root).list_receipts()
+    assert _release_reader(root).list_receipts() == ()
 
     invalid_name.unlink()
     receipt = _release_receipt()
@@ -545,6 +748,13 @@ def test_release_evidence_reader_rejects_invalid_names_and_nonfile_batches(
         f"{receipt.actions_run_id}-1.json"
     )
     batch_directory.mkdir(mode=0o700)
+    _write_release_watermark(
+        root,
+        source_commit_sha256=receipt.source_commit_sha256,
+        source_tree_sha256=receipt.source_tree_sha256,
+        actions_run_id=receipt.actions_run_id,
+        run_attempt=1,
+    )
     with pytest.raises(ValueError, match="regular local file"):
         _release_reader(root).list_receipts()
 
