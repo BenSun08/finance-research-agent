@@ -1,14 +1,48 @@
-# Release readiness and operator checks
+# Operations and Release Evidence
 
-This guide describes the checked-in R11 release gates and the bounded local
-checks around them. The authoritative commands and named CI steps are in
-[`ci.yml`](../../.github/workflows/ci.yml); this page explains how to interpret
-their evidence and what remains a human action.
+This document owns operational procedures for the current research profile.
+Target simulated-account operations will be added only as they are implemented;
+see [tasks](tasks.md). Use [quickstart](quickstart.md#product-a-stdio-server) for
+installation and process configuration and [contracts](contracts.md) for behavior.
 
-**Schedule activation remains PAUSED.** A green CI run proves only the approved
-current source-scope checks for its exact commit. It does not claim full-source
-conformance, personal release readiness, or shadow graduation. Missing personal
-evidence stays `PENDING`; synthetic fixtures cannot satisfy personal-day gates.
+Schedule activation remains PAUSED. Packaging and offline checks do not install
+or enable a desktop plugin, activate a task, establish Work connectivity, or
+satisfy elapsed personal shadow evidence. Current research still requires human
+review. This is distinct from the future, manually started simulated-trading
+cycle approved in the specification.
+
+## Saved task prompt
+
+Status: PAUSED. This retained prompt applies only to the existing research skill.
+
+> Invoke the [premarket-research skill](../skills/premarket-research/SKILL.md)
+> for the requested Product A run. Preserve frozen evidence and deterministic truth.
+> Report stored publication, reduced, or blocked outcomes with limitations.
+> Require human review; no execution is authorized.
+
+The [canonical workflow](../skills/premarket-research/references/workflow-contract.yaml)
+owns operation order and branches. A saved prompt must not duplicate that sequence
+or let evidence select new operations/resources. An installed-host initialize,
+discovery and supervised synthetic-workflow smoke is required before separately
+approved activation; this document does not activate anything.
+
+## Recovery
+
+Return existing published runs from their immutable artifacts. Resume a frozen
+packet with original identity, cutoff, evidence and component versions, without
+provider refresh. A new revision is distinct from recovery. Report missing or
+corrupt artifacts and version drift; do not choose older output as silent fallback.
+Operational failures retain stable reasons and affected capabilities. Follow
+[the preparation contract](contracts.md#preparation-persistence-and-recovery)
+for missed windows, deadlines, lease ownership and atomic publication.
+
+## Interpreting readiness
+
+Current-source conformance, supervised-shadow readiness, full-source conformance
+and shadow graduation are separate statuses. Existing full-source conformance
+is DEFERRED until a separately approved source expansion. Missing exact-version
+CI, installed-host, live-smoke or personal evidence is PENDING. Passing current
+Alpaca/calendar tests cannot prove full-source research or trading performance.
 
 ## CI release gates
 
@@ -153,28 +187,65 @@ It requires explicit Alpaca credentials, an XNYS trading day, and the 04:00 to
 09:30 Eastern premarket window. It resolves the last two completed calendar
 sessions at runtime, validates the fixed market-data-only source policy before
 constructing the HTTP client, and reads IEX data for `SPY`. Default CI excludes
-live tests and this migration does not run the smoke. Its personal operator
+live tests and documentation consolidation does not run the smoke. Its personal operator
 result remains `PENDING` until an authorized operator opts in and records the
 actual outcome. No current R11 result activates scheduling or authorizes a
 trade.
+## Existing research evaluation contract
 
-## Compatibility consumers retained
+The exact scenario/failure catalogs are in
+[scenarios](../src/finance_research_agent/evaluation/scenarios.py) and the
+[harness](../src/finance_research_agent/evaluation/harness.py): 25 scenarios,
+16 fault injections and 14 failure-matrix rows. Distinguish source-independent
+domain assertions from current-source operational outcomes. UNKNOWN regime must
+carry unavailable capability and missing-component disclosure, not a usable
+classification claim. Capital, risk percentages, position caps, heat, reward-risk,
+lifetime/freshness and request budgets come from frozen policies, never invented
+universal defaults.
 
-The compatibility inventory combines an AST `ImportFrom` scan over `src`,
-`tests`, `examples`, and Python files under `docs` with targeted `rg` searches
-over those paths, `README.md`, and each module's declared exports. There is no
-tracked `examples/` tree. The inventory shows these supported consumers:
+Only loader-verified records with exact IDs and canonical digests can establish
+readiness. Without verified evidence all scorecard gates are PENDING. Corrections
+are append-only and keep prior adverse records. The current research scorecard
+has these obligations:
 
-| API or export | Evidence from source, tests, docs, and exports | Decision |
-| --- | --- | --- |
-| `domain.market.MarketSnapshot` legacy alias to `RegimeMarketSnapshot` | Exported by the historical domain module; used by the historical-bars bridge and characterization, bridge, regime-workflow, synthetic-fixture, and regime tests. The characterization test records the import path explicitly. | Retain; keep distinct from canonical `domain.models.MarketSnapshot`. |
-| `domain.models.MarketSnapshot` canonical Product A model | Used by collection/market bridges, packet and prior-research services, domain eligibility/setup code, schema export, and evaluation assertions; covered by application, adapter, contract, and unit tests. | Retain as the current typed market model. |
-| `market_data.to_market_snapshot` | Exported from `market_data` and `historical`; called by adapter and unit tests, listed in the characterization surface, and documented in the README. `application/regime_workflow.py` has its own standalone projection function with the same name. | Retain the exported historical projection and both workflow bridges. |
-| `application.HistoricalBarsFetcher` and `application.run_regime_research` | Exported from `application`; the research service consumes the port. Application parity and characterization tests exercise the fetcher/client seam; README documents the port. | Retain the provider-neutral port and standalone historical workflow. |
-| `adapters.alpaca_historical.AlpacaHistoricalBarsClient` | Declared in the adapter's `__all__`; used by application parity and characterization tests and its dedicated adapter test module. | Retain the market-data-only historical client. |
-| `agent.AgentRuntime` | Exported by `agent`; directly exercised by `tests/agent/test_runtime.py` and documented throughout the README. No Product A service depends on it. | Retain the explicitly supported generic runtime foundation. |
-| `evals.evaluate_regime_case(s)`, `evals.run_regime_benchmark`, replay APIs | Exported by `evals`; used by the standalone benchmark and walk-forward modules, their evaluation tests, and README examples/reference sections. | Retain the standalone deterministic evaluation APIs. |
+| Gate | Evidence/decision rule |
+| --- | --- |
+| AT_LEAST_TWENTY_TRADING_DAYS | At least 20 distinct actual personal dates; synthetic days never qualify; 19 valid days is PENDING |
+| SAFETY | Complete daily safety observations and evidence of no prohibited behavior; missing coverage is PENDING, demonstrated violation FAIL |
+| DETERMINISTIC_CORRECTNESS | Exact numerical/provenance validation and verified release/replay checks; never count model prose as correctness |
+| EVIDENCE | Relevant material claims and metrics supported, limitations/conflicts visible, no post-cutoff evidence, completed human citation samples |
+| TIMELY_PUBLICATION | Target-window research dates / eligible online days >=0.95; missing/UNKNOWN dates remain in denominator |
+| NORMAL_PROVIDER_DURATION | Nearest-rank p95 at sorted index ceil(.95*n)-1 <=900 seconds, invocation through original publication receipt or terminal durable checkpoint, including host wait |
+| FAILURE_OPERATIONS | Observed failures have stable code, status, affected capability and actionable recovery; unknown coverage PENDING |
+| REVIEW_TIME | Median executive <=180 seconds and detailed <=900 seconds; even median averages middle values; incomplete reviews PENDING |
+| EXECUTIVE_IDENTIFICATION | Daily observations correctly identify posture/events/priorities/disabled capabilities, including unavailable events |
+| USEFULNESS | Average selected daily score >=4/5, or the specifically permitted bounded English corrective-work record with issue/action/validation evidence |
 
-No API removal is supported by this evidence. Internal test references are
-reported separately from application consumers; the characterization suite
-also protects the declared public import surface.
+Only operator-attested host/computer unavailability or total local-network outage
+can exclude an otherwise eligible day. Provider/config/software failures and
+missing or operational-only output stay in the denominator. Select the earliest
+verified daily research publication and earliest complete daily feedback to avoid
+duplicate weighting; later adverse/unreviewed revisions remain visible to safety
+and evidence checks. Missing terminal times cannot be replaced by summed stage
+telemetry; no normal-provider samples means PENDING.
+
+Citation review selects at most five material claims, covering claim kinds and
+authority tiers where feasible with SHA-256 tie-breaks. Material claims cannot
+have an empty sample. Missing reviews are PENDING; material PARTIAL/UNSUPPORTED
+fails evidence until a qualifying correction. Old boolean reviews remain readable
+but incomplete. See [citation sampling](../src/finance_research_agent/evaluation/citation_sampling.py)
+and [scorecard](../src/finance_research_agent/evaluation/shadow_scorecard.py) for
+exact validated rubrics and formulas.
+
+All required gates are conjunctive: FAIL dominates PENDING, then PASS. Keep
+failed_gate_ids separate from pending_gate_ids. The usefulness exception applies
+only to that gate. MigrationReadiness separately records PASS/FAIL/PENDING/DEFERRED
+for current-scope conformance, supervised-shadow readiness, full-source conformance
+and shadow graduation. Operator attestations, release receipts and elapsed
+personal observations are different evidence classes. Independent review/merge
+are process evidence, not runtime-inferred facts.
+
+Aggregate existing plan observations, MFE/MAE, expiry/block reasons, setup/regime
+distribution and no-draft days without relabeling them as fills or realized returns.
+The future simulated-portfolio scorecard must use a distinct version and its
+approved ledger/baseline semantics; see [RQ-04](research.md#rq-04-evaluation-policy).

@@ -175,15 +175,41 @@ def validate_configuration_examples(root: Path) -> tuple[str, ...]:
     return tuple(errors)
 
 
+def _documentation_section(text: str, heading: str) -> str:
+    """Read one required section without treating other categories as its contract."""
+    marker = f"{heading}\n"
+    _, found, rest = text.partition(marker)
+    if not found:
+        return ""
+    level = len(heading) - len(heading.lstrip("#"))
+    return re.split(rf"^#{{1,{level}}} ", rest, maxsplit=1, flags=re.MULTILINE)[0]
+
+
 def validate_documentation(root: Path) -> tuple[str, ...]:
     errors = []
     documents = (
         root / "README.md",
         root / "skills/README.md",
-        root / "docs/architecture/v0.1-boundaries.md",
-        root / "docs/operations/scheduling-and-recovery.md",
-        root / "docs/operations/release-readiness.md",
+        root / "AGENTS.md",
+        *(
+            root / "docs" / name
+            for name in (
+                "constitution.md",
+                "spec.md",
+                "plan.md",
+                "tasks.md",
+                "research.md",
+                "data-model.md",
+                "contracts.md",
+                "quickstart.md",
+                "checklist.md",
+                "operations.md",
+            )
+        ),
     )
+    for path in sorted((root / "docs").rglob("*.md")):
+        if path not in documents:
+            errors.append(f"noncanonical documentation: {path.relative_to(root)}")
     for path in documents:
         if not path.is_file():
             errors.append(f"missing documentation: {path.relative_to(root)}")
@@ -208,15 +234,17 @@ def validate_documentation(root: Path) -> tuple[str, ...]:
                 }
                 if anchor not in anchors:
                     errors.append(f"missing internal heading: {target}")
-    index = documents[1]
+    index = root / "skills/README.md"
     if index.is_file() and any(
         line and not line.startswith(("# ", "- ["))
         for line in index.read_text(encoding="utf-8").splitlines()
     ):
         errors.append("skills README must be a link index only")
-    architecture = documents[2]
+    architecture = root / "docs/contracts.md"
     if architecture.is_file():
-        text = architecture.read_text(encoding="utf-8")
+        text = _documentation_section(
+            architecture.read_text(encoding="utf-8"), "### Current authority hierarchy"
+        )
         authorities = (
             "Approved Product A specification",
             "Python typed domain",
@@ -233,9 +261,9 @@ def validate_documentation(root: Path) -> tuple[str, ...]:
             errors.append("architecture must state the canonical authority hierarchy in order")
         if "does not rewrite history" not in text:
             errors.append("architecture must preserve frozen historical authority")
-    schedule = documents[3]
+    schedule = root / "docs/operations.md"
     if schedule.is_file():
-        text = schedule.read_text(encoding="utf-8")
+        text = _documentation_section(schedule.read_text(encoding="utf-8"), "## Saved task prompt")
         for required in (
             "PAUSED",
             "premarket-research",
@@ -248,7 +276,7 @@ def validate_documentation(root: Path) -> tuple[str, ...]:
                 errors.append(f"schedule documentation missing {required}")
         if any(name in text for name in OPERATION_NAMES):
             errors.append("saved scheduling prompt must not duplicate MCP operation order")
-    release = documents[4]
+    release = root / "docs/operations.md"
     if release.is_file():
         text = release.read_text(encoding="utf-8")
         release_facts = (

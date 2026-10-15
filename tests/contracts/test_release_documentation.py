@@ -13,32 +13,51 @@ def _copy_docs_root(root: Path) -> Path:
     copytree(ROOT / "docs", root / "docs")
     copytree(ROOT / "src", root / "src")
     copytree(ROOT / "config", root / "config")
+    copytree(ROOT / ".github", root / ".github")
+    (root / "AGENTS.md").write_text((ROOT / "AGENTS.md").read_text())
+    (root / "pyproject.toml").write_text((ROOT / "pyproject.toml").read_text())
+    copytree(ROOT / "tests/agent", root / "tests/agent")
     (root / "README.md").write_text((ROOT / "README.md").read_text())
     return root
 
 
 def test_release_readiness_documentation_is_required(tmp_path: Path) -> None:
     root = _copy_docs_root(tmp_path)
-    release_readiness = root / "docs/operations/release-readiness.md"
+    release_readiness = root / "docs/operations.md"
     release_readiness.unlink()
 
     errors = validate_documentation(root)
 
-    assert any(
-        "missing documentation" in error and "release-readiness.md" in error for error in errors
+    assert any("missing documentation" in error and "operations.md" in error for error in errors)
+
+
+def test_parallel_plan_copy_is_rejected(tmp_path: Path) -> None:
+    root = _copy_docs_root(tmp_path)
+    (root / "docs/plan-v2.md").write_text("# Competing plan\n")
+
+    assert "noncanonical documentation: docs/plan-v2.md" in validate_documentation(root)
+
+
+def test_operation_names_are_forbidden_only_in_saved_task_prompt(tmp_path: Path) -> None:
+    root = _copy_docs_root(tmp_path)
+    operations = root / "docs/operations.md"
+    operations.write_text(operations.read_text() + "\n## Diagnostic reference\nget_system_status\n")
+    assert validate_documentation(root) == ()
+
+    operations.write_text(
+        operations.read_text().replace(
+            "## Saved task prompt\n", "## Saved task prompt\n\nget_system_status\n"
+        )
+    )
+    assert (
+        "saved scheduling prompt must not duplicate MCP operation order"
+        in validate_documentation(root)
     )
 
 
 def test_release_readiness_documentation_protects_operational_facts(tmp_path: Path) -> None:
     root = _copy_docs_root(tmp_path)
-    release_readiness = root / "docs/operations/release-readiness.md"
-    release_readiness.write_text(
-        "# Release readiness\n\n"
-        "Schedule activation remains PAUSED.\n"
-        "The local doctor does not call a provider.\n"
-        "Missing exact-head CI evidence is PENDING.\n"
-    )
-
+    release_readiness = root / "docs/operations.md"
     assert validate_documentation(root) == ()
 
     release_readiness.write_text(
