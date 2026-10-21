@@ -10,6 +10,7 @@ design is not evidence of implemented behavior.
 | ID | Task | Status | Scope and evidence |
 | --- | --- | --- | --- |
 | D0 | Consolidate approved redesign and repository documentation | COMPLETE | Ten English canonical documents, reference/checker migration, 24 legacy documents and two tracked task reports consolidated; local verification below |
+| D0a | Clarify material product ambiguities and shorten project instructions | COMPLETE | Fifteen accepted clarifications recorded in spec across three five-question passes, completed on 2026-10-22. Canonical references and concise AGENTS.md reviewed; final local checks below passed. No further material product clarification is needed before planning. Technical research and all seven implementation-readiness gates remain open. |
 
 D0 contains no production implementation. Existing source, schemas, runtime
 skills, workflow, prompts, dependencies and package version must remain unchanged.
@@ -78,3 +79,104 @@ These results establish local documentation-delivery verification. They do not
 establish remote CI, installed Work integration, live-source smoke, simulated
 trading, or personal shadow graduation. The user authorized a local commit;
 remote publication and subsequent implementation are outside D0.
+
+D0a clarification verification on 2026-10-19: 58 documentation/workflow pytest
+tests passed under the offline network guard; Ruff, mypy (104 source files),
+schema export, documentation/link checks and whitespace checks passed. This pass
+did not rerun the full suite or establish remote CI, installed-host, live-source
+or simulated-trading evidence. The six changed tracked files are documentation
+only; the pre-existing untracked Spec Kit installation is untouched.
+
+The first pass asked and answered five questions, with five clarification records
+and only the permitted new spec headings. The canonical checklist remains 16/23
+checked, with no newly passing items or regressions; all seven implementation
+readiness gates remain open. No clarification extension hooks are configured.
+
+The first pass is complete. The user requested a second pass on 2026-10-19,
+covering remaining simulation behavior followed by evaluation policy. Its first
+two answers, accepted on 2026-10-20, define daily-data stops and single-opening,
+full-quantity ordinary orders in FR-06, including unresolved historical data.
+Its third answer, accepted on 2026-10-21, adds ordinary split/cash-dividend
+accounting with raw execution/valuation prices and unresolved-event handling.
+Its fourth answer, accepted on 2026-10-21, selects cash and equal-weight
+buy-and-hold benchmarks, with a separate trading-strategy benchmark deferred.
+Its fifth answer, accepted on 2026-10-21, preserves missing valuation dates and
+coverage, makes availability depend on each metric's required inputs, and creates
+a new evaluation revision when data is recovered. This completes the second
+five-question pass; ten distinct answers are recorded across both passes.
+At the end of the second pass, remaining [simulation](research.md#rq-03-simulation-semantics)
+and [evaluation](research.md#rq-04-evaluation-policy) decisions included simultaneous
+ordinary exit/stop ordering, cancellation/replacement behavior, cost-basis and
+valuation conventions, and evaluation formulas/observation intervals. These could
+change fills or reported results, so the conditional local commit was withheld
+at that stage. The third pass below addresses those remaining product choices.
+
+Second-pass verification on 2026-10-21: all 58 documentation/workflow pytest
+tests passed under the offline network guard. Ruff, mypy (104 source files),
+schema export, documentation/link checks and whitespace checks passed. Final
+diff review confirmed six tracked Markdown files changed, with no production,
+schema, dependency or version changes. Structural checks confirmed ten unique
+clarification records, five per invoked pass, and only the permitted new spec
+headings. The canonical checklist remains 16/23 checked, with no newly passing
+items or regressions; all seven implementation-readiness gates remain open.
+No clarification extension hooks are configured. The full suite was not rerun;
+these checks establish no remote CI, installed-host, live-source or simulated-
+trading evidence.
+
+The user requested a third pass on 2026-10-21, focused on the remaining execution,
+accounting and evaluation definitions before planning. Its first answer, accepted
+on 2026-10-22, gives an opening-triggered protective stop priority over an
+overlapping ordinary sell, with one full-position stop fill and a superseded
+ordinary order. A stop triggered only later by the daily low applies to shares
+remaining after opening sells. FR-06, the data model and RQ-03 are aligned.
+Its second answer, accepted on 2026-10-22, keeps the original instruction active
+when replacement validation fails and applies a successful replacement together
+with the original's cancellation. Ordinary changes must precede the intended
+opening; protective-stop changes preserve protection until their future effective
+session. Explicit cancel-only requests retain timing and safety checks. FR-06,
+the data model and RQ-03 are aligned.
+Its third answer, accepted on 2026-10-22, selects weighted-average position cost,
+including purchase fees in acquisition cost and deducting sale fees from proceeds,
+with no duplicate slippage deduction and separate ordinary-dividend income.
+FR-06 includes the approved arithmetic example; the data model and RQ-03 are
+aligned.
+Its fourth answer, accepted on 2026-10-22, selects every regular session's closing
+valuation, including sessions without agent activity and catch-up. Equity includes
+settled cash, unsettled sale proceeds, outstanding dividend receivables and shares
+marked at unadjusted closing prices; unrealized trading results deduct remaining
+acquisition cost. FR-06/FR-09, the data model and research references are aligned,
+with identical benchmark observation dates and an explicit daily closing drawdown
+label.
+Its fifth answer, accepted on 2026-10-22, fixes each evaluation's initial funding,
+excludes later external deposits/withdrawals, and defines cumulative/daily returns
+and maximum daily closing drawdown. A capital change starts an independent
+portfolio/evaluation while data recovery creates a linked revision of the existing
+evaluation. FR-01/FR-09, the data model and RQ-04 are aligned. All five questions
+in this pass are answered.
+
+Final D0a review and verification on 2026-10-22: 58 documentation/workflow pytest
+tests passed under the offline network guard; Ruff, mypy (104 source files),
+schema export, documentation/link checks, whitespace checks and the tracked-file
+secret scan passed. Arithmetic spot-checks confirmed the weighted-average example
+and the initial-capital return/drawdown definitions. Structural checks confirmed
+15 unique clarification records, five per invoked pass, and only permitted new
+spec headings. The final diff contains six tracked Markdown files; production
+code, tests, schemas, dependencies, runtime skills and package version are unchanged.
+The pre-existing untracked Spec Kit installation is excluded from this delivery.
+
+The consistency review scoped the old same-session-fill prohibition to ordinary
+orders, preserving the approved same-day protective stop, and made approved split
+adjustments explicit in execution quantities. No further material product question
+blocks planning. Detailed event schedules, numerical precision/rounding, versioned
+contracts and fixtures, auxiliary scorecard metrics, and actual host/source/budget
+evidence remain in T01–T05 and RQ-01–RQ-05. These are technical design and readiness
+work; this clarification completion does not close those gates.
+
+The canonical checklist remains 16/23 checked, with no newly passing items or
+regressions; all seven implementation-readiness items remain open. No clarification
+extension hooks are configured. The full test suite was not rerun in D0a; local
+documentation checks establish no remote CI, installed-host, live-source or
+simulated-trading evidence. The user's conditional authorization now permits the
+local documentation commit. Remote publication and production implementation
+remain outside this delivery. Next workflow: speckit-plan, updating canonical
+documents in place while preserving the accepted product choices.

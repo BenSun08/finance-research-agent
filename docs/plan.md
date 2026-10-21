@@ -76,9 +76,15 @@ accounting, evaluation and reflection. A report is a view of these records.
 
 The [data model](data-model.md) records lifecycle relationships; the
 [interface contract](contracts.md#target-interface-boundary) states invariants.
-Exact ordering across reconciliation, corporate actions, orders, stops and marks
-is blocked on simulation research. Paused-state semantics must be resolved before
-adding a pause control. No guessed order of events is presented as implemented.
+Simulation/accounting and evaluation policies are defined in
+[FR-06](spec.md#fr-06-simulated-execution-and-accounting) and
+[FR-09](spec.md#fr-09-evaluation). Detailed event schedules, numerical precision,
+state transitions and effective-time contracts remain work for RQ-03/RQ-04
+before implementation. Restart and pause behavior are defined in
+[FR-02](spec.md#fr-02-cadence-and-bounded-cycles) and
+[FR-08](spec.md#fr-08-dashboard-and-controls); their exact state transitions and
+effective-time rules must follow the approved behavior in those technical
+contracts. These policy approvals do not establish implemented capabilities.
 
 ## Migration strategy
 

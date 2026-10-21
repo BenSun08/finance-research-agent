@@ -18,6 +18,8 @@ can change; the actual environment spike remains required.
 | [OpenAI plugin development](https://developers.openai.com/plugins/build/plugins) | Manifest and runtime conventions evolve. Inspect the actual installed host and preserve current plugin bytes until the compatibility spike selects a reviewed integration. |
 | [Workspace-agent API trigger](https://developers.openai.com/cookbook/examples/chatgpt/workspace_agents/workspace-agents-api-trigger) | A workspace-agent API channel has its own provisioning/access contract. It is not evidence that an ordinary Work conversation can be launched as a model API or that the local dashboard can obtain a synchronous final result. |
 | [Work administration and usage](https://learn.chatgpt.com/docs/enterprise/work-admin-faq#how-does-chatgpt-work-usage-translate-into-spend-over-time) | Shared allowance/credits and account policies affect availability and spend. Treat exact per-cycle Work cost as unknown unless the environment actually exposes it. |
+| [SEC T+1 investor bulletin](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins/new-t1-settlement-cycle-what-investors-need-know-investor-bulletin) | Reviewed on 2026-10-19: applicable U.S. stock and ETF transactions settle one business day after the trade. FR-01 adopts T+1 for the simulator; restricting buy fills to settled cash is a separately approved product policy, not a claim that the bulletin mandates that restriction for every brokerage account. |
+| [SEC stock-split glossary](https://www.investor.gov/introduction-investing/investing-basics/glossary/stock-split), [dividend entitlement](https://www.investor.gov/introduction-investing/investing-basics/glossary/ex-dividend-dates-when-are-you-entitled-stock-and), [reverse splits](https://www.investor.gov/introduction-investing/investing-basics/glossary/reverse-stock-splits) | Reviewed on 2026-10-20: splits change share quantities; dividend entitlement and payment dates are distinct; reverse splits can involve cash in lieu of fractional shares. The simulator's supported-event scope, raw-price accounting and unresolved-event policy were approved on 2026-10-21 in FR-06. Verify event-specific terms rather than infer missing cash entitlements. |
 
 ## Approved decisions
 
@@ -76,13 +78,37 @@ or subscription purchase is authorized by D0. Dependent tasks: T02, T05, T07.
 
 Resolve calendar/session eligibility and authoritative order of reconciliation,
 corporate actions, pending orders, protective stops, fees, marks and decisions.
-Specify settlement/cash availability, gap and insufficient-cash behavior, order
-expiry/cancel/replace, daily-bar ambiguous sequencing, partial fills if supported,
-halts/missing bars, splits/dividends, adjusted versus raw prices, cost basis,
-realized/unrealized PnL and valuation. Decide deterministic conservative handling
-where daily data cannot reveal intraday order. Define pause and restart behavior
-for pending/protective orders. Resolve explicit numerical risk/portfolio controls;
-do not turn old analytical-sizing defaults into account policy.
+Define settlement-calendar and cash-availability transitions for the approved
+T+1 policy in [FR-01](spec.md#fr-01-instruments-and-portfolio), and arithmetic
+examples for the opening-price execution, daily-data stops and buy rejection rules
+in [FR-06](spec.md#fr-06-simulated-execution-and-accounting), including its
+single-opening/full-quantity ordinary-order policy and distinction between
+confirmed expiry and missing-data uncertainty. Derive transition and recovery
+examples for the approved replacement policy: preserve the original on validation
+failure, apply both changes together, enforce opening cutoffs despite delayed
+reconciliation, and retain protection until a stop replacement takes effect.
+Include separate cancel-only requests under the same timing and safety checks.
+Define halt/missing-bar evidence and derive closing-valuation fixtures from the
+approved FR-06 equity/unrealized-result definitions, including settlement and
+dividend components without double counting. Contract the approved
+weighted-average position-cost policy, purchase-fee capitalization, sale-fee
+deduction and separate dividend income. Define Decimal precision/rounding and
+cost-conservation examples for additions, reductions, full exits and splits;
+derive realized/unrealized results without deducting modeled slippage twice.
+Contract the approved opening-stop priority over overlapping ordinary sells,
+including supersession records and residual-position protection when only the
+later daily low triggers a stop; do not re-open that ordering choice.
+Contract the approved raw-price corporate-action policy with event-boundary
+examples for splits, dividend receivables/payments,
+fractional remainders and unsupported or incomplete events. Do not re-open the
+approved common-event scope or count corporate actions through both adjusted prices
+and ledger events.
+Preserve the approved daily-data stop assumptions and event-time precision when
+defining transitions. Translate the approved restart
+behavior in [FR-02](spec.md#fr-02-cadence-and-bounded-cycles) and pause behavior in
+[FR-08](spec.md#fr-08-dashboard-and-controls) into exact transition and effective-time
+rules for pending/protective orders. Resolve explicit numerical risk/portfolio
+controls; do not turn old analytical-sizing defaults into account policy.
 
 Exit: reviewed state tables, arithmetic examples and failure scenarios in
 data-model/contracts, including conservation/idempotency invariants. Dependent
@@ -90,13 +116,30 @@ tasks: T03, T05, T06, T08.
 
 ### RQ-04 Evaluation policy
 
-Define matched passive/simple-rule baselines, observation interval, return and
-drawdown denominators, treatment of cash/no-trade/missing days, fees/slippage,
-corporate actions and incomplete valuations. Separate engineering release gates,
+Translate the approved cash and equal-weight buy-and-hold benchmarks in
+[FR-09](spec.md#fr-09-evaluation) into frozen input and arithmetic contracts,
+including whole-share allocation, leftover cash and costs. A separate simple-rule
+trading benchmark is deferred. Contract the approved fixed-capital evaluation
+boundary and FR-09 return/drawdown formulas, including the initial-funding peak,
+consecutive scheduled-close references, nonpositive daily-return denominators
+and an independent portfolio/evaluation when starting capital changes. Build
+fixtures for cash/no-trade days, fees/slippage and corporate actions without
+double counting equity components. Use the approved regular-session closing
+observations for both agent and benchmarks, including sessions with no agent
+activity and catch-up; retain the daily closing drawdown label without implying
+intraday coverage.
+Contract the approved missing-valuation policy in FR-09: retain scheduled dates
+and coverage, define each metric's required inputs and unavailable reasons, and
+preserve prior evaluations when recovered data creates a new revision. Include
+fixtures where complete endpoint inputs permit a return metric while a missing
+required intermediate valuation prevents drawdown reporting; do not substitute
+carried-forward prices or silently remove gaps. Separate engineering release gates,
 forward observations and research hypotheses. Select measurable evidence-quality,
 operational and cost metrics. Document historical-model leakage and source
 revision limitations; no invented alpha acceptance threshold or cherry-picked
-sample. Preserve the current research shadow scorecard as a distinct version.
+sample. Specify auxiliary turnover, cost and quality-metric calculations in the
+technical scorecard design. Preserve the current research shadow scorecard as a
+distinct version.
 
 Exit: approved evaluation inputs/formulas/baselines and initial replay fixtures.
 Dependent tasks: T04, T09, T10.

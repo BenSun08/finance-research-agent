@@ -60,8 +60,10 @@ erDiagram
 ```
 
 The diagram expresses conceptual cardinalities, not final storage tables. A
-proposal can yield rejection or no trade and therefore zero orders. The exact
-single/batch proposal and fill cardinalities await [simulation decisions](research.md#rq-03-simulation-semantics).
+proposal can yield rejection or no trade and therefore zero orders. An ordinary
+order produces zero or one fill for its full quantity after approved split
+adjustments, with no partial fill or remainder carried forward. Proposal batching
+and protective-order cardinalities await [simulation decisions](research.md#rq-03-simulation-semantics).
 
 | Target entity | Required semantic content |
 | --- | --- |
@@ -74,11 +76,11 @@ single/batch proposal and fill cardinalities await [simulation decisions](resear
 | DecisionProposal | Proposed portfolio action, subject, rationale/counter-rationale, requested risk/allocation, protective intent, horizon and source analyses |
 | ValidationOutcome | Exact policy/portfolio/evidence versions, gates, deterministic numbers, accepted/rejected/no-trade status and reasons |
 | SimulatedOrder | Accepted intent, instrument/side/quantity, eligible session, order/protection semantics, policy version, lifecycle and idempotency identity |
-| SimulatedFill | Order reference, eligible market evidence, simulated price/quantity/time, fees/slippage and execution-rule version |
-| LedgerEntry | Immutable cash/quantity/cost effect with source event and deduplication identity; includes funding and approved corporate-action events |
-| PortfolioSnapshot | Ledger revision, cash availability, positions/cost basis, marks, exposure, equity, realized/unrealized results and unavailable fields |
+| SimulatedFill | Order reference, eligible market evidence, simulated price/quantity, effective session and supported event-time precision, actual processing time, fees/slippage and execution-rule version |
+| LedgerEntry | Immutable cash/quantity/cost effect with source event and deduplication identity; includes funding, settlement transfers, split adjustments, dividend receivables and their cash payments |
+| PortfolioSnapshot | Ledger revision, valuation session/close and source-price references, settled cash available for purchases, unsettled sale proceeds with settlement dates, dividend receivables/income, positions with remaining acquisition cost and weighted-average cost per share, unadjusted marks, exposure, equity, realized/unrealized trading results and unavailable fields |
 | MemoryRecord | Hypothesis/decision/outcome/reflection kind, availability time, linked evidence/run/policy and counter-evidence; no implicit policy authority |
-| EvaluationRecord | Versioned metric/baseline assumptions, input ledger/decision references, observation interval and limitations |
+| EvaluationRecord | Identity/revision and prior-evaluation link; independent portfolio/funding identity, positive initial capital, starting/ending sessions, versioned metric and benchmark rules, frozen benchmark universe/data/cost references, input ledger/decision references, scheduled observation dates, input coverage/missing-input reasons, per-metric availability/results and limitations |
 
 ## Lifecycle boundaries
 
@@ -88,6 +90,49 @@ simulated execution/accounting, evaluation and terminal states. These are stage
 responsibilities, not a finalized enum. The technical slice must define legal
 transitions, duplicate/stale commands, one supplementary round, cancellation,
 pause effects, and failure/recovery at each transition before coding it.
+
+For ordinary orders, distinguish full execution, terminal rejection, confirmed
+expiry and an unresolved outcome awaiting valid evidence. An unresolved outcome
+remains bound to its original opening; late data does not grant a new execution
+session. Preserve the accepted quantity and terminal reason in the order history.
+Split adjustments preserve the original accepted quantity and append the event
+that determines the effective quantity; they do not rewrite the original order.
+
+Replacement records link the original instruction, proposed replacement,
+validation outcome and effective boundary. Failed validation preserves the
+original's active state. A successful replacement changes both instructions
+together while retaining their history; a scheduled protective-stop replacement
+does not deactivate current protection before its effective session. Record
+standalone cancellations separately, with timing and safety-check outcomes.
+
+An opening-triggered protective stop supersedes an overlapping ordinary sell
+under [FR-06](spec.md#fr-06-simulated-execution-and-accounting). Preserve the
+ordinary order as cancelled with its supersession reason and link to the stop
+execution, rather than assigning it a duplicate fill. A later daily-low stop
+can consume only the shares remaining after ordinary opening sells.
+
+Settlement transfers already-recorded sale proceeds from unsettled to settled
+cash under [FR-01](spec.md#fr-01-instruments-and-portfolio); it does not create a
+second sale credit or additional equity. Preserve trade and settlement dates
+separately from the actual processing timestamp during catch-up.
+
+Position cost records retain acquisition costs, allocated cost of sold shares
+and remaining cost under the weighted-average policy in
+[FR-06](spec.md#fr-06-simulated-execution-and-accounting). Bind those allocations
+to the original fills and fees; keep dividend income distinct from realized
+trading profit and do not post slippage a second time after its fill-price effect.
+
+Closing snapshots bind the ledger effective by that session's close and its
+unadjusted closing marks. Retain the cash, receivable and position-value components
+of equity, plus remaining acquisition cost for unrealized trading results, under
+the FR-06 valuation definition; unavailable inputs remain explicit.
+
+Corporate-action records bind verified terms, effective dates, source identity
+and affected holdings/orders. A dividend receivable is an equity component but
+cannot fund a purchase; payment transfers it to available cash without crediting
+income twice. Split adjustments conserve economic holdings and cost basis under
+the event terms. Unsupported or incomplete terms retain an unresolved state,
+including any residual entitlement, rather than fabricated cash or discarded shares.
 
 Durable local records are authoritative across Work conversations. The next
 mutation must identify expected run/portfolio version and its idempotency key.
@@ -105,6 +150,16 @@ Memory and evaluation outputs carry their first availability time. Future
 outcomes cannot enter an earlier decision's evidence. Deterministic replay loads
 stored accepted decisions, data, policy, simulator version and prior state; a
 fresh model run receives a new experiment identity.
+
+Evaluation records retain every regular session's scheduled closing observation,
+including sessions without agent activity and dates with unavailable valuations,
+with metric-specific completeness under [FR-09](spec.md#fr-09-evaluation).
+The funding reference anchors cumulative returns and the initial drawdown peak;
+daily returns reference the preceding scheduled valuation, not the last available
+one across a gap. A starting-capital change creates an independent portfolio and
+evaluation identity, rather than a funding adjustment or revision of the old one.
+Recovered inputs create a new linked evaluation revision; they do not overwrite
+earlier coverage, results or input references.
 
 Preserve old artifacts under their original schema and component versions. Add
 new simulated entities rather than changing the meaning of old research fields.
