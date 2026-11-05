@@ -11,6 +11,7 @@ design is not evidence of implemented behavior.
 | --- | --- | --- | --- |
 | D0 | Consolidate approved redesign and repository documentation | COMPLETE | Ten English canonical documents, reference/checker migration, 24 legacy documents and two tracked task reports consolidated; local verification below |
 | D0a | Clarify material product ambiguities and shorten project instructions | COMPLETE | Fifteen accepted clarifications recorded in spec across three five-question passes, completed on 2026-10-22. Canonical references and concise AGENTS.md reviewed; final local checks below passed. No further material product clarification is needed before planning. Technical research and all seven implementation-readiness gates remain open. |
+| D0b | Update canonical technical plan and supporting contracts | COMPLETE | Documentation-only planning on `main` from `dcd0e2b`, verified on 2026-10-23; seven canonical documents updated, accepted decisions/current profile preserved, full offline suite and local checks passed; all seven implementation-readiness gates remain open |
 
 D0 contains no production implementation. Existing source, schemas, runtime
 skills, workflow, prompts, dependencies and package version must remain unchanged.
@@ -34,8 +35,10 @@ current CI, installed-host, live-source or personal-graduation claim.
 
 ## Planned implementation
 
-All tasks below are NOT_STARTED. Begin with reviewed bounded feasibility work;
-do not infer authorization to implement the full plan from this task list.
+Production implementation remains NOT_STARTED. T03–T05 have design work in
+progress through D0b; their review/fixture/feasibility exits are not complete.
+Begin actual execution with reviewed bounded feasibility work; do not infer
+authorization to implement the full plan from this task list.
 
 | ID | Deliverable | Depends on | Requirements | Completion evidence |
 | --- | --- | --- | --- | --- |
@@ -53,6 +56,15 @@ do not infer authorization to implement the full plan from this task list.
 Use focused tests and review at each task. Update these rows with exact changed
 contracts, check results and evidence references as work occurs. Do not copy the
 task list into new dated plans or turn research questions into unchecked assumptions.
+
+| Work item | Current status | Planning contribution and remaining exit |
+| --- | --- | --- |
+| T01 | NOT_STARTED | Host/receipt/role probe designed; actual Work invocation, limits and resume observations absent |
+| T02 | NOT_STARTED | Desk inventory/source matrix supplied; configured normalized samples, licenses and approvals absent |
+| T03 | IN_PROGRESS | Proposed event/Decimal/ledger/state contracts and S01–S13 oracles; technical review, calendar/event evidence and executable fixtures pending |
+| T04 | IN_PROGRESS | Proposed trading scorecard/benchmark/metric contracts and E01–E06 oracles; policy-version review and executable replay fixtures pending |
+| T05 | IN_PROGRESS | Versioned semantic records/operations, storage/consumer strategy and proposed first-slice files; actual host binding, generated schemas, compatibility fixtures and slice approval pending |
+| T06–T10 | NOT_STARTED | Dependent implementation/release work remains gated |
 
 ## Documentation delivery verification
 
@@ -180,3 +192,76 @@ simulated-trading evidence. The user's conditional authorization now permits the
 local documentation commit. Remote publication and production implementation
 remain outside this delivery. Next workflow: speckit-plan, updating canonical
 documents in place while preserving the accepted product choices.
+
+## D0b technical planning evidence
+
+Planning started on 2026-10-22 and final verification resumed on 2026-10-23,
+on `main` at base `dcd0e2b`. Seven canonical documents were updated in place:
+plan, research, data model, contracts, quickstart, checklist and this status
+record. The accepted specification and its fifteen clarification records are
+unchanged, as is the complete current implementation compatibility profile.
+
+The design now specifies target command/record versions, trusted authorization,
+transactional receipts and storage, lifecycle/event ordering, Decimal/accounting
+rules, distinct settlement calendars, raw-price execution evidence, benchmark
+allocation and metric availability. Nineteen scenario oracles (S01–S13, E01–E06)
+define expected behavior without claiming implemented simulator tests. Proposed
+file boundaries, alternatives and remaining evidence map to T01–T10.
+
+Three read-only research agents covered simulation/accounting, evaluation and
+host/source/cost constraints. Their consistency findings were addressed: recovered
+stop supersession, total cross-batch order priority, historical pause-at-opening
+semantics, same-date entitlement/payment dependency, first-eligible benchmark
+selection, comparison dimensions, and budget/role lineage across revisions.
+Final local review checked those changes against the unchanged specification.
+
+| Local check | Result |
+| --- | --- |
+| Full pytest suite under the offline network guard | PASS; 2,955 passed, 1 live test deselected, one existing `websockets.legacy` deprecation warning; completed in 1,429.34 seconds on Python 3.13.7 |
+| `ruff check .` | PASS |
+| `mypy src` | PASS; 104 source files |
+| Documentation/example/internal-link check | PASS |
+| Generated-schema drift check | PASS |
+| Tracked-file secret scan | PASS; no new potential secrets |
+| Arithmetic spot-checks | PASS; weighted cost/fees, residual cents, returns/drawdown, benchmark cash/cost, dividend and split conservation |
+| Preservation and whitespace checks | PASS; spec and legacy profile unchanged, ten canonical documents, 15 clarification records, 16/23 checklist, seven Markdown-only changes |
+
+The earlier interrupted-session pytest result was unavailable on resume; the
+full suite was rerun to completion, and the result above belongs to that fresh
+run. A temporary local log retained the completion evidence; no test code or
+behavior was changed to obtain the result.
+
+The stock `setup-plan.sh --json` reported missing feature-directory state.
+Read-only path resolution mapped FEATURE_SPEC, IMPL_PLAN and FEATURE_DIR to
+`docs/spec.md`, `docs/plan.md` and `docs/`; the existing Git branch is `main`.
+The repository constitution takes precedence over the unfilled installed template
+and generic feature-folder/contracts-directory convention. No feature-state file
+or parallel document was created. Pre/post hook checks found no
+`.specify/extensions.yml`; no extension hooks were dispatched. The pre-existing
+untracked Spec Kit installation remains outside the delivery.
+
+All seven implementation-readiness items remain open. T03–T05 have design
+progress, while actual Work traces, approved source/license/calendar coverage,
+account-specific cost/workload evidence, reviewed executable contracts/fixtures
+and first-slice approval remain outstanding. Required numerical account-policy
+values were not guessed. These results establish no remote CI, installed-host,
+live-source or forward-trading evidence. No production code, schema, dependency,
+runtime skill or version changed. The initial D0b planning delivery ended before
+publication. The user's subsequent request authorizes final review, commit and
+push of the planning update; implementation and deployment remain outside scope.
+
+Final publication review resumed on 2026-11-06. Independent read-only standards
+and specification reviews reported no actionable findings against `dcd0e2b`.
+Fresh preservation checks confirmed the accepted spec and legacy contract
+profile are byte-for-byte unchanged, with seven Markdown files in the planning
+diff and all seven readiness gates still open. Refreshed checks passed: 58
+documentation/workflow tests, Ruff, mypy (104 source files), examples/internal
+links, schema drift, tracked secrets, and whitespace. The three Python files
+changed by the preceding documentation consolidation also pass format checking.
+The complete offline suite was rerun on 2026-11-06: 2,955 passed, one live test
+deselected and one existing `websockets.legacy` deprecation warning, in 1,481.57
+seconds on Python 3.13.7. Representative arithmetic oracles also passed again.
+Remote inspection found `main` at `aa3fb0d`; normal publication includes the
+existing `d4915fb`, `f15438c` and `dcd0e2b` ancestors. Publication is verified
+separately by the pushed commit and remote branch identity; local checks do not
+establish remote CI or operator evidence.

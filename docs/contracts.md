@@ -3,7 +3,7 @@
 This is the sole interface/invariant reference. [Spec](spec.md) owns product
 requirements and [data-model](data-model.md) owns entity semantics. Implemented
 Python types and generated schemas define exact field/signature spelling. Target
-contracts below require technical design before implementation; they do not
+contracts below specify a technical design for review before implementation; they do not
 introduce callable operations in the current build.
 
 ## Target interface boundary
@@ -15,11 +15,12 @@ bounded validated payload and idempotency identity. Local services authorize
 state changes, calculate risk and quantities, and record acceptance or a precise
 rejection. Discovery/registration alone does not authorize a command.
 
-The first interface design must cover start/resume/status, evidence access,
+The `trading.v1` design below covers start/resume/status, evidence access,
 role/challenge submission, the one supplementary round, portfolio proposals,
-local validation, simulated order processing, pause controls, evaluation and
-as-of memory. Operation names, schemas, transport/authentication, numerical limits
-and stage transitions are deliberately unfinalized until RQ-01–RQ-05. Reuse an
+local validation, simulated processing, controls, evaluation and as-of memory.
+Its operation identifiers are proposed transport-neutral names, not registered
+MCP tools. T01 selects a proven transport/authentication route; T05 reviews and
+generates strict schemas and consumer fixtures before activation. Reuse an
 existing operation only if its semantics fit; never reinterpret a legacy
 research publication as approval to execute a simulated order.
 
@@ -29,6 +30,309 @@ stale/conflicting inputs and duplicate effects. Validation failure cannot silent
 repair a strategy into a new accepted trade. Simulation must reconcile every
 quantity/cash effect; deterministic replay must reproduce accepted effects without
 network/model calls or a current-policy reload.
+
+### Target command and query contracts
+
+All target messages identify `contract_family=trading`, `schema_version=1`,
+scope IDs, and immutable input hashes. Commands also carry `command_id`,
+`expected_version` and a bounded payload. The local boundary computes the
+canonical request hash and derives actor/permissions from the trusted channel;
+an `actor=human` field supplied by a model grants nothing. Unknown fields,
+unsupported versions, invalid UTC times, nonfinite numbers and oversized
+collections fail before mutation. Role assignments receive only their allowed
+submission/query capabilities; delegated tools cannot approve policy or write
+the ledger directly.
+
+| Proposed operation | Authority and input | Result/precondition |
+| --- | --- | --- |
+| `trading.get_capabilities` | Read-only, caller's authorized scope | Observed host/adapter/transport versions, supported structured returns/delegation/cancellation/usage signals, evidence timestamp; unavailable metadata is explicit |
+| `trading.get_status` / `trading.get_artifact` | Authorized IDs, optional expected snapshot hash, bounded cursor | Durable stage, receipt/artifact hashes and permitted next actions; no collection, reconciliation or hidden mutation |
+| `trading.start_cycle` | Human-triggered, portfolio/policy/pool versions and finite workload policy | Stable cycle identity; reject stale portfolio, missing policy or overlapping mutating cycle |
+| `trading.resume_cycle` | Authorized existing cycle/manifest and expected version | Resume only permitted unfinished work with original cutoff, budget and committed effects |
+| `trading.submit_role` | Assigned role/round/subject, manifest hash, upstream references, structured claims/status/provenance | Immutable role artifact or typed validation rejection; missing role work is never fabricated |
+| `trading.request_supplement` | Challenger assignment, bounded gaps and approved evidence operations | At most one supplementary round; no arbitrary URLs or tools; post-cutoff inputs require a successor revision |
+| `trading.submit_proposal` | Decision-maker assignment, ordered actions, evidence/role/portfolio/policy hashes | Local validation receipt with accepted orders or explicit per-action rejections/no-trade; no host-supplied authoritative quantities |
+| `trading.change_instruction` | Human control or assigned decision proposal; original ID/version and cancel/replace intent | Validate before switching; preserve original on failure; enforce opening and protection cutoffs |
+| `trading.set_pause` / `trading.approve_policy` | Trusted human channel, expected control/configuration version | Durable control or later-effective policy receipt; research text and reflections cannot invoke approval |
+| `trading.reconcile` | Local application command, frozen data/rules and bounded through-session | Event batches/cursors, fills and ledger effects, or scoped unresolved reasons; no new agent decisions |
+| `trading.evaluate` | Local application, immutable evaluation manifest | New evaluation revision; no mutation of decisions or prior results |
+| `trading.query_memory` | Authorized cycle/cutoff, bounded subject/query | Only records and outcomes available by cutoff, with lineage and limitations |
+
+Each role result binds an enum role, assignment ID, round (initial or one
+supplement), subject, input manifest, claim/evidence references, uncertainty,
+counter-evidence, and COMPLETE/PARTIAL/UNAVAILABLE status. Local claim validation
+checks scope, time, entailment and deterministic numbers. A status label cannot
+waive a required source. Host/model provenance is recorded only when supplied.
+Queries return explicit snapshot versions and unavailable fields, with stable
+pagination bound to that snapshot.
+
+The root cycle lineage owns the deadline, consumed supplementary allowance and
+all assignment/submission/repair/tool counters. A successor evidence revision
+inherits those counters and cannot buy another round or reset time. Before a
+proposal uses its new manifest, affected analyses/challenge outputs must be
+reissued or explicitly revalidated against it with recorded lineage; originals
+remain immutable. Unaffected outputs also need an explicit validated reuse link,
+not a silent change of their input hash. Exhaustion terminates the lineage.
+
+`(portfolio_id, command_id)` is unique. Authenticate and validate the envelope,
+then look up a prior receipt before checking a duplicate's old expected version.
+An identical semantic request returns the original receipt and effects; the same
+key with a different canonical request returns `IDEMPOTENCY_CONFLICT`. New
+requests check expected versions again inside the transaction. The event batch,
+projection/version update and receipt commit together. A crash before commit
+leaves no effects; a lost response after commit is resolved by receipt lookup.
+Rejected requests have durable reason receipts but no financial effects.
+Replay of a rejected key retains that rejection; a corrected proposal needs a
+new key. No unbounded automatic retry or silent payload repair is permitted.
+
+Reason families include INVALID_PAYLOAD, UNAUTHORIZED, VERSION_UNSUPPORTED,
+STALE_VERSION, IDEMPOTENCY_CONFLICT, STAGE_CONFLICT, POLICY_INCOMPLETE,
+EVIDENCE_UNAVAILABLE, CALENDAR_UNAVAILABLE, ORDER_CONFLICT, LATE_CHANGE,
+PAUSED_NEW_EXPOSURE, CASH_LIMIT, RISK_LIMIT, ENTRY_STOP_INVALID,
+UNRESOLVED_EVENT, DEADLINE_EXCEEDED, BUDGET_EXHAUSTED and INTEGRITY_FAILURE.
+T05 freezes the exact closed enum/schema. Reasons carry safe affected IDs and
+recovery actions, never raw exception text, secrets or model-selected file paths.
+
+### Target policy and risk inputs
+
+The target policy requires approved initial capital, per-position exposure,
+aggregate exposure, per-position stop-risk and portfolio stop-risk limits;
+maximum positions; valid protective requirements; price/source freshness and
+coverage rules; fee/slippage functions; calendar/numeric versions; and finite
+workload bounds. Ratios use explicit fraction units, never an ambiguous percent.
+No values are inherited from research `PositionSizing` or example YAML. Missing
+values yield POLICY_INCOMPLETE. Zero fees/slippage are valid only when explicitly
+configured for the relevant synthetic scenario or approved policy.
+
+For the proposed first profile, local sizing chooses a whole-share quantity
+within the requested allocation, settled cash, position/exposure and stop-risk
+caps, recording all intermediates. Evaluate gross exposure as the sum of held
+long quantities times the policy's valid valuation prices, and stop risk as
+the sum of `q * max(mark - effective_stop, 0)` plus configured exit costs. Include
+prospective orders conservatively; do not subtract unfilled sells from exposure
+or count their unsettled proceeds as cash. A missing required mark/stop makes
+the dependent portfolio check unavailable. Stop-risk is a sizing measure, not
+a guarantee against gap loss. At the opening recheck the accepted full quantity
+using the modeled execution price and reconciled state; never resize it then.
+
+Freeze action priority in each accepted batch. At execution, merge all eligible
+orders across batches into the total order `(priority, instrument_id, action_id)`;
+action IDs are globally unique within the portfolio. Database order, batch
+traversal and response arrival cannot allocate cash. T05 reviews this proposed
+resource-allocation rule.
+For the first profile permit at most one live ordinary instruction per instrument
+and one whole-position protective stop; reject conflicting actions rather than
+netting them. An accepted increase whose prior position stops out at the opening
+is rejected as an order conflict, rather than silently becoming a new entry.
+An increase that remains valid must establish coherent protection for all shares
+atomically with its fill. These technical conflict rules require review before
+activation; they are not additional accepted product clarifications.
+
+### Target simulation schedule
+
+Reconciliation loads immutable accepted instructions, effective controls,
+calendar snapshots and normalized outcome evidence. It never creates retrospective
+agent decisions or reloads current policy. Iterate effective business dates and
+regular sessions chronologically, including settlement/payment dates between
+trading sessions. Persist session/phase cursors only with committed effects.
+
+| Phase | Ordering and effects |
+| --- | --- |
+| BUSINESS_DATE_START | Apply due T+1 settlement and payments of already established dividend receivables. Date-only terms become usable at start of that business date as an explicit simulator convention; precise later terms take precedence |
+| PRE_OPEN | Apply verified split/entitlement terms and scheduled instruction changes in their economic dependency order; apply controls at their trusted effective times. Ambiguous same-boundary split/dividend terms block the instrument |
+| OPENING_PROTECTION | For each existing long position, compare raw open to its active stop. A trigger exits all existing shares and supersedes the overlapping ordinary sell in one batch |
+| OPENING_SELLS | If no opening stop triggered, execute eligible ordinary sells against remaining holdings. Adjust protection quantity atomically; proceeds are unsettled |
+| OPENING_BUYS | Process the frozen priority, rechecking full adjusted quantity, settled cash, risk, pause and protection. Commit a valid fill and protection together; otherwise reject without a fill |
+| DAILY_LOW_PROTECTION | Compare remaining/new holdings' active stop with the daily low. Exit only remaining shares; retain session/phase precision without an invented trigger timestamp |
+| REGULAR_CLOSE | Complete effective events, record the scheduled raw-price closing valuation or unavailable inputs; no agent run is required |
+| AFTER_CLOSE_DECISION | A user-started cycle freezes reconciled state and admissible research. Ordinary orders target the next eligible session, never the decision session |
+
+Economic dependencies take precedence over nominal phase labels. A verified
+same-date entitlement/payment is created first, then paid once in PRE_OPEN before
+opening execution when its date-only terms permit that ordering. A later precise
+payment time is retained at its actual effective boundary. Contradictory or
+unverifiable terms block the affected event instead of paying a nonexistent
+receivable. Preserve both event identities and one income posting.
+
+An unresolved phase blocks all effects that depend on its quantities, cash,
+event order or risk. Unaffected instrument protection and known accounting may
+continue when their inputs are independent; incomplete portfolio totals block
+new exposure and aggregate valuation/risk claims. An earlier unresolved sell
+cannot be skipped to release cash for a later buy. No global cursor may claim
+completion over unresolved dependencies.
+
+The trading calendar specifies session identity/open/close/timezone and range.
+The separate settlement calendar specifies business dates and verified holidays;
+T+1 is the first settlement business date strictly after trade date. Do not
+substitute the next XNYS session or add 24 hours. Both calendars are frozen and
+out-of-range/missing dates are unavailable. Source access and calendar evidence
+remain RQ-02/RQ-03 gates.
+
+Ordinary fills require normalized evidence of the intended regular opening:
+RAW adjustment, feed/session provenance, coverage and tradability. Current Alpaca
+research defaults use adjusted bars and cannot be reused as execution input.
+The existence of an OHLC `open` alone does not prove execution was possible at
+that opening. Confirmed nonexecution produces EXPIRED; missing or ambiguous
+opening evidence produces UNRESOLVED. Recovered data resolves only the original
+opening. Daily stop outcomes are labeled modeled, with the approved gap/open,
+low-touch and immediate-entry protection rules in FR-06.
+
+Ordinary changes require trusted local acceptance strictly before the opening;
+equality is late, even during delayed reconciliation. Replacement validates first,
+then atomically switches instructions. A protective replacement is effective no
+earlier than the next eligible session; the old stop stays active until successful
+activation. If activation fails, retain the original and record the failure.
+Pause cancels buys whose opening is strictly after its trusted effective time;
+it rejects subsequent new exposure but does not erase earlier effective events.
+An already accepted opening order reads the historical control state strictly
+before its opening. A pause exactly at that opening affects later opportunities
+and new submissions; current paused state cannot retroactively reject that order.
+Resume permits future proposals and never restores cancelled orders. These
+control records remain separate from research budget/cancellation status.
+
+For ordinary dividends, bind verified ex-date, record date, eligible-share basis,
+payment date, amount/currency and source revision. Entitlement precedes ex-date
+opening trades: an opening buy earns no ordinary entitlement; an opening sell
+retains the prior entitlement. Post income and a receivable once; payment moves
+the same amount to settled cash with no second income. Splits adjust holdings,
+effective order quantities and stop prices together, preserving total cost and
+original instructions. Same-boundary dividend/split ordering follows verified
+terms. Fractions, cash-in-lieu, special distributions or other incomplete terms
+remain unresolved until a separately reviewed event contract and complete source
+terms permit accounting; no remainder is dropped or fabricated as cash.
+
+### Target numerical and ledger contract
+
+Proposed numeric profile `sim-decimal-v1` uses precision 34, ROUND_HALF_EVEN,
+Emin=-99, Emax=99, clamp=0, and explicit traps for FloatOperation,
+InvalidOperation, DivisionByZero, Overflow and Underflow. Context/flags are local
+and independent of caller settings. Reject floats, nonfinite and negative-zero
+wire values. USD ledger amounts use cents; modeled fill prices use eight decimal
+places. Preserve source price/ratio bytes separately. Accept bounded source prices
+up to USD 10^12 with at most eight fractional places, whole quantities up to
+10^9, and absolute posted balances up to USD 10^15; excess is unavailable, never
+clipped. T05 tests these technical capacity bounds and approves the profile.
+
+Round modeled price once after applying the frozen slippage function, then
+`gross = money_round(q * fill_price)`. Calculate fees using the frozen fee
+function on that quantity/price, round the fee once to cents, and record both.
+Fee formulas must be total, bounded and nonnegative for every permitted input;
+benchmark allocation additionally requires nondecreasing acquisition cost.
+Buy cost is gross plus fee; net sale proceeds are gross minus fee. A sell whose
+fee exceeds gross is blocked for reviewed handling, not posted as invented
+positive proceeds. Reject a nonpositive modeled price. Record unrounded inputs
+and rounding deltas; rounding deltas explain postings, not extra expenses.
+
+Keep split-adjusted stop thresholds as reduced exact rational values derived
+from original Decimal and split ratios; compare by exact integer cross products.
+Bound numerator/denominator to 128 digits and block excess. Do not round a
+recurring split-adjusted stop before testing trigger/entry validity. Only the
+resulting modeled execution price is quantized. Whole-share constraints apply
+after verified split adjustments; fractional consequences stay unresolved.
+
+Remaining total acquisition cost `C` is authoritative; average `C / Q` is
+derived. A buy adds gross plus fee. A partial sale of `q` removes
+`money_round(C * q / Q)`; the new cost is exactly old cost minus removed cost.
+A full exit removes all remaining cost, including residual cents. Realized
+trading result is net sale proceeds minus removed cost. Splits preserve `C`;
+dividends are separate income. Slippage already affects fill price and is never
+deducted again. Quantize each held instrument's raw closing market value to
+cents, then sum with settled cash, unsettled sale proceeds and outstanding
+dividend receivables. Unrealized result subtracts remaining acquisition cost.
+Display rounding never feeds any calculation.
+
+Ledger invariants: one initial funding event, no later external funding in that
+evaluation, no negative available cash/held quantity, one effect per semantic
+event key, and a full exit with zero residual cost. Settlement/payment transfers
+preserve equity; a split preserves total cost. Every snapshot reconstructs from
+its prior ledger prefix and input manifest. No unexplained balancing entries
+or overwrite of committed history are allowed. A corrected source event creates
+a linked reconciliation/evaluation revision for review; it cannot silently
+rewrite already accepted decisions or original receipts.
+
+### Target evaluation contract
+
+Create a distinct `trading-evaluation-v1` manifest and scorecard; the existing
+research ShadowScorecard remains unchanged. Freeze positive initial funding E0,
+start/end sessions, every intervening regular close, calendar, candidate universe,
+ledger/data hashes, numeric/execution/corporate-action rules, metric versions and
+benchmark definitions before evaluating. Model reruns create new experiments;
+stored-decision replay needs neither model nor network. Later source recovery
+creates a linked revision preserving the original result and initial peak.
+
+Cash holds E0 at zero interest. Buy-and-hold uses the frozen nonempty unique
+universe and a first-eligible-opening selector fixed before observing returns.
+Starting with the evaluation's first regular session, select each instrument's
+earliest opening with verified execution eligibility. Confirmed nonexecution
+advances that sleeve to the next candidate session; missing eligibility evidence
+stays unresolved and cannot be skipped. Preserve every examined session and its
+reason so later outcomes cannot select a more favorable start. For N instruments, each cost-inclusive sleeve
+is `floor_to_cent(E0 / N)`; residual cents remain cash. Select the largest whole
+quantity whose rounded gross plus buy fee fits its sleeve under the shared
+execution profile. A zero quantity costs no execution fee. No leftover cash is
+redistributed and no later rebalance or dividend reinvestment occurs. An unfilled
+sleeve stays cash when nonexecution is proven; unresolved inputs remain unavailable
+where they could change the benchmark's state. Benchmark initial eligibility
+and allocation are separate frozen rules, not permission to carry over or resize
+an accepted single-opening agent order.
+The benchmark holds without agent stop decisions; matching execution/cost/event
+assumptions does not replace the approved buy-and-hold strategy.
+
+| Result | Required inputs and calculation |
+| --- | --- |
+| Closing equity | Complete effective ledger, quantities, cash/receivables and raw marks for held instruments; missing prices for unheld instruments alone do not invalidate equity |
+| Cumulative return | `Et / E0 - 1`; E0, ending equity and complete required intervening ledger inputs; an intermediate missing mark alone need not block this |
+| Daily return | `Et / Eprev - 1`; immediately preceding scheduled close (E0 for first session), current close and complete ledger inputs; denominator must be positive; never skip a missing close |
+| Maximum daily closing drawdown | Maximum `1 - Et / peak_to_date`, with E0 and every scheduled equity included in the running peak; any required missing close makes the interval unavailable |
+| Gross turnover relative to initial capital | Sum of `abs(q * fill_price)` for unique buy/sell fills divided by E0; exclude funding, transfers, splits and dividends; requires complete fill coverage |
+| Fees and modeled slippage | Sum unique posted fees; separately disclose buy `q*(fill-reference)` and sell `q*(reference-fill)` as cost attribution, never another equity deduction |
+| Risk and operational outcomes | Counts of unique rejected proposals/orders, verified executed violations and cycle/command failures by reason; attempt counts separate from deduplicated effects |
+| Evidence quality | Admissible satisfied requirements / frozen required requirements by role/instrument/action; entailment supported/reviewed claims with review sample and provenance, not citation-presence scoring |
+| Valuation coverage | Available scheduled closes / expected closes per portfolio; retain missing dates/reasons; invalid schedule makes coverage unavailable |
+| Usage/cost | Observed units and incremental USD by period/source/attribution/coverage, with estimates and unknown shared usage separate |
+
+Empty metric denominators yield NOT_APPLICABLE with a reason; incomplete required
+inputs yield UNAVAILABLE. A complete no-trade ledger can have zero fees/turnover;
+missing data cannot. Comparisons require matching funding basis, frozen universe,
+observation schedule and numerical/execution/event/metric assumptions, plus
+available results on both sides; each portfolio retains its own distinct
+ledger/data manifest. Keep all adverse and no-trade periods. There is no new profitability,
+annualization or statistical-significance release threshold.
+
+### Target contract fixtures
+
+These are deterministic design oracles for future executable tests, not claims
+that a simulator exists. All figures are synthetic USD; unspecified fees and
+slippage in a row are explicitly zero.
+
+| ID | Input | Required result |
+| --- | --- | --- |
+| S01 | Buy 10 at 100 fee 1; buy 10 at 120 fee 1; sell 10 at 130 fee 1 | Cost 2202 before sale; net unsettled proceeds 1299; removed cost 1101; realized result 198; remaining cost 1101 |
+| S02 | Cost 100 over 3 shares; sell one at a time | Removed costs 33.33, 33.34, 33.33; full exit leaves cost 0 |
+| S03 | Settled 100; new net sale proceeds 500; same-day buy cost 200 | Buy rejects; settled/unsettled 100/500, then 600/0 on verified T+1 date; transfer adds no equity |
+| S04 | Hold 10, stop 95, ordinary sell 4, open 90 | One stop fill of 10; ordinary sell superseded; one fee calculation |
+| S05 | Same holding, open 100, low 94 | Ordinary sell 4 at open; later stop sells remaining 6 at reference 95 |
+| S06 | Buy 10 at modeled 100, stop 95, low 94 | Buy then same-session stop; modeled entry 94 instead rejects without either effect |
+| S07 | Hold 10 cost 1001, stop 90, sell order 4; 2:1 split | Hold 20 cost 1001, average 50.05, stop 45, effective sell quantity 8; original records retained |
+| S08 | Hold 10 at raw 100, cost 1000; dividend 1/share, ex-date close 99 | Receivable/income 10, market value 990, equity 1000; payment changes receivable to cash without extra equity/income |
+| S09 | Pre-opening pause versus pause exactly at/after opening | Earlier pause cancels pending buy; later pause cannot erase that opening's effects; resume restores no order |
+| S10 | Replacement validation failure; crash before/after successful switch; duplicate/changed payload | Original remains on failure/before commit; both changes and receipt exist after commit; duplicate returns receipt, changed payload conflicts |
+| S11 | Missing opening versus verified no execution; out-of-range settlement calendar; ambiguous split/dividend | UNRESOLVED versus EXPIRED remain distinct; no later fill, invented settlement or event ordering |
+| S12 | Two batches compete for cash at one opening with the same priority | Global instrument/action order decides consistently; reversing database/batch traversal changes no effect |
+| S13 | Verified ordinary entitlement and payment on the same date | Entitlement precedes payment; one income posting, one receivable-to-cash transfer, no payment before entitlement |
+| E01 | E0=1000; closes 900,1100,990 | Cumulative -10%,10%,-1%; daily -10%,22.222…%,-10%; maximum daily closing drawdown 10% |
+| E02 | E01 with middle mark missing, otherwise complete ledger | Endpoint return -1%; day 2/3 daily returns and interval drawdown unavailable; coverage 2/3; recovery derives a new E01 revision |
+| E03 | E0=1000; closes 0,100 | Daily -100%, unavailable; endpoint -90%; drawdown 100% with complete observations |
+| E04 | E0=1000; two benchmark sleeves; opens 60,120; fee 1 per buy | Quantities 8,4; cash 38; unchanged-price close equity 998; return -0.2%; gross turnover/E0 0.96 |
+| E05 | E0=1000 cash, no trades over all scheduled closes | Equity 1000, returns/drawdown/fees/turnover zero with complete coverage |
+| E06 | Benchmark's initial opening confirmed ineligible, next eligible; separate case with unknown initial eligibility | Frozen selector advances only the confirmed case; unknown stays unresolved; no selection using later returns |
+
+T03–T05 add boundary fixtures for exact stop touch, no touch, fees/slippage,
+holiday/nontrading settlement, source corrections, late replacement, concurrent
+cash competition, event fractions, extreme numeric inputs and altered caller
+Decimal context. Daily processing and catch-up must produce identical economic
+effects from the same inputs; T06 proves transaction/replay behavior against
+the implementation. Hand-calculation checks do not close these evidence gates.
 
 ## Current implementation profile
 

@@ -106,3 +106,39 @@ is designed and verified. Do not infer host installation from packaging tests.
 
 For local diagnostics, recovery, opt-in live checks and release receipts, use
 [operations](operations.md). For exact API examples use [contracts](contracts.md).
+
+## Planning validation and future slice acceptance
+
+The target `trading.v1` names are design contracts, not commands supported by
+this build. The following checks are runnable now from the configured checkout:
+
+```bash
+python -m pytest tests/contracts/test_release_documentation.py tests/contracts/test_skill_workflows.py
+python -m scripts.check_docs_examples
+python -m finance_research_agent.schema_export --check
+git diff --check
+```
+
+Use the offline guard from the full-check instructions above when running pytest.
+These checks must preserve the current skill/operation/schema inventory and all
+canonical links. They do not execute the proposed simulator. Numerical oracles
+S01–S13 and E01–E06 are in [contracts](contracts.md#target-contract-fixtures);
+T03–T05 turn them into reviewed executable fixtures before closing readiness.
+
+Once the bounded feasibility work and first slice are separately approved, use
+an empty owner-only environment file, no provider/model credentials, and a
+disposable data root for synthetic validation. Record the actual host, transport,
+versions, fixture hashes, outcomes and missing observations in research/tasks.
+
+| Scenario | Procedure after the relevant implementation exists | Expected evidence |
+| --- | --- | --- |
+| Actual Work connection | Query capabilities/status, submit a narrowly scoped synthetic command, then an invalid submission | Actual structured return, trusted permission binding and precise rejection; Codex packaging tests alone are insufficient |
+| Role and recovery boundary | Run sequential synthetic roles, interrupt after a committed receipt, resume in a fresh conversation, resend the same command | Durable state reconstructs progress; original budget/cutoff retained; no duplicate effect; one supplementary round maximum |
+| One complete account lifecycle | Fund one synthetic account, freeze known-candidate evidence, submit proposal, validate, reconcile intended opening and closing data | Labeled simulated fill, protection, cash/cost ledger and closing equity match the oracles; no same-session ordinary entry |
+| Failure and controls | Exercise gap/cash rejection, late replacement, pause before/after opening, missing bars and crash before/after commit | Full rejection or scoped unresolved outcome, original instruction retained on failed replacement, no lost/doubled accounting |
+| Replay and baselines | Reconcile the same missed sessions in one catch-up; replay stored inputs without model/network; evaluate cash and buy-hold | Economic equivalence, scheduled-close coverage, no future leakage, original evaluations preserved on data recovery |
+
+Keep the recorded command/test paths synchronized with the actual implementation
+when these scenarios become runnable. Installed-host observations, opted-in live
+source checks, remote CI and elapsed forward evaluation remain separate evidence;
+no scenario here enables scheduling, purchases or real execution.

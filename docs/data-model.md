@@ -63,7 +63,8 @@ The diagram expresses conceptual cardinalities, not final storage tables. A
 proposal can yield rejection or no trade and therefore zero orders. An ordinary
 order produces zero or one fill for its full quantity after approved split
 adjustments, with no partial fill or remainder carried forward. Proposal batching
-and protective-order cardinalities await [simulation decisions](research.md#rq-03-simulation-semantics).
+and protective-order cardinalities are proposed in the target state/contract
+sections below and require T05 review before activation.
 
 | Target entity | Required semantic content |
 | --- | --- |
@@ -86,10 +87,9 @@ and protective-order cardinalities await [simulation decisions](research.md#rq-0
 
 The target lifecycle must distinguish collecting, frozen research, analysis and
 challenge, proposed decision, local validation, accepted pending execution,
-simulated execution/accounting, evaluation and terminal states. These are stage
-responsibilities, not a finalized enum. The technical slice must define legal
-transitions, duplicate/stale commands, one supplementary round, cancellation,
-pause effects, and failure/recovery at each transition before coding it.
+simulated execution/accounting, evaluation and terminal states. The proposed
+transition tables below separate these responsibilities; T05 reviews the exact
+schema and executable transition fixtures before coding the application slice.
 
 For ordinary orders, distinguish full execution, terminal rejection, confirmed
 expiry and an unresolved outcome awaiting valid evidence. An unresolved outcome
@@ -166,3 +166,88 @@ new simulated entities rather than changing the meaning of old research fields.
 Any adapter or migration must state supported versions, derive a separate view,
 and retain original bytes/hashes. New fields require explicit compatibility tests;
 silent defaults must not fabricate evidence, fills, positions or model provenance.
+
+## Versioned target records
+
+The following is the proposed `trading.v1` design for T03–T05 review, not an
+implemented Python or wire schema. Common fields are `record_type`,
+`schema_version`, stable `record_id`, `portfolio_id`, `recorded_at` (UTC),
+`content_hash`, and explicit references to immutable input versions. Content
+hashes exclude their own hash field. IDs are application-assigned; model-supplied
+IDs must resolve to authorized existing objects. Financial values are Decimal
+strings with units, never JSON floating-point values.
+
+| Record | Mandatory fields beyond the common envelope | Validation and relationship |
+| --- | --- | --- |
+| PolicySnapshot | Full source/risk/execution/evaluation/budget values, component hashes, approval reference, effective cycle/session | New policy cannot reinterpret an accepted decision; absent required numeric values block use |
+| CalendarSnapshot | Trading/settlement kind, calendar/version, timezone, covered date range, session opens/closes or settlement business dates, provenance/hash | XNYS sessions do not stand in for settlement dates; out-of-coverage dates are unavailable |
+| CycleInputManifest | Cycle/revision, pool/policy/portfolio hashes, calendar references, evidence cutoff, deadline, runtime and budget manifest | All role outputs refer to one frozen manifest; revisions link parents without rewriting them |
+| CommandReceipt | Command ID/kind, authenticated actor class, request hash, expected/committed versions, result, effect IDs, accepted/recorded times | Same key and request returns original result; different payload conflicts; no effect without a durable receipt |
+| ReconciliationCursor | Portfolio/instrument scope, last proven event phase/session, input hashes, blocked dependencies/reasons | A cursor advances only with its committed effects; unresolved state is not a completed session |
+| CorporateAction | Source event ID/revision, instrument identity, event type, terms, effective/entitlement/payment boundaries, availability/retrieval times | Separate verified terms from generated timestamps; unknown terms block affected adjustments |
+| InstructionChange | Original/replacement IDs, request and local acceptance times, validation, effective boundary, active-until boundary | Failed change leaves original active; successful replacement/cancellation is atomic at its boundary |
+| SettlementLot | Source sell fill, net amount, trade date, settlement date/calendar hash, unsettled/settled status | Exactly one transfer; sale proceeds cannot be credited twice |
+| DividendReceivable | Event ID, entitlement quantity and evidence, per-share amount, total amount, verified payment date, paid/unpaid status | Entitlement creates income/receivable once; payment moves the same amount to settled cash |
+| LedgerBatch | Prior ledger version/hash, ordered immutable entries, semantic event key, rule versions, resulting projection hash | One atomic commit; entry order and amounts reconstruct the projection without current configuration |
+| LedgerEntry | Kind, source event/fill, effective session/phase, amount/quantity/cost deltas, before/after references | Funding, buy/sell, settlement, split and dividend effects have distinct kinds; no synthetic balancing plug |
+| ClosingObservation | Scheduled session/close, effective ledger hash, raw-price evidence IDs, component values or unavailable reasons | One observation slot per scheduled close per evaluation revision, even without a cycle |
+| EvaluationManifest | Funding, portfolio/ledger, calendar, universe, metric/baseline/execution versions, input hashes, date range, prior revision | Agent/cash/buy-hold share observation dates and assumptions; recovered data derives a new revision |
+| MetricResult | Metric ID/version, required-input manifest, value/unit or reasons, numerator/denominator when applicable | Missing denominator/input is unavailable, never zero by default; results bind coverage and provenance |
+
+`MetricResult` here is a trading evaluation record in its own namespace; it does
+not replace the existing research `domain.models.MetricResult`. Role submissions
+also carry role, round, assignment ID, input-manifest hash, completion status,
+claim/evidence references and host-provided provenance or explicit unavailability.
+A model may report requested allocation; only local validation creates an accepted
+quantity, order or authoritative metric.
+
+## Target state transitions
+
+Cycle stage and order/ledger progress are separate. Completing a decision cycle
+does not assert that a later order filled. One active mutating cycle per portfolio
+uses optimistic versions; independent read-only research can still occur.
+
+| Cycle stage | Successful next stage | Required guard or alternate outcome |
+| --- | --- | --- |
+| CREATED | RECONCILING | Valid approved configuration, finite budgets, current portfolio version |
+| RECONCILING | COLLECTING | Prior effective events resolved for dependent decisions; otherwise BLOCKED with cursor |
+| COLLECTING | FROZEN | Input manifest and cutoff fixed atomically; missing evidence remains explicitly scoped |
+| FROZEN | ANALYZING | Authorized bounded role assignments use the same manifest |
+| ANALYZING | CHALLENGING | Required analyst artifacts exist, including honest partial/unavailable statuses |
+| CHALLENGING | SUPPLEMENTING or PROPOSING | At most one supplementary round; material unresolved gaps restrict proposals |
+| SUPPLEMENTING | PROPOSING | No second research round; later-cutoff evidence requires a successor cycle revision |
+| PROPOSING | VALIDATING | Structured proposal references recorded analyses/challenge and expected portfolio |
+| VALIDATING | COMPLETED | Atomic accepted orders, per-action rejections or no-trade result plus receipt |
+
+Any nonterminal stage can become BLOCKED (resumable only with original inputs and
+permitted repair), CANCELLED, DEADLINE_EXCEEDED or BUDGET_EXHAUSTED. Terminal states
+retain prior effects and cannot be silently reopened. A required new cutoff or
+policy uses a new cycle revision; recorded actions are never applied again.
+Transport interruption alone changes no stage. Resume reads durable status and
+receipts, reconstructs missing work, and consumes the remaining original budget.
+Successor revisions share the root cycle's deadline, counters and consumed
+supplementary allowance; they cannot reset them. New-manifest role outputs need
+explicit reissue/revalidation or validated reuse links preserving the originals
+before proposal/validation proceeds. Exhaustion ends that cycle lineage.
+Pause is a persistent portfolio control, not cancellation of the research cycle.
+
+| Instruction | Legal outcomes |
+| --- | --- |
+| Ordinary ACCEPTED_PENDING | FILLED (one full-quantity fill), REJECTED (cash/risk/invalid entry), EXPIRED (verified opening nonexecution), CANCELLED (valid pre-opening change/pause/supersession), or UNRESOLVED (missing evidence) |
+| Ordinary UNRESOLVED | Resolve only the original opening to FILLED/REJECTED/EXPIRED or deterministic CANCELLED from a proven prior control/opening-stop supersession; otherwise retain the block; no new post-opening user cancellation or carryover |
+| Protective ACTIVE | Remains ACTIVE, FILLED for remaining protected shares, CANCELLED after full exit/safe explicit cancellation, SUPERSEDED at replacement boundary, or UNRESOLVED |
+| Replacement PENDING_EFFECTIVE | Atomic activation plus old-instruction supersession; rejected validation never enters this state; effective-boundary failure retains the original |
+
+An unresolved instruction retains its prior lifecycle and original opportunity;
+it is not an assertion that no trade happened. Protective coverage follows current
+held quantity, with one active whole-position stop per instrument in the first
+technical profile. New buys/additions require one coherent protection plan for
+the resulting holding. Conflicting simultaneous instructions are rejected rather
+than netted into a different strategy. Cardinality and conflict checks are reviewed
+with T05 before activation.
+
+Every event has both `effective_session`/`phase` and `recorded_at`. Phase values
+come from the [simulation schedule](contracts.md#target-simulation-schedule).
+Daily-low stop events have session/phase precision only; do not fabricate a UTC
+intraday trigger. Exact replay compares economic effects and effective ordering;
+processing timestamps and delivery metadata can differ without changing economics.

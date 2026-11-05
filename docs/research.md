@@ -41,9 +41,125 @@ interview. These decisions replace conflicting old product direction:
 
 ## Implementation gates
 
-No item below is resolved by prose or by the user's general product approval.
-Each needs a bounded investigation, recorded evidence, a technical decision in
-the owning document, and review of the dependent implementation scope.
+The 2026-10-22–23 planning pass resolves the desk-design questions in the decision
+register below. Readiness still requires the listed observations, executable
+fixtures and reviews. A proposed technical choice is not a claim of actual
+host access, approved source entitlement or implemented simulation. Missing
+external evidence is a blocking result for its dependent implementation, not an
+invitation to fill it with an assumption.
+
+## Technical decisions from planning
+
+All selections in this table are proposed technical design for T01–T05 review.
+They preserve the accepted product policies; [contracts](contracts.md#target-interface-boundary)
+and [data model](data-model.md#versioned-target-records) own their detailed rules.
+
+| Question | Decision | Rationale | Alternatives considered |
+| --- | --- | --- | --- |
+| Atomic account mutations | Separate local SQLite trading repository; immutable event/artifact bytes plus receipt/version/projection in one transaction | Replacement and fill/accounting must never commit partially | Extend the research file store with a new cross-file journal; server database; both add recovery/deployment work |
+| Host authority | Separate `trading.v1` family, trusted actor binding, expected versions and idempotency receipts | Structured model output remains untrusted; capability discovery is not permission | Reinterpret publication as execution; host-controlled ledger writes; rejected |
+| Calendar/time | Separate frozen trading and settlement calendars; chronological effective phases with distinct processing time | T+1 is not the next exchange session; catch-up must reproduce original opportunities | Add 24 hours; use XNYS alone; process by retrieval time; rejected |
+| Price/evidence | Explicit RAW execution/valuation identity and normalized opening eligibility | Existing research default is adjusted; daily OHLC alone does not establish an executable opening | Change the legacy default; silently treat first later trade as opening; rejected |
+| Numeric/accounting | Explicit 34-digit Decimal profile, cent postings, eight-place modeled price, residual-cost conservation, exact split-stop comparisons | Determinism independent of ambient context; complete exits leave no cost residue | Binary floats; repeated average-cost rounding; unversioned display rounding; rejected |
+| Order conflict/priority | One ordinary instruction and one whole-position stop per instrument in the first profile; frozen action priority | Prevent double-selling and nondeterministic cash competition | Net conflicting actions or order by response arrival; rejected; T05 reviews the proposed restrictions |
+| Evaluation | Separate trading scorecard, scheduled-close coverage, per-metric availability and preserved recovery revisions | Existing research scorecard has non-P&L semantics | Relabel PlanObservation/ShadowScorecard as trading results; drop missing days; rejected |
+| Buy-and-hold allocation | Cost-inclusive equal sleeves, whole shares, no residual redistribution, frozen first-eligible-opening selector | Deterministic approved equal allocation with leftover cash and no hindsight | Redistribute rounding cash, skip unknown eligibility or choose start from returns; rejected |
+| Cost controls | Finite local workload policy and explicit measured/estimated/unobservable cost | Shared Work usage may lack per-cycle attribution | Infer dollars from tokens/subscription share or introduce paid API for billing visibility; rejected |
+
+Primary references checked on 2026-10-22:
+
+- [Python SQLite transaction control](https://docs.python.org/3.12/library/sqlite3.html#transaction-control)
+  and [SQLite atomic transactions](https://www.sqlite.org/transactional.html)
+  support a local transaction boundary. This does not prove the proposed adapter
+  or filesystem durability; fault and recovery tests remain mandatory.
+- [Python Decimal](https://docs.python.org/3.12/library/decimal.html) exposes
+  precision, exponents, rounding and traps. The selected numeric values are a
+  simulator design choice requiring review, not a Python default or market rule.
+- [Work surfaces](https://learn.chatgpt.com/docs/use-chatgpt),
+  [plugins](https://learn.chatgpt.com/docs/plugins) and
+  [subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents) describe
+  conditional local/cloud execution and delegated tools. They do not establish
+  this account's plugin installation, local stdio inheritance or six workers.
+- [Alpaca historical bars](https://docs.alpaca.markets/us/reference/stockbars)
+  distinguishes adjustment modes and symbol-first pagination. Validate all pages,
+  symbols and session coverage; one successful response is insufficient.
+  [Bar aggregation details](https://docs.alpaca.markets/us/docs/market-data-faq)
+  also require feed/condition semantics rather than assuming an official auction.
+- [Alpaca subscriptions](https://docs.alpaca.markets/us/docs/about-market-data-api)
+  lists Basic as free with IEX real-time coverage, a recent historical-data
+  restriction and 200 historical calls/minute; Algo Trader Plus is quoted at
+  USD 99/month. These are public quotes, not account entitlements or purchases.
+  The paid quote alone nearly consumes the USD 100 ceiling, before other costs.
+- The SEC [T+1](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins/new-t1-settlement-cycle-what-investors-need-know-investor-bulletin)
+  and [dividend entitlement](https://www.investor.gov/introduction-investing/investing-basics/glossary/ex-dividend-dates-when-are-you-entitled-stock-and)
+  references support the already accepted policy context. Actual calendar and
+  event-specific terms still need verified source coverage; special distributions
+  cannot be inferred from the ordinary-dividend rule.
+
+### Source and capability matrix
+
+This is the proposed required-evidence matrix and inspected code inventory.
+It does not approve a provider or claim current full-source availability.
+
+| Action/capability | Required evidence | Current inventory and remaining proof |
+| --- | --- | --- |
+| New/increased common-stock exposure | Identity/eligibility, raw market/session data, shared market/macro, company fundamentals, material news/official events, applicable corporate actions and reconciled risk state | Only market/calendar operationally composed; fundamentals/events/actions samples, availability and policy approval missing |
+| New/increased ETF exposure | Above market/risk/event basis plus issuer, non-leveraged/non-inverse classification, structure/exposures appropriate to the ETF | No demonstrated ETF analysis source; define field coverage/freshness and provide normalized samples |
+| Ordinary reduction/exit | Valid held quantity/order, raw eligible opening, applicable actions, execution/settlement calendars | Market normalization reusable; target opening eligibility and calendar/event coverage unproved; unrelated buy-thesis fundamentals are not an automatic exit prerequisite |
+| Protective stop | Valid position/stop, raw open/low, regular session, applicable adjustments | Target stop path absent; uncertain prices/events block the affected protection outcome |
+| Closing valuation | Valid effective ledger, raw close for held assets, cash/receivables, event and calendar completeness | Target ledger/valuation absent; missing unheld-asset marks alone do not invalidate equity |
+| Company fundamentals | Financial values with period/unit/publication/revision provenance, authoritative filings/company sources | SEC adapter supplies filing metadata; metadata alone is not a financial analysis input |
+| News and shared macro | Permitted excerpts/metadata, authority classification, event/publication/revision/retrieval times and source coverage | Discovery/IR/macro adapters exist but are unwired; an empty response does not prove no material events |
+| Splits and dividends | Stable instrument/event ID, revision, verified ratios/amounts, effective/entitlement/payment terms and completeness | No inspected target corporate-action adapter or approved source entitlement |
+| Settlement | Covered business-date calendar, provenance/version and verified holidays | Existing XNYS adapter supplies trading sessions only |
+
+Each approved source row must add provider/API/feed, required/optional fields,
+maximum age, historical availability semantics, correction/pagination/rate bounds,
+license/storage permission, configured-account access, quote date, sample hash,
+and exact failure scope. Require evidence of adequate coverage for
+NO_EVENTS_CONFIRMED; otherwise report unknown. Live outcome evidence collected
+later may reconcile an old accepted instruction but cannot enter that decision's
+frozen research inputs. Licensing and event-source selection remain RQ-02 work.
+
+### Budget and feasibility evidence
+
+Freeze maximum candidates, role assignments/concurrency, tool/provider attempts,
+submission/repair attempts, bytes, output sizes and elapsed deadline. One
+supplementary round is the product limit; restart must not reset counters.
+The proposed synthetic T01 profile uses one candidate, sequential logical roles,
+one supplementary round, at most two submissions per assignment, zero live
+provider requests and no paid fallback. T01 must choose and record the finite
+deadline/payload/tool-call bounds before running, then measure them; these are
+spike controls, not unreviewed production defaults.
+
+| Incremental item | Current planning evidence | Required readiness evidence |
+| --- | --- | --- |
+| Existing ChatGPT subscription | Excluded baseline under FR-11 | Identify project-driven upgrade delta separately |
+| Work credits/upgrade delta | No purchase or account-specific rate established | Account visibility, incremental quote/allocation and supported stop controls |
+| Market data | Public Basic/Plus quote above | Actual permitted feed, delayed-data suitability, storage terms and selected cost |
+| Fundamentals/ETF/news/events/actions/calendar | No complete approved source bundle | Coverage/license inventory and total quoted incremental cost |
+| Model APIs | Unselected | Separate architecture/purchase decision if later proposed |
+| Shared Work allowance | Per-cycle dollar attribution not established | Report observable units and unknown allocation explicitly |
+
+For measurable charges, stop new spending work before the approved monthly
+ceiling would be exceeded; do not silently buy credits. Keep accounting/recovery
+available with valid stored inputs. Practical workload caps cannot prove a hard
+dollar ceiling for unobservable usage. RQ-05 requires a complete dated inventory,
+uncertainty/tax/term notes, measured workload and operator-visible controls.
+
+### Remaining gate evidence
+
+| Gate | Designed here | Required before closure |
+| --- | --- | --- |
+| RQ-01 / T01 | Host envelope, authority, receipts, role/resume semantics | Actual Work query and idempotent command trace, invalid/duplicate/lost-response handling, delegation/tool inheritance, cancellation and new-conversation resume |
+| RQ-02 / T02 | Action-specific matrix, raw-price and provenance rules | Approved source rows, normalized permitted samples, licenses, configured coverage and complete cost fit |
+| RQ-03 / T03 | Event/state tables, precision, cash/cost rules and S01–S13 oracles | Review of proposed numeric/conflict rules, calendar/event evidence, executable adversarial fixtures and explicit approved risk/cost parameters |
+| RQ-04 / T04 | Frozen evaluation/baselines, availability matrix and E01–E06 oracles | Reviewed benchmark selector/numeric/metric versions and executable replay/recovery fixtures |
+| RQ-05 / T01–T04 | Cost inventory structure and bounded synthetic workload | Actual account visibility, full quotes, measured limits and practical stop controls |
+| T05 contract readiness | Versioned records, operations, migration and proposed file boundaries | Strict generated schemas, consumer fixtures, reviewed adapter/transaction scope and first-slice approval |
+
+The detailed investigation criteria below remain exit obligations; the new
+design sections supply their proposed answers rather than marking them passed.
 
 ### RQ-01 Work integration
 
